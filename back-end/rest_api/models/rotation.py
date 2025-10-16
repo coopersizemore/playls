@@ -9,6 +9,4 @@ class Rotation(BaseModel):
     rotation_interval: int # in days
     created_at: datetime
     last_rotated_at: datetime | None = None
-    songs_to_review: list[str] = []
-    removed_songs: list[str] = []
     

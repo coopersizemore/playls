@@ -1,0 +1,30 @@
+ROTATIONS
+
+base = /api/rotation 
+
+GET /{id}
+returns rotation json with that id 
+
+PUT /{id} body = rotation json
+updates rotation with that id by setting it to the passed rotation 
+
+POST / body = rotation json 
+creates rotation for current user using the rotation json 
+
+DELETE /{id}
+deletes the rotation 
+
+GET /{id}/rotate
+gets the songs currently ready to rotate 
+
+POST /{id}/add/song  body = song to add 
+
+DELETE /{id}/remove/song/{track_id}body = song to remove
+
+GET /{id}/songs
+returns all songs
+
+Example flow:
+user clicks on rotation in front end, all songs are displayed, user has 20 songs ready to rotate, user clicks "Rotate", the rotate 
+songs are retrieved and showed one at a time to the user, when the user chooses to keep or remove them PUT/{id}/add or remove is called
+

@@ -1,7 +1,8 @@
 """Database initialization and table creation."""
 from rest_api.database.config import engine, Base
-from rest_api.database.models.users import User
-from rest_api.database.models.rotations import Rotation
+from rest_api.database.models.user import User
+from rest_api.database.models.rotation import Rotation
+from rest_api.database.models.song import Song
 
 
 def create_tables():

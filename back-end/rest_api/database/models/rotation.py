@@ -7,7 +7,7 @@ from rest_api.database.config import Base
 class Rotation(Base):
     """Rotation model for storing playlist rotations."""
     
-    __tablename__ = "rotations"
+    __tablename__ = "rotation"
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
@@ -18,7 +18,8 @@ class Rotation(Base):
     last_rotated_at = Column(DateTime, nullable=True)
     
     # Foreign keys
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     
     # Relationships
-    owner = relationship("User", back_populates="rotations")
+    owner = relationship("User", back_populates="rotation")
+    songs = relationship("Song", back_populates="rotation")

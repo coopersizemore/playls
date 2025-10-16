@@ -7,7 +7,7 @@ from rest_api.database.config import Base
 class User(Base):
     """User model for storing user information."""
     
-    __tablename__ = "users"
+    __tablename__ = "user"
     
     id = Column(Integer, primary_key=True, index=True)
     spotify_id = Column(String(50), unique=True, index=True, nullable=False)
@@ -20,3 +20,4 @@ class User(Base):
     
     # Relationships
     rotations = relationship("Rotation", back_populates="owner")
+    songs = relationship("Song", back_populates="owner")

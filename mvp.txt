@@ -1,0 +1,108 @@
+PlayLS – MVP Spec
+
+Overview
+Name: PlayLS (Lazy Susan for Playlists)
+Goal: Help users keep their Spotify playlists fresh by rotating songs in and out on a regular schedule.
+
+Problem
+Oftentimes, Spotify users will create playlists that are a compilation of their favorite songs at the time. Over time, our song preferences change and we start skipping songs every time they come on. Sometimes songs we don’t really listen to anymore will stay on our playlists for months as we skip them every time and tell ourselves we need to remove it.
+
+
+This app aims to help users conveniently maintain a fresh playlist by tracking when songs were added to a playlist and every set amount of days, prompting the user to choose to keep or remove the song. Additionally, it will have features to help users find new music or return to old favorites, so that the playlist is constantly updating.
+
+Solution
+A rotating playlist that:
+Prompts users to review each song after a set time
+
+
+Lets them choose which songs to keep or remove by swiping left or right
+
+
+User can replace removed songs with new recommendations or old songs they might want to return to
+
+
+
+Core Features
+Spotify login with OAuth
+
+
+Connect or create a Spotify playlist
+Will be called a Rotation once connected
+
+
+User sets a rotation interval (e.g., every 30 days)
+Songs will be added to a queue every time interval starting from the time the song was added (or the time Rotation was created if already in playlist)
+
+
+Interface for reviewing songs and removing or keeping them
+User can, at their will, go to this queue of songs and start swiping left and right to “rotate” their playlist
+
+
+Recommend new songs based on user preferences or current playlist
+Options for adding new songs could include:
+Based on specific song
+Based on artist
+Based on their taste
+Based on genre (might include user taste)
+From rotation history
+Songs they listen to frequently that aren’t in the rotation
+Curated PlayLS pick (daily/weekly song picked by app for users to expand their taste)
+
+
+
+Nice-to-Have Features
+Detect skipped songs and suggest removing them
+
+
+Show stats like most skipped or longest kept songs
+
+
+A social system that could possibly introduce a new way to bring new songs to a rotation
+Possibly collaborative rotations
+
+
+
+Tech Stack
+Frontend: React
+
+Backend: RestAPI server using FastAPI Python
+
+
+Music API: Spotify Web API
+
+
+HTTPS Tunneling: ngrok (for local OAuth redirect URI)
+For now, for sake of development
+
+
+Version Control: GitHub
+
+MVP Scope
+Set up ngrok and Spotify developer app with redirect URI
+Build review interface in React
+FastAPI backend with login and callback routes
+Connect to Spotify and retrieve user playlist
+Connect front end to back end
+Let users remove songs and add recommendations
+Manual rotation to start (interval-based later)
+
+
+
+Next Steps
+Get a Spotify developer account and set up redirect URI
+
+
+Build basic FastAPI app to handle login and API calls
+
+
+Create simple React frontend to show playlist songs
+
+
+Set up local development flow using ngrok
+
+
+Add ability to mark songs for removal and get replacements
+
+
+
+

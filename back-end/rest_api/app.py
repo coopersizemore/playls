@@ -6,6 +6,10 @@ import os
 from typing import Optional
 import secrets
 import json
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI(title="PlayLS API", version="1.0.0")
 
@@ -215,9 +219,15 @@ async def root():
         
 #         return response.json()
 
-from views import rotation
+from .views import rotation
+from .views import user
+from .views import auth
+from .views import spotify
 
+app.include_router(auth.router)
+app.include_router(user.router)
 app.include_router(rotation.router)
+app.include_router(spotify.router)
 
 if __name__ == "__main__":
     import uvicorn

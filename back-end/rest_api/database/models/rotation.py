@@ -4,7 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from rest_api.database.config import Base
 
-class Rotation(Base):
+class RotationDB(Base):
     """Rotation model for storing playlist rotations."""
     
     __tablename__ = "rotation"
@@ -12,7 +12,7 @@ class Rotation(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    playlist_id = Column(String(50), nullable=False)
+    playlist_id = Column(String(50), nullable=True)
     rotation_interval = Column(Integer, default=10)
     created_at = Column(DateTime, server_default=func.now())
     last_rotated_at = Column(DateTime, nullable=True)
@@ -21,5 +21,5 @@ class Rotation(Base):
     owner_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     
     # Relationships
-    owner = relationship("User", back_populates="rotation")
-    songs = relationship("Song", back_populates="rotation")
+    owner = relationship("UserDB", back_populates="rotation")
+    song = relationship("SongDB", back_populates="rotation")

@@ -1,8 +1,8 @@
 """Database initialization and table creation."""
 from rest_api.database.config import engine, Base
-from rest_api.database.models.user import User
-from rest_api.database.models.rotation import Rotation
-from rest_api.database.models.song import Song
+from rest_api.database.models.user import UserDB
+from rest_api.database.models.rotation import RotationDB
+from rest_api.database.models.song import SongDB
 
 
 def create_tables():
@@ -20,4 +20,5 @@ def drop_tables():
 
 
 if __name__ == "__main__":
+    drop_tables()
     create_tables()

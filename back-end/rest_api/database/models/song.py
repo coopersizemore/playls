@@ -4,7 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from rest_api.database.config import Base
 
-class Song(Base):
+class SongDB(Base):
     __tablename__ = "song"
 
     id = Column(String(50), primary_key=True, index=True)
@@ -23,5 +23,5 @@ class Song(Base):
     owner_id = Column(Integer, ForeignKey("user.id"), nullable=False)
 
     # Relationships
-    rotation = relationship("Rotation", back_populates="song")
-    owner = relationship("User", back_populates="song")
+    rotation = relationship("RotationDB", back_populates="song")
+    owner = relationship("UserDB", back_populates="song")

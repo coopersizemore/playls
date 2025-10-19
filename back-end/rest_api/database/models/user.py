@@ -4,7 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from rest_api.database.config import Base
 
-class User(Base):
+class UserDB(Base):
     """User model for storing user information."""
     
     __tablename__ = "user"
@@ -19,5 +19,5 @@ class User(Base):
     created_at = Column(DateTime, server_default=func.now())
     
     # Relationships
-    rotations = relationship("Rotation", back_populates="owner")
-    songs = relationship("Song", back_populates="owner")
+    rotation = relationship("RotationDB", back_populates="owner")
+    song = relationship("SongDB", back_populates="owner")

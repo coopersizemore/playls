@@ -1,6 +1,7 @@
 """Database service layer for user and rotation operations."""
 from sqlalchemy.orm import Session
-from rest_api.database.models import User, Rotation
+from rest_api.database.models.rotation import RotationDB as Rotation
+from rest_api.database.models.user import UserDB as User
 from typing import Optional, List
 
 

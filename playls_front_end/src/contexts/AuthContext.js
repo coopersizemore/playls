@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
+const BACKEND_URL = process.env.REDIRECT_URI || "http://localhost:8000";
+
 const AuthContext = createContext();
 
 export const useAuth = () => {
@@ -26,14 +28,21 @@ export const AuthProvider = ({ children }) => {
     setLoading(false);
   }, []);
 
-  const login = async () => {
-    try {
-      const response = await axios.get('http://localhost:8000/auth/login');
-      window.location.href = response.data.auth_url;
-    } catch (error) {
-      console.error('Login failed:', error);
+const login = async () => {
+  try {
+    const response = await axios.get(`${BACKEND_URL}/auth/login`);
+    console.log("Login response:", response.data);
+    const authUrl = response.data.auth_url;
+    if (!authUrl) {
+      console.error("No auth_url returned from backend");
+      return;
     }
-  };
+    window.location.href = authUrl;
+  } catch (error) {
+    console.error('Login failed:', error);
+  }
+};
+
 
   const logout = () => {
     localStorage.removeItem('userId');
@@ -43,7 +52,7 @@ export const AuthProvider = ({ children }) => {
 
   const handleCallback = async (code, state) => {
     try {
-      const response = await axios.get(`http://localhost:8000/auth/callback?code=${code}&state=${state}`);
+      const response = await axios.get(`${BACKEND_URL}/auth/callback?code=${code}&state=${state}`);
       const { user_id, access_token } = response.data;
       
       localStorage.setItem('userId', user_id);
@@ -59,6 +68,7 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     user,
+    setUser,
     login,
     logout,
     handleCallback,

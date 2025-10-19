@@ -4,6 +4,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Home from './components/Home';
 import Login from './components/Login';
+import Callback from './components/Callback';
 import Rotation from './components/Rotation';
 import Review from './components/Review';
 import Restock from './components/Restock';
@@ -42,6 +43,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/callback" element={<Callback />} />
             <Route path="/rotation" element={<Rotation />} />
             <Route path="/review" element={<Review />} />
             <Route path="/restock" element={<Restock />} />

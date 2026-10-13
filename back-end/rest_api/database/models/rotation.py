@@ -18,8 +18,8 @@ class RotationDB(Base):
     last_rotated_at = Column(DateTime, nullable=True)
     
     # Foreign keys
-    owner_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # Relationships
-    owner = relationship("UserDB", back_populates="rotation")
-    song = relationship("SongDB", back_populates="rotation")
+    owner = relationship("UserDB", back_populates="rotations")
+    songs = relationship("SongDB", back_populates="rotation", cascade="all, delete-orphan")

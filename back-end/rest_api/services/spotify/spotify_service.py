@@ -1,3 +1,4 @@
+import logging
 import httpx
 from fastapi import HTTPException, Depends
 from sqlalchemy.orm import Session
@@ -5,6 +6,8 @@ from typing import List, Dict, Any, Optional
 from ...database.models.user import UserDB
 from ...database.config import get_db
 from ..auth_service import AuthService
+
+logger = logging.getLogger(__name__)
 
 class SpotifyService:
     """Service for interacting with Spotify Web API"""
@@ -56,9 +59,15 @@ class SpotifyService:
                     response = await client.delete(url, headers=headers, params=params)
             
             if not response.is_success:
+                # Log Spotify's details server-side; don't forward them to the client
+                logger.warning(
+                    "Spotify API %s %s failed: %s %s",
+                    method.upper(), endpoint, response.status_code, response.text[:500],
+                )
                 raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Spotify API error: {response.text}"
+                    status_code=429 if response.status_code == 429 else 502,
+                    detail="Spotify rate limit reached, try again shortly"
+                    if response.status_code == 429 else "Spotify request failed",
                 )
             
             return response.json() if response.content else {}

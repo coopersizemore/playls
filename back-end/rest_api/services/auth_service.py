@@ -3,8 +3,7 @@ import httpx
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import HTTPException, Depends, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import HTTPException, Depends, Request, Response, status
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from ..database.config import get_db
@@ -12,17 +11,51 @@ from ..database.models.user import UserDB
 from ..models.user import User
 
 # JWT Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
+# No fallback: a known default key would let anyone forge tokens for any user.
+# The placeholders below have been published in this repo, so they're rejected too.
+_PUBLISHED_PLACEHOLDER_KEYS = {
+    "your-super-secret-jwt-key-change-this-in-production",
+    "your-secret-key-here-change-in-production",
+}
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY or SECRET_KEY in _PUBLISHED_PLACEHOLDER_KEYS or len(SECRET_KEY) < 32:
+    raise RuntimeError("SECRET_KEY must be set to a random value of 32+ characters (see back-end/env.example)")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # one week; re-login via Spotify after that
+
+# The app session is a JWT in an httpOnly cookie, so page JavaScript can never read it
+SESSION_COOKIE = "playls_session"
+SESSION_COOKIE_PATH = "/api"
+
+# Browsers won't attach this header cross-site without a CORS preflight (which we never
+# allow), so requiring it on state-changing requests blocks CSRF on top of SameSite=Lax
+CSRF_HEADER = "X-Requested-With"
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def is_https(request: Request) -> bool:
+    return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+
+
+def set_session_cookie(response: Response, token: str, request: Request) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path=SESSION_COOKIE_PATH,
+        httponly=True,
+        secure=is_https(request),
+        samesite="lax",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(SESSION_COOKIE, path=SESSION_COOKIE_PATH)
 
 # Spotify OAuth Configuration
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:8000/auth/callback")
-
-# Security scheme
-security = HTTPBearer()
+SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:3000/api/auth/callback")
 
 class SpotifyOAuthService:
     """Service for handling Spotify OAuth authentication"""
@@ -144,23 +177,32 @@ class AuthService:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Could not validate credentials",
-                    headers={"WWW-Authenticate": "Bearer"},
                 )
             return payload
         except JWTError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Could not validate credentials",
-                headers={"WWW-Authenticate": "Bearer"},
             )
     
     @staticmethod
     def get_current_user_from_token(
-        credentials: HTTPAuthorizationCredentials = Depends(security),
+        request: Request,
         db: Session = Depends(get_db)
     ) -> UserDB:
-        """Get current authenticated user from JWT token"""
-        payload = AuthService.verify_token(credentials.credentials)
+        """Get current authenticated user from the session cookie"""
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+            )
+        if request.method not in SAFE_METHODS and not request.headers.get(CSRF_HEADER):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Missing CSRF header",
+            )
+        payload = AuthService.verify_token(token)
         user_id = payload.get("sub")
         
         user = db.query(UserDB).filter(UserDB.id == user_id).first()

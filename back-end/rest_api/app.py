@@ -11,12 +11,23 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-app = FastAPI(title="PlayLS API", version="1.0.0")
+# Interactive docs are off unless explicitly enabled (e.g. locally or on the dev deployment)
+_docs_enabled = os.getenv("ENABLE_API_DOCS", "").lower() == "true"
+app = FastAPI(
+    title="PlayLS API",
+    version="1.0.0",
+    docs_url="/api/docs" if _docs_enabled else None,
+    redoc_url=None,
+    openapi_url="/api/openapi.json" if _docs_enabled else None,
+)
 
-# CORS middleware for React frontend
+# CORS is only needed when the frontend runs on a different origin (e.g. a standalone
+# React dev server). On Vercel both services share one domain.
+FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_origins=[FRONTEND_URL] if FRONTEND_URL else [],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,7 +42,7 @@ REDIRECT_URI = os.getenv("REDIRECT_URI", "http://localhost:8000/auth/callback")
 user_tokens = {}
 user_rotations = {}
 
-@app.get("/")
+@app.get("/api")
 async def root():
     return {"message": "PlayLS API is running"}
 
@@ -224,10 +235,12 @@ from .views import user
 from .views import auth
 from .views import spotify
 
-app.include_router(auth.router)
-app.include_router(user.router)
-app.include_router(rotation.router)
-app.include_router(spotify.router)
+# Vercel forwards the full request path, so every route lives under /api
+API_PREFIX = "/api"
+app.include_router(auth.router, prefix=API_PREFIX)
+app.include_router(user.router, prefix=API_PREFIX)
+app.include_router(rotation.router, prefix=API_PREFIX)
+app.include_router(spotify.router, prefix=API_PREFIX)
 
 if __name__ == "__main__":
     import uvicorn

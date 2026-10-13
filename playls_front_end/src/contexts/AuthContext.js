@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
-
-const BACKEND_URL = process.env.REDIRECT_URI || "http://localhost:8000";
+import { API_BASE } from '../api';
 
 const AuthContext = createContext();
 
@@ -13,72 +12,55 @@ export const useAuth = () => {
   return context;
 };
 
+// The session is an httpOnly cookie set by the backend after Spotify login, so the
+// frontend never sees the token. It asks the backend who is logged in instead.
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is already logged in
-    const userId = localStorage.getItem('userId');
-    const accessToken = localStorage.getItem('accessToken');
-    
-    if (userId && accessToken) {
-      setUser({ id: userId, accessToken });
-    }
-    setLoading(false);
-  }, []);
-
-const login = async () => {
-  try {
-    const response = await axios.get(`${BACKEND_URL}/auth/login`);
-    console.log("Login response:", response.data);
-    const authUrl = response.data.auth_url;
-    if (!authUrl) {
-      console.error("No auth_url returned from backend");
-      return;
-    }
-    window.location.href = authUrl;
-  } catch (error) {
-    console.error('Login failed:', error);
-  }
-};
-
-
-  const logout = () => {
+    // Tokens used to be kept in localStorage; drop any left over from old sessions
     localStorage.removeItem('userId');
     localStorage.removeItem('accessToken');
-    setUser(null);
+
+    axios.get(`${API_BASE}/auth/me`)
+      .then((response) => setUser(response.data))
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const login = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/auth/login`);
+      const authUrl = response.data.auth_url;
+      if (!authUrl) {
+        console.error("No auth_url returned from backend");
+        return;
+      }
+      window.location.href = authUrl;
+    } catch (error) {
+      console.error('Login failed:', error);
+    }
   };
 
-  const handleCallback = async (code, state) => {
+  const logout = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/auth/callback?code=${code}&state=${state}`);
-      const { user_id, access_token } = response.data;
-      
-      localStorage.setItem('userId', user_id);
-      localStorage.setItem('accessToken', access_token);
-      setUser({ id: user_id, accessToken: access_token });
-      
-      return true;
-    } catch (error) {
-      console.error('Callback failed:', error);
-      return false;
+      await axios.post(`${API_BASE}/auth/logout`);
+    } finally {
+      setUser(null);
     }
   };
 
   const value = {
     user,
-    setUser,
     login,
     logout,
-    handleCallback,
     loading
   };
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      {!loading && children}
     </AuthContext.Provider>
   );
 };
-

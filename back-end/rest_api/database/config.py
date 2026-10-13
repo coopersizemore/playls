@@ -4,39 +4,29 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 from dotenv import load_dotenv
 
-# Load environment variables from the back-end directory
-# Get the path to the back-end directory (parent of rest_api)
+# Load back-end/.env for local runs; on Vercel env vars come from the project settings
 backend_dir = Path(__file__).parent.parent.parent
-env_path = backend_dir / ".env"
+load_dotenv(dotenv_path=backend_dir / ".env")
 
-print(f"Loading .env from: {env_path}")
-print(f".env file exists: {env_path.exists()}")
+# Supabase Postgres connection string. On Vercel use the transaction pooler (port 6543).
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set (see back-end/env.example)")
 
-# Load environment variables with explicit path
-load_dotenv(dotenv_path=env_path)
+# Supabase hands out postgresql:// URLs; point SQLAlchemy at the psycopg 3 driver
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
-# Database configuration with defaults
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "3306")
-DB_NAME = os.getenv("DB_NAME", "playls_db")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-
-print(f"Loaded env vars: HOST={DB_HOST}, PORT={DB_PORT}, NAME={DB_NAME}, USER={DB_USER}, PASSWORD={'*' * len(DB_PASSWORD) if DB_PASSWORD else None}")
-
-# Construct database URL
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
-print(f"Database URL: mysql+pymysql://{DB_USER}:***@{DB_HOST}:{DB_PORT}/{DB_NAME}")
-
-# Create SQLAlchemy engine
 engine = create_engine(
     DATABASE_URL,
-    echo=True,  # Set to False in production
-    pool_pre_ping=True,  # Verify connections before use
-    pool_recycle=300,    # Recreate connections after 5 minutes
+    echo=os.getenv("SQL_ECHO", "").lower() == "true",
+    # Serverless functions shouldn't hold connections; Supabase's pooler does the pooling
+    poolclass=NullPool,
+    # The transaction pooler doesn't support prepared statements
+    connect_args={"prepare_threshold": None},
 )
 
 # Create SessionLocal class

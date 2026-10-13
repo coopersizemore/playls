@@ -12,16 +12,16 @@ class SongDB(Base):
     artist = Column(String(100), index=True)
     album = Column(String(100), index=True)
     duration_ms = Column(Integer)
+
     added_at = Column(DateTime, default=func.now())
     removed_at = Column(DateTime, default=None)
     is_removed = Column(Boolean, default=False)
+    
     reviewed_at = Column(DateTime, default=None)
     is_reviewed = Column(Boolean, default=False)
 
     # Foreign keys
     rotation_id = Column(Integer, ForeignKey("rotation.id"), nullable=False)
-    owner_id = Column(Integer, ForeignKey("user.id"), nullable=False)
 
     # Relationships
-    rotation = relationship("RotationDB", back_populates="song")
-    owner = relationship("UserDB", back_populates="song")
+    rotation = relationship("RotationDB", back_populates="songs")

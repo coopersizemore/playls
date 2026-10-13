@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import axios from 'axios';
+import { API_BASE } from '../api';
 import {
   Container,
   Typography,
@@ -24,6 +26,24 @@ import {
 const Home = () => {
   const navigate = useNavigate();
   const { user, login } = useAuth();
+  const { rotations, setRotations } = useState([]);
+
+  useEffect(() => {
+     if (user) {
+       fetchRotations();
+     }
+   }, [user]);
+
+   const fetchRotations = async () => {
+      console.log('Fetching rotations...');
+      try {
+        const response = await axios.get(`${API_BASE}/user/me/rotations`);
+        setRotations(response.data || []);
+        console.log('Rotations fetched successfully:', response.data);
+      } catch (error) {
+        console.error('Failed to fetch rotations:', error);
+      }
+    };
 
   if (!user) {
     return (
@@ -77,15 +97,15 @@ const Home = () => {
         </Typography>
         
         <Grid container spacing={3}>
-          <Grid item xs={12} sm={6} md={4}>
-            <Card>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={2}>
-                  <MusicNote color="primary" sx={{ mr: 1 }} />
-                  <Typography variant="h6">My Favorites</Typography>
-                </Box>
-                <Typography color="text.secondary">
-                  Last rotated: 3 days ago
+            <Grid item xs={12} sm={6} md={4}>
+              <Card>
+                <CardContent>
+                  <Box display="flex" alignItems="center" mb={2}>
+                    <MusicNote color="primary" sx={{ mr: 1 }} />
+                    <Typography variant="h6">My Favorites</Typography>
+                  </Box>
+                  <Typography color="text.secondary">
+                    Last rotated: 3 days ago
                 </Typography>
                 <Typography color="text.secondary">
                   5 songs ready for review

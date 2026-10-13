@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional, List
@@ -5,6 +6,8 @@ from ..database.config import get_db
 from ..database.models.user import UserDB
 from ..services.auth_service import AuthService
 from ..services.spotify.spotify_service import SpotifyService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/spotify", tags=["spotify"])
 
@@ -17,8 +20,11 @@ async def get_user_profile(
     try:
         profile = await SpotifyService.get_user_profile(current_user, db)
         return profile
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.get("/playlists")
 async def get_user_playlists(
@@ -31,8 +37,11 @@ async def get_user_playlists(
     try:
         playlists = await SpotifyService.get_user_playlists(current_user, db, limit, offset)
         return playlists
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.get("/playlist/{playlist_id}")
 async def get_playlist(
@@ -45,8 +54,11 @@ async def get_playlist(
     try:
         playlist = await SpotifyService.get_playlist(playlist_id, current_user, db, fields)
         return playlist
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.get("/playlist/{playlist_id}/tracks")
 async def get_playlist_tracks(
@@ -63,8 +75,11 @@ async def get_playlist_tracks(
             playlist_id, current_user, db, limit, offset, fields
         )
         return tracks
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.post("/playlist/{playlist_id}/tracks")
 async def add_tracks_to_playlist(
@@ -80,8 +95,11 @@ async def add_tracks_to_playlist(
             playlist_id, track_uris, current_user, db, position
         )
         return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.delete("/playlist/{playlist_id}/tracks")
 async def remove_tracks_from_playlist(
@@ -96,8 +114,11 @@ async def remove_tracks_from_playlist(
             playlist_id, track_uris, current_user, db
         )
         return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.post("/playlist")
 async def create_playlist(
@@ -113,8 +134,11 @@ async def create_playlist(
             name, current_user, db, description, public
         )
         return playlist
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.get("/recommendations")
 async def get_recommendations(
@@ -158,8 +182,11 @@ async def get_recommendations(
             seed_tracks_list, limit, **audio_features
         )
         return recommendations
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.get("/search")
 async def search_spotify(
@@ -177,5 +204,8 @@ async def search_spotify(
             q, current_user, db, type, limit, offset, market
         )
         return results
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Spotify route failed")
+        raise HTTPException(status_code=502, detail="Spotify request failed")

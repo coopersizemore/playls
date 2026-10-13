@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import axios from 'axios';
+import { API_BASE } from '../api';
 import {
   Container,
   Typography,
@@ -72,7 +73,7 @@ const Restock = () => {
   const fetchRecommendations = async (type) => {
     try {
       setLoading(true);
-      const response = await axios.get(`http://localhost:8000/recommendations?user_id=${user.id}`);
+      const response = await axios.get(`${API_BASE}/recommendations?user_id=${user.id}`);
       setRecommendations(response.data.tracks || []);
     } catch (error) {
       console.error('Failed to fetch recommendations:', error);

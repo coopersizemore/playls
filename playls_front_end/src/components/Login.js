@@ -6,54 +6,25 @@ import {
   Typography,
   Button,
   Box,
-  CircularProgress,
   Alert,
 } from '@mui/material';
 
 const Login = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user, login, handleCallback } = useAuth();
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState(null);
+  const { user, login } = useAuth();
+  // The backend finishes the Spotify flow itself and redirects to / on success,
+  // or back here with ?error=auth_failed
+  const error = searchParams.get('error') ? 'Login was cancelled or failed' : null;
 
   useEffect(() => {
-    const code = searchParams.get('code');
-    const state = searchParams.get('state');
-    const error = searchParams.get('error');
-
-    if (error) {
-      setError('Login was cancelled or failed');
-      return;
+    if (user) {
+      navigate('/');
     }
-
-    if (code && state) {
-      setLoading(true);
-      handleCallback(code, state).then((success) => {
-        if (success) {
-          navigate('/');
-        } else {
-          setError('Login failed. Please try again.');
-        }
-        setLoading(false);
-      });
-    }
-  }, [searchParams, handleCallback, navigate]);
+  }, [user, navigate]);
 
   if (user) {
-    navigate('/');
     return null;
-  }
-
-  if (loading) {
-    return (
-      <Container maxWidth="sm" sx={{ mt: 8, textAlign: 'center' }}>
-        <CircularProgress />
-        <Typography variant="h6" sx={{ mt: 2 }}>
-          Logging you in...
-        </Typography>
-      </Container>
-    );
   }
 
   return (

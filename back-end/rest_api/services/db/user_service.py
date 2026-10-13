@@ -36,7 +36,7 @@ def delete_user(db: orm.Session, user_id: int) -> bool:
     return True
 
 def get_user_rotations(db: orm.Session, user_id: int) -> list[RotationDB]:
-    rotations = db.query(RotationDB).filter(RotationDB.user_id == user_id).all()
+    rotations = db.query(RotationDB).filter(RotationDB.owner_id == user_id).all()
     if not rotations:
         return None
     return rotations

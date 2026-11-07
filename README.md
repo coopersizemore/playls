@@ -1,183 +1,38 @@
-# PlayLS - Lazy Susan for Playlists
+# PlayLS: a lazy Susan for playlists
 
-Keep your Spotify playlists fresh by rotating songs in and out on a regular schedule.
+PlayLS keeps Spotify playlists fresh. A **rotation** wraps a playlist you own. Each song comes due for review N days after it was added (or after you last kept it), and you keep it, skip it or remove it. Removals are applied to the Spotify playlist.
 
-## Overview
+Scope: personal use, in Spotify Development Mode (at most 5 allowlisted users). For product decisions see [DESIGN.md](DESIGN.md), and for status and the roadmap see [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-PlayLS helps users maintain fresh playlists by:
-- Tracking when songs were added to playlists
-- Prompting users to review songs after a set time interval
-- Allowing users to keep or remove songs with a simple swipe interface
-- Providing recommendations for new songs to replace removed ones
+## Stack
+- **Frontend:** React 19 (CRA), MUI 7, react-router 7 (`playls_front_end/`)
+- **Backend:** FastAPI, SQLAlchemy and psycopg 3 (`back-end/rest_api/`)
+- **Database:** Supabase Postgres
+- **Hosting:** Vercel, with two services on one domain (`/api/*` goes to FastAPI and everything else to React; see `vercel.json`)
+- **Auth:** Spotify OAuth, then an httpOnly session cookie
 
-## Tech Stack
+## Local development
+Prerequisites: Python 3.12, Node, the Vercel CLI, and a Spotify app whose redirect URI is `http://127.0.0.1:3000/api/auth/callback`.
 
-- **Frontend**: React with Material-UI
-- **Backend**: FastAPI (Python)
-- **Music API**: Spotify Web API
-- **Development**: ngrok for local OAuth redirects
+```bash
+# one-time
+<path-to-python3.12> -m venv back-end/.venv
+back-end/.venv/Scripts/pip install -r back-end/requirements.txt   # (bin/ on macOS/Linux)
+cp back-end/env.example back-end/.env                              # then fill in the values
+(cd playls_front_end && npm install)
 
-## Setup Instructions
-
-### Prerequisites
-
-1. **Spotify Developer Account**
-   - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-   - Create a new app
-   - Note your Client ID and Client Secret
-   - Set redirect URI to `http://localhost:8000/auth/callback` (for local development)
-
-2. **Python 3.8+**
-3. **Node.js 16+**
-4. **ngrok** (for local development)
-
-### Backend Setup
-
-1. Navigate to the backend directory:
-   ```bash
-   cd back-end
-   ```
-
-2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Create environment file:
-   ```bash
-   cp env.example .env
-   ```
-
-5. Edit `.env` file with your Spotify credentials:
-   ```
-   SPOTIFY_CLIENT_ID=your_spotify_client_id_here
-   SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
-   REDIRECT_URI=http://localhost:8000/auth/callback
-   ```
-
-6. Start the backend server:
-   ```bash
-   python rest_api/app.py
-   ```
-
-### Frontend Setup
-
-1. Navigate to the frontend directory:
-   ```bash
-   cd playls_front_end
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Start the development server:
-   ```bash
-   npm start
-   ```
-
-### ngrok Setup (for local development)
-
-1. Install ngrok:
-   ```bash
-   npm install -g ngrok
-   # or download from https://ngrok.com/download
-   ```
-
-2. Start ngrok tunnel:
-   ```bash
-   ngrok http 8000
-   ```
-
-3. Copy the HTTPS URL (e.g., `https://abc123.ngrok.io`)
-
-4. Update your Spotify app's redirect URI in the Spotify Developer Dashboard to:
-   ```
-   https://your-ngrok-url.ngrok.io/auth/callback
-   ```
-
-5. Update your backend `.env` file:
-   ```
-   REDIRECT_URI=https://your-ngrok-url.ngrok.io/auth/callback
-   ```
-
-## Usage
-
-1. Start both backend and frontend servers
-2. Open http://localhost:3000 in your browser
-3. Click "Login with Spotify" to authenticate
-4. Create a rotation from one of your playlists
-5. Review songs and keep or remove them
-6. Find new songs to replace removed ones
-
-## Features
-
-### Core Features
-- ✅ Spotify OAuth login
-- ✅ Connect/create Spotify playlists
-- ✅ Set rotation intervals (7-90 days)
-- ✅ Song review interface with keep/remove actions
-- ✅ Song recommendations based on various criteria
-- ✅ Rotation history tracking
-
-### Nice-to-Have Features (Future)
-- Skip detection and automatic removal suggestions
-- Statistics (most skipped songs, longest kept songs)
-- Social features and collaborative rotations
-- Mobile app
-
-## API Endpoints
-
-### Authentication
-- `GET /auth/login` - Initiate Spotify OAuth
-- `GET /auth/callback` - Handle OAuth callback
-
-### User Data
-- `GET /user/playlists` - Get user's playlists
-- `GET /playlist/{playlist_id}/tracks` - Get playlist tracks
-
-### Rotations
-- `POST /rotation/create` - Create new rotation
-- `GET /rotation/{rotation_id}/review` - Get songs to review
-- `POST /rotation/{rotation_id}/review` - Review a song (keep/remove)
-
-### Recommendations
-- `GET /recommendations` - Get song recommendations
-
-## Development
-
-### Project Structure
-```
-playls/
-├── back-end/
-│   ├── rest_api/
-│   │   └── app.py          # FastAPI application
-│   ├── requirements.txt    # Python dependencies
-│   └── env.example        # Environment variables template
-├── playls_front_end/      # React application
-│   ├── src/
-│   │   ├── components/    # React components
-│   │   ├── contexts/      # React contexts
-│   │   └── App.js         # Main app component
-│   └── package.json       # Node.js dependencies
-└── README.md
+# run (from the repo root; don't activate the venv first)
+vercel dev
 ```
 
-### Contributing
+Open **http://127.0.0.1:3000**, not `localhost`. The login cookies are tied to the host name.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+The required env vars are listed in `back-end/env.example`. Local and production share one Supabase database.
 
-## License
+## Tests
+```bash
+cd back-end && python -m pytest tests
+```
 
-MIT License - see LICENSE file for details
+## Deployment
+Every push to `main` deploys to Vercel production. Setup steps are in [DEPLOYMENT_PLAN.md](DEPLOYMENT_PLAN.md).

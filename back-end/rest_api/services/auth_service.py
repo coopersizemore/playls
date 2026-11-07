@@ -172,7 +172,7 @@ class AuthService:
         """Verify and decode JWT token"""
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            user_id: int = payload.get("sub")
+            user_id = payload.get("sub")
             if user_id is None:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -203,8 +203,15 @@ class AuthService:
                 detail="Missing CSRF header",
             )
         payload = AuthService.verify_token(token)
-        user_id = payload.get("sub")
-        
+        # JWT "sub" is a string; users.id is an integer (Postgres won't compare them implicitly)
+        try:
+            user_id = int(payload["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+            )
+
         user = db.query(UserDB).filter(UserDB.id == user_id).first()
         if user is None:
             raise HTTPException(

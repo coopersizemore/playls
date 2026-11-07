@@ -13,12 +13,12 @@ Tags: **[YOU]** means it needs your accounts, dashboards or secrets. **[CLAUDE]*
 - [x] Spotify dashboard redirect URIs: `http://127.0.0.1:3000/api/auth/callback` and `https://playls.vercel.app/api/auth/callback` **[YOU]**
 - [x] Vercel project `playls` linked to the GitHub repo; production env vars set (`DATABASE_URL`, `SECRET_KEY`, `TOKEN_ENCRYPTION_KEY`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI`) **[YOU]**
 - [x] `back-end/.venv` on Python 3.12; Vercel CLI installed **[YOU]**
+- [x] Local `vercel dev` login works. Windows needs Developer Mode on, because the Vercel CLI creates symlinks. **[YOU]**
+- [x] Pending work committed and pushed; Git-connected prod deploys are live **[YOU]**
+- [x] Prod login works at https://playls.vercel.app (2026-11-07) **[YOU]**
 
-## Remaining
-1. **[YOU]** Run `vercel dev` from the repo root, open http://127.0.0.1:3000, and log in with Spotify. This smoke-tests the local setup.
-2. **[CLAUDE]** Commit the pending work and push to `main` (when you ask). That push redeploys production.
-3. **[YOU]** If Vercel isn't connected to Git (check Settings → Git), run `vercel --prod` instead. On 2026-11-07, prod `/api/*` returned 500; the deployments were 26 days old, older than the env vars, which only take effect on a new deploy. Log in at https://playls.vercel.app. If it still returns 500, check the function logs in Vercel → Deployments → Logs.
-4. **[YOU]** Optionally, add up to 4 more users in the Spotify dashboard (Settings → User Management).
+## Optional
+- **[YOU]** Add up to 4 more users in the Spotify dashboard (Settings → User Management).
 
 ## Ongoing workflow
 - Develop locally with `vercel dev`. Every push to `main` deploys to production.

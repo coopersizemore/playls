@@ -1,6 +1,6 @@
 # PlayLS
 
-Spotify "lazy susan": a rotation wraps a playlist the user owns, and songs come due for keep/skip/remove review every N days. Product spec: [mvp.txt](mvp.txt), annotated with what's deferred or scrapped. **Owner decisions and semantics (source of truth, due-date math, batched removals, data model): [DESIGN.md](DESIGN.md).** Phased build plan: [PROJECT_STATUS.md](PROJECT_STATUS.md). The owner knows the product well, so don't explain it back; focus on the code.
+Spotify "lazy susan": a rotation wraps a playlist the user owns, and songs come due for keep/skip/remove review every N days. Product spec: [mvp.txt](docs/mvp.txt), annotated with what's deferred or scrapped. **Owner decisions and semantics (source of truth, due-date math, batched removals, data model): [DESIGN.md](docs/DESIGN.md).** Phased build plan: [PROJECT_STATUS.md](docs/PROJECT_STATUS.md). The owner knows the product well, so don't explain it back; focus on the code.
 
 Status: unfinished prototype. The architecture is settled (Supabase + Vercel + Spotify OAuth), so build within it. Scope is Spotify only, personal use (at most 5 users). Apple Music is a maybe-later, so keep track IDs provider-neutral and add a `provider` column, but build no abstraction layer. The internal code structure (services, models) is still provisional.
 
@@ -63,11 +63,12 @@ They'll eventually be built on a system that doesn't depend on the Spotify API.
 Song recommendations are a backlog task. Don't build or extend them. Plan to scrap the existing recommendation code at some point: `SpotifyService.get_recommendations`, `GET /spotify/recommendations`, and the `/recommendations` calls in `Review.js`/`Restock.js`. Replacing removed songs should rely on search and manual adds for now.
 
 ## Deployment target
-Personal/demo scope: one Supabase project, one Spotify app, Vercel production on a `*.vercel.app` URL, and local dev with `vercel dev` (local and prod share the database). See [DEPLOYMENT_PLAN.md](DEPLOYMENT_PLAN.md).
+Personal/demo scope: one Supabase project, one Spotify app, Vercel production on a `*.vercel.app` URL, and local dev with `vercel dev` (local and prod share the database). See [DEPLOYMENT_PLAN.md](docs/DEPLOYMENT_PLAN.md).
 
 ## Testing
 `cd back-end && python -m pytest tests` runs `tests/test_auth.py` (untracked). It sets dummy `DATABASE_URL`/`SECRET_KEY` before importing the app, so it needs no DB or `.env`. The tests expect 403 for missing auth, which is FastAPI 0.104 behavior; newer versions return 401. There are no frontend tests beyond the CRA default.
 
 ## Working notes
 - `back-end/.env` holds real secrets. Never print or commit it.
-- The working tree has uncommitted changes (model relationship fixes, async create_rotation, frontend Rotation flow). Check `git status` before large refactors.
+- Docs live in `docs/`; this file must stay at the repo root so Claude Code auto-loads it.
+- Every model must be imported in `database/models/__init__.py`, or `relationship()` string lookups fail at runtime.

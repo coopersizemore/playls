@@ -17,7 +17,7 @@ The decisions behind this plan are in [DESIGN.md](DESIGN.md). Deployment steps a
   - `Home.js` has a `useState` destructuring bug.
 
 ## Phase 0: setup
-1. Smoke-test locally, then commit and push the pending work, which redeploys prod. Then log in on prod (see DEPLOYMENT_PLAN, "Remaining").
+1. ~~Smoke-test locally, push, log in on prod~~ Done 2026-11-07.
 
 ## Phase 1: core rotation loop
 2. **Schema.** Wipe the database (approved), add Alembic, and start from the target model in DESIGN.md (`rotation`, `rotation_track`, `review_event`, and `provider` columns).

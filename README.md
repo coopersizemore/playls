@@ -2,7 +2,7 @@
 
 PlayLS keeps Spotify playlists fresh. A **rotation** wraps a playlist you own. Each song comes due for review N days after it was added (or after you last kept it), and you keep it, skip it or remove it. Removals are applied to the Spotify playlist.
 
-Scope: personal use, in Spotify Development Mode (at most 5 allowlisted users). For product decisions see [DESIGN.md](DESIGN.md), and for status and the roadmap see [PROJECT_STATUS.md](PROJECT_STATUS.md).
+Scope: personal use, in Spotify Development Mode (at most 5 allowlisted users). For product decisions see [DESIGN.md](docs/DESIGN.md), and for status and the roadmap see [PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
 
 ## Stack
 - **Frontend:** React 19 (CRA), MUI 7, react-router 7 (`playls_front_end/`)
@@ -35,4 +35,4 @@ cd back-end && python -m pytest tests
 ```
 
 ## Deployment
-Every push to `main` deploys to Vercel production. Setup steps are in [DEPLOYMENT_PLAN.md](DEPLOYMENT_PLAN.md).
+Every push to `main` deploys to Vercel production. Setup steps are in [DEPLOYMENT_PLAN.md](docs/DEPLOYMENT_PLAN.md).

@@ -1,234 +1,87 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import {
-  Container,
-  Typography,
-  Card,
-  CardContent,
+  Alert,
+  Avatar,
   Box,
   Chip,
+  CircularProgress,
   List,
   ListItem,
+  ListItemAvatar,
   ListItemText,
-  ListItemSecondaryAction,
-  IconButton,
-  Tabs,
   Tab,
-  Grid,
+  Tabs,
+  Typography,
 } from '@mui/material';
-import {
-  MusicNote,
-  ThumbUp,
-  ThumbDown,
-  RestoreFromTrash,
-} from '@mui/icons-material';
+import { MusicNote } from '@mui/icons-material';
+import { api, errorMessage } from '../api';
+import { Layout, formatDate } from './Layout';
+
+const TABS = [
+  { label: 'All', filter: () => true },
+  { label: 'Removed', filter: (e) => e.action === 'remove' },
+  { label: 'Kept', filter: (e) => e.action === 'keep' },
+  { label: 'Skipped', filter: (e) => e.action === 'skip' },
+];
+
+const ACTION_CHIP = {
+  keep: { label: 'Kept', color: 'success' },
+  remove: { label: 'Removed', color: 'error' },
+  skip: { label: 'Skipped', color: 'default' },
+  undo: { label: 'Undo', color: 'default' },
+};
 
 const History = () => {
-  const { user } = useAuth();
-  const [tabValue, setTabValue] = useState(0);
-  const [history, setHistory] = useState({
-    removed: [],
-    added: [],
-    kept: []
-  });
+  const { rotationId } = useParams();
+  const [rotation, setRotation] = useState(null);
+  const [events, setEvents] = useState(null);
+  const [tab, setTab] = useState(0);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (user) {
-      fetchHistory();
-    }
-  }, [user]);
+    Promise.all([api.rotation(rotationId, { sync: false }), api.history(rotationId)])
+      .then(([summary, history]) => { setRotation(summary); setEvents(history); })
+      .catch((e) => { setError(errorMessage(e, 'Failed to load history.')); setEvents([]); });
+  }, [rotationId]);
 
-  const fetchHistory = async () => {
-    try {
-      // Mock data for demo
-      const mockHistory = {
-        removed: [
-          {
-            id: '1',
-            name: 'Old Song 1',
-            artist: 'Artist 1',
-            removedAt: '2024-01-15T00:00:00Z',
-            reason: 'user_removed'
-          },
-          {
-            id: '2',
-            name: 'Old Song 2',
-            artist: 'Artist 2',
-            removedAt: '2024-01-10T00:00:00Z',
-            reason: 'user_removed'
-          }
-        ],
-        added: [
-          {
-            id: '3',
-            name: 'New Song 1',
-            artist: 'Artist 3',
-            addedAt: '2024-01-20T00:00:00Z',
-            source: 'recommendation'
-          },
-          {
-            id: '4',
-            name: 'New Song 2',
-            artist: 'Artist 4',
-            addedAt: '2024-01-18T00:00:00Z',
-            source: 'search'
-          }
-        ],
-        kept: [
-          {
-            id: '5',
-            name: 'Kept Song 1',
-            artist: 'Artist 5',
-            keptAt: '2024-01-12T00:00:00Z',
-            daysInRotation: 30
-          }
-        ]
-      };
-      setHistory(mockHistory);
-    } catch (error) {
-      console.error('Failed to fetch history:', error);
-    }
-  };
-
-  const restoreSong = async (songId) => {
-    try {
-      // API call to restore song
-      console.log('Restoring song:', songId);
-      // Update local state
-    } catch (error) {
-      console.error('Failed to restore song:', error);
-    }
-  };
-
-  const TabPanel = ({ children, value, index }) => (
-    <div hidden={value !== index}>
-      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
-    </div>
-  );
+  const shown = (events || []).filter(TABS[tab].filter);
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4 }}>
+    <Layout maxWidth="md">
       <Typography variant="h4" component="h1" gutterBottom>
-        Rotation History
+        {rotation ? `${rotation.name}: History` : 'History'}
       </Typography>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
+        {TABS.map((t) => <Tab key={t.label} label={t.label} />)}
+      </Tabs>
 
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)}>
-          <Tab label="Removed Songs" />
-          <Tab label="Added Songs" />
-          <Tab label="Kept Songs" />
-        </Tabs>
-      </Box>
-
-      <TabPanel value={tabValue} index={0}>
-        <Typography variant="h6" gutterBottom>
-          Songs You've Removed
-        </Typography>
+      {events === null ? (
+        <Box textAlign="center" mt={6}><CircularProgress /></Box>
+      ) : shown.length === 0 ? (
+        <Typography color="text.secondary">No reviews yet.</Typography>
+      ) : (
         <List>
-          {history.removed.map((song) => (
-            <Card key={song.id} sx={{ mb: 2 }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={1}>
-                  <MusicNote color="primary" sx={{ mr: 1 }} />
-                  <Box>
-                    <Typography variant="h6">{song.name}</Typography>
-                    <Typography color="text.secondary">{song.artist}</Typography>
-                  </Box>
-                </Box>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Chip 
-                    label={`Removed ${new Date(song.removedAt).toLocaleDateString()}`}
-                    size="small"
-                    color="error"
-                  />
-                  <Chip 
-                    label="User Removed"
-                    size="small"
-                    variant="outlined"
-                  />
-                </Box>
-              </CardContent>
-              <CardContent sx={{ pt: 0 }}>
-                <IconButton
-                  onClick={() => restoreSong(song.id)}
-                  color="primary"
-                >
-                  <RestoreFromTrash />
-                </IconButton>
-              </CardContent>
-            </Card>
-          ))}
+          {shown.map((e, i) => {
+            const chip = ACTION_CHIP[e.action] || { label: e.action, color: 'default' };
+            return (
+              <ListItem key={`${e.created_at}-${e.track.track_id}-${i}`} divider
+                secondaryAction={<Chip size="small" label={chip.label} color={chip.color} />}>
+                <ListItemAvatar>
+                  <Avatar variant="rounded" src={e.track.image_url || undefined}><MusicNote /></Avatar>
+                </ListItemAvatar>
+                <ListItemText
+                  primary={e.track.title}
+                  secondary={`${e.track.artists || ''} · ${formatDate(e.created_at)}`}
+                />
+              </ListItem>
+            );
+          })}
         </List>
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={1}>
-        <Typography variant="h6" gutterBottom>
-          Songs You've Added
-        </Typography>
-        <List>
-          {history.added.map((song) => (
-            <Card key={song.id} sx={{ mb: 2 }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={1}>
-                  <MusicNote color="primary" sx={{ mr: 1 }} />
-                  <Box>
-                    <Typography variant="h6">{song.name}</Typography>
-                    <Typography color="text.secondary">{song.artist}</Typography>
-                  </Box>
-                </Box>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Chip 
-                    label={`Added ${new Date(song.addedAt).toLocaleDateString()}`}
-                    size="small"
-                    color="success"
-                  />
-                  <Chip 
-                    label={song.source}
-                    size="small"
-                    variant="outlined"
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-          ))}
-        </List>
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={2}>
-        <Typography variant="h6" gutterBottom>
-          Songs You've Kept
-        </Typography>
-        <List>
-          {history.kept.map((song) => (
-            <Card key={song.id} sx={{ mb: 2 }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={1}>
-                  <MusicNote color="primary" sx={{ mr: 1 }} />
-                  <Box>
-                    <Typography variant="h6">{song.name}</Typography>
-                    <Typography color="text.secondary">{song.artist}</Typography>
-                  </Box>
-                </Box>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Chip 
-                    label={`Kept ${new Date(song.keptAt).toLocaleDateString()}`}
-                    size="small"
-                    color="success"
-                  />
-                  <Chip 
-                    label={`${song.daysInRotation} days in rotation`}
-                    size="small"
-                    variant="outlined"
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-          ))}
-        </List>
-      </TabPanel>
-    </Container>
+      )}
+    </Layout>
   );
 };
 
 export default History;
-

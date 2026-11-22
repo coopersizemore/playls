@@ -1,244 +1,82 @@
 import React, { useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import {
-  Container,
-  Typography,
+  Alert,
+  Button,
   Card,
   CardContent,
-  Switch,
-  FormControlLabel,
-  Slider,
-  Button,
-  Divider,
-  Box,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
-  IconButton,
   Dialog,
-  DialogTitle,
-  DialogContent,
   DialogActions,
-  TextField,
+  DialogContent,
+  DialogTitle,
+  Typography,
 } from '@mui/material';
-import {
-  Delete,
-  Logout,
-  MusicNote,
-  Notifications,
-} from '@mui/icons-material';
+import { useAuth } from '../contexts/AuthContext';
+import { api, errorMessage } from '../api';
+import { Layout } from './Layout';
 
 const Settings = () => {
   const { user, logout } = useAuth();
-  const [settings, setSettings] = useState({
-    notifications: true,
-    autoRotate: false,
-    rotationInterval: 30,
-    skipThreshold: 3,
-    emailUpdates: false
-  });
-  const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const navigate = useNavigate();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSettingChange = (setting) => (event) => {
-    setSettings({
-      ...settings,
-      [setting]: event.target.checked !== undefined ? event.target.checked : event.target.value
-    });
+  const signOut = async () => {
+    await logout();
+    navigate('/');
   };
 
-  const handleDeleteAccount = () => {
-    // API call to delete account
-    console.log('Deleting account...');
-    setOpenDeleteDialog(false);
-    logout();
+  const deleteAccount = async () => {
+    try {
+      await api.deleteAccount();
+      await logout();
+      navigate('/');
+    } catch (e) {
+      setError(errorMessage(e, 'Failed to delete your account.'));
+      setConfirmDelete(false);
+    }
   };
 
   return (
-    <Container maxWidth="md" sx={{ mt: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Settings
-      </Typography>
+    <Layout maxWidth="sm">
+      <Typography variant="h4" component="h1" gutterBottom>Settings</Typography>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Account
+          <Typography variant="h6" gutterBottom>Account</Typography>
+          <Typography color="text.secondary" paragraph>
+            Signed in with Spotify as {user?.display_name || user?.spotify_id}
           </Typography>
-          <List>
-            <ListItem>
-              <ListItemText
-                primary="User ID"
-                secondary={user?.id || 'Not logged in'}
-              />
-            </ListItem>
-            <ListItem>
-              <ListItemText
-                primary="Connected Account"
-                secondary="Spotify"
-              />
-            </ListItem>
-          </List>
-        </CardContent>
-      </Card>
-
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Rotation Settings
-          </Typography>
-          
-          <FormControlLabel
-            control={
-              <Switch
-                checked={settings.notifications}
-                onChange={handleSettingChange('notifications')}
-              />
-            }
-            label="Email notifications for rotation reviews"
-          />
-          
-          <FormControlLabel
-            control={
-              <Switch
-                checked={settings.autoRotate}
-                onChange={handleSettingChange('autoRotate')}
-              />
-            }
-            label="Auto-add songs to review queue"
-          />
-          
-          <Box sx={{ mt: 3 }}>
-            <Typography gutterBottom>
-              Default rotation interval: {settings.rotationInterval} days
-            </Typography>
-            <Slider
-              value={settings.rotationInterval}
-              onChange={handleSettingChange('rotationInterval')}
-              min={7}
-              max={90}
-              step={7}
-              marks={[
-                { value: 7, label: '7 days' },
-                { value: 30, label: '30 days' },
-                { value: 60, label: '60 days' },
-                { value: 90, label: '90 days' }
-              ]}
-            />
-          </Box>
-          
-          <Box sx={{ mt: 3 }}>
-            <Typography gutterBottom>
-              Skip threshold: {settings.skipThreshold} times
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Automatically suggest removing songs you skip this many times
-            </Typography>
-            <Slider
-              value={settings.skipThreshold}
-              onChange={handleSettingChange('skipThreshold')}
-              min={1}
-              max={10}
-              step={1}
-              marks={[
-                { value: 1, label: '1' },
-                { value: 5, label: '5' },
-                { value: 10, label: '10' }
-              ]}
-            />
-          </Box>
-        </CardContent>
-      </Card>
-
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Notifications
-          </Typography>
-          
-          <FormControlLabel
-            control={
-              <Switch
-                checked={settings.emailUpdates}
-                onChange={handleSettingChange('emailUpdates')}
-              />
-            }
-            label="Email updates about new features"
-          />
-        </CardContent>
-      </Card>
-
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Data & Privacy
-          </Typography>
-          
-          <Button
-            variant="outlined"
-            color="primary"
-            sx={{ mr: 2 }}
-          >
-            Export My Data
-          </Button>
-          
-          <Button
-            variant="outlined"
-            color="error"
-            onClick={() => setOpenDeleteDialog(true)}
-          >
-            Delete Account
-          </Button>
+          <Button variant="outlined" onClick={signOut}>Log out</Button>
         </CardContent>
       </Card>
 
       <Card>
         <CardContent>
-          <Typography variant="h6" gutterBottom>
-            About
+          <Typography variant="h6" gutterBottom>Delete account</Typography>
+          <Typography color="text.secondary" paragraph>
+            Removes your rotations, review history and stored Spotify tokens from PlayLS.
+            Your Spotify playlists are not changed.
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            PlayLS v1.0.0
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Keep your Spotify playlists fresh by rotating songs in and out
-          </Typography>
+          <Button variant="outlined" color="error" onClick={() => setConfirmDelete(true)}>
+            Delete my PlayLS account
+          </Button>
         </CardContent>
       </Card>
 
-      <Box sx={{ mt: 4, textAlign: 'center' }}>
-        <Button
-          variant="contained"
-          color="error"
-          startIcon={<Logout />}
-          onClick={logout}
-        >
-          Logout
-        </Button>
-      </Box>
-
-      <Dialog open={openDeleteDialog} onClose={() => setOpenDeleteDialog(false)}>
-        <DialogTitle>Delete Account</DialogTitle>
+      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)}>
+        <DialogTitle>Delete your PlayLS account?</DialogTitle>
         <DialogContent>
-          <Typography>
-            Are you sure you want to delete your account? This action cannot be undone.
-            All your rotations and data will be permanently deleted.
-          </Typography>
+          <Typography>This can't be undone. Your Spotify playlists stay as they are.</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenDeleteDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={handleDeleteAccount} 
-            color="error"
-            variant="contained"
-          >
-            Delete Account
-          </Button>
+          <Button onClick={() => setConfirmDelete(false)}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={deleteAccount}>Delete</Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </Layout>
   );
 };
 
 export default Settings;
-

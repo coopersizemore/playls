@@ -1,18 +1,19 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Home from './components/Home';
 import Login from './components/Login';
 import Rotation from './components/Rotation';
 import Review from './components/Review';
-import Restock from './components/Restock';
 import History from './components/History';
 import Settings from './components/Settings';
+import { RequireAuth } from './components/Layout';
 import { AuthProvider } from './contexts/AuthContext';
 
 const theme = createTheme({
   palette: {
+    mode: 'dark',
     primary: {
       main: '#1DB954', // Spotify green
     },
@@ -33,6 +34,8 @@ const theme = createTheme({
   },
 });
 
+const authed = (element) => <RequireAuth>{element}</RequireAuth>;
+
 function App() {
   return (
     <ThemeProvider theme={theme}>
@@ -42,11 +45,12 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/rotation" element={<Rotation />} />
-            <Route path="/review" element={<Review />} />
-            <Route path="/restock" element={<Restock />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/rotation" element={authed(<Rotation />)} />
+            <Route path="/rotation/:rotationId/review" element={authed(<Review />)} />
+            <Route path="/rotation/:rotationId/history" element={authed(<History />)} />
+            <Route path="/settings" element={authed(<Settings />)} />
+            {/* Restock is Phase 2 (see docs/PROJECT_STATUS.md) */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Router>
       </AuthProvider>

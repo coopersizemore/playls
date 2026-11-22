@@ -6,4 +6,45 @@ export const API_BASE = '/api';
 
 // Auth is an httpOnly session cookie the browser sends automatically. The backend
 // rejects state-changing requests without this header (CSRF protection).
-axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
+const CSRF_HEADER = { 'X-Requested-With': 'XMLHttpRequest' };
+axios.defaults.headers.common['X-Requested-With'] = CSRF_HEADER['X-Requested-With'];
+
+const data = (promise) => promise.then((r) => r.data);
+
+export const api = {
+  rotations: () => data(axios.get(`${API_BASE}/user/me/rotations`)),
+  rotation: (id, { sync = true } = {}) => data(axios.get(`${API_BASE}/rotation/${id}`, { params: { sync } })),
+  createRotation: (body) => data(axios.post(`${API_BASE}/rotation/`, body)),
+  updateRotation: (id, body) => data(axios.put(`${API_BASE}/rotation/${id}`, body)),
+  deleteRotation: (id) => data(axios.delete(`${API_BASE}/rotation/${id}`)),
+  queue: (id) => data(axios.get(`${API_BASE}/rotation/${id}/queue`)),
+  review: (id, trackId, action) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/review`, { track_id: trackId, action })),
+  flush: (id) => data(axios.post(`${API_BASE}/rotation/${id}/flush`)),
+  history: (id) => data(axios.get(`${API_BASE}/rotation/${id}/history`)),
+  playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
+  deleteAccount: () => data(axios.delete(`${API_BASE}/user/me`)),
+};
+
+// Fire-and-forget flush that survives the page closing (pagehide/visibilitychange).
+// sendBeacon can't set the CSRF header, so this uses fetch with keepalive instead.
+export const flushOnExit = (rotationId) => {
+  try {
+    fetch(`${API_BASE}/rotation/${rotationId}/flush`, {
+      method: 'POST',
+      keepalive: true,
+      credentials: 'same-origin',
+      headers: CSRF_HEADER,
+    }).catch(() => {});
+  } catch (e) {
+    // Older browsers without keepalive: the next sync flushes pending removals anyway
+  }
+};
+
+// Generic, user-facing message for a failed request
+export const errorMessage = (error, fallback = 'Something went wrong. Please try again.') => {
+  const status = error?.response?.status;
+  if (status === 429) return 'Spotify is rate limiting requests. Try again in a minute.';
+  const detail = error?.response?.data?.detail;
+  return typeof detail === 'string' && status && status < 500 ? detail : fallback;
+};

@@ -143,9 +143,8 @@ class SpotifyService:
     async def create_playlist(
         name: str, user: UserDB, db: Session, description: Optional[str] = None, public: bool = False
     ) -> Dict[str, Any]:
-        data: Dict[str, Any] = {"name": name, "public": public}
-        if description:
-            data["description"] = description
+        # Always send a description: playlists created without one can show "null" in Spotify
+        data: Dict[str, Any] = {"name": name, "public": public, "description": description or ""}
         return await SpotifyService.make_spotify_request("/me/playlists", user, db, method="POST", data=data)
 
     # ---------- listening signals (restock) ----------

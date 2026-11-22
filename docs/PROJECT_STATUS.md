@@ -52,6 +52,6 @@ The backend has 63 tests (SQLite plus a fake Spotify). The frontend builds clean
 - Saving recently-played snapshots to build a longer listening history.
 
 ## Later / maybe
-- Undo for keeps; a rotation detail page that uses `GET /rotation/{id}/tracks`.
+- A rotation detail page that uses `GET /rotation/{id}/tracks`.
 - Apple Music (blocked: the Apple API can't remove tracks from library playlists).
 - Notifications, if a channel that makes sense turns up.

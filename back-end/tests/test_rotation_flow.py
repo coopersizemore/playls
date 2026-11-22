@@ -391,3 +391,64 @@ def test_rotation_carries_playlist_cover_and_refreshes_it(client, spotify):
 def test_new_empty_playlist_has_no_cover(client, spotify):
     body = client.post("/api/rotation/", json={"name": "Fresh"}).json()
     assert body["image_url"] is None
+
+
+def test_undo_keep_restores_previous_due_date(client, spotify, db):
+    rot = make_rotation(client, spotify, [spotify_item("a", 100)])
+    rid = rot["id"]
+    backdate_rotation(db, rid, 60)
+    before = client.get(f"/api/rotation/{rid}/tracks").json()[0]
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "keep"})
+    r = client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "undo"})
+    assert r.status_code == 200
+    assert (r.json()["last_kept_at"], r.json()["due_at"]) == (before["last_kept_at"], before["due_at"])
+    # Due again, and the undone keep no longer counts toward today's limit or shows in History
+    q = client.get(f"/api/rotation/{rid}/queue").json()
+    assert [t["track_id"] for t in q["tracks"]] == ["a"] and q["reviewed_today"] == 0
+    assert client.get(f"/api/rotation/{rid}/history").json() == []
+
+
+def test_undo_second_keep_restores_first_keep(client, spotify, db):
+    from rest_api.database.models import ReviewEventDB
+    rot = make_rotation(client, spotify, [spotify_item("a", 100)])
+    rid = rot["id"]
+    first = client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "keep"}).json()
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "keep"})
+    r = client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "undo"}).json()
+    assert r["last_kept_at"] == first["last_kept_at"]
+    assert db.query(ReviewEventDB).count() == 1
+
+
+def test_undo_skip_releases_the_hold(client, spotify, db):
+    rot = make_rotation(client, spotify, [spotify_item("a", 100)])
+    rid = rot["id"]
+    backdate_rotation(db, rid, 60)
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "skip"})
+    assert client.get(f"/api/rotation/{rid}/queue").json()["tracks"] == []  # held until tomorrow
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "undo"})
+    assert [t["track_id"] for t in client.get(f"/api/rotation/{rid}/queue").json()["tracks"]] == ["a"]
+
+
+def test_undo_removal_after_flush_is_refused_with_guidance(client, spotify):
+    rot = make_rotation(client, spotify, [spotify_item("a", 100)])
+    rid = rot["id"]
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "remove"})
+    client.post(f"/api/rotation/{rid}/flush")
+    r = client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "undo"})
+    assert r.status_code == 409 and "Add it back" in r.json()["detail"]
+
+
+def test_new_playlist_gets_empty_description_not_null(monkeypatch):
+    """Spotify can show "null" for playlists created without a description; always send ""."""
+    import asyncio
+    from rest_api.services.spotify.spotify_service import SpotifyService
+    sent = {}
+
+    async def capture(endpoint, user, db, method="GET", data=None, params=None):
+        sent.update(endpoint=endpoint, **(data or {}))
+        return {"id": "made"}
+    monkeypatch.setattr(SpotifyService, "make_spotify_request", staticmethod(capture))
+    asyncio.run(SpotifyService.create_playlist("Fresh", None, None, description=None))
+    assert (sent["endpoint"], sent["description"], sent["public"]) == ("/me/playlists", "", False)
+    asyncio.run(SpotifyService.create_playlist("Fresh", None, None, description="Road trip"))
+    assert sent["description"] == "Road trip"

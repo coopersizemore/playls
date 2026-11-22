@@ -29,21 +29,25 @@ const Review = () => {
   const [batch, setBatch] = useState(null); // queue response for the current batch
   const [index, setIndex] = useState(0);
   const [counts, setCounts] = useState({ keep: 0, skip: 0, remove: 0 });
-  const [lastRemoved, setLastRemoved] = useState(null); // { track, index }
-  const [log, setLog] = useState([]); // [{ track, action }] for the end-of-session summary
+  // Every swipe this session, oldest first: { track, action, index, batch, locked }.
+  // Drives the tracker, multi-step Undo and the end-of-session summary.
+  const [log, setLog] = useState([]);
+  const [toast, setToast] = useState(null); // brief "Removed …" confirmation
   const [summary, setSummary] = useState(null); // { flushed } once the session has ended
   const [busy, setBusy] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState('');
   const pendingRemovals = useRef(0);
+  const batchNo = useRef(0); // undo only steps back within the current batch
 
   const loadBatch = useCallback(async (more = false) => {
     setError('');
     try {
       const next = await api.queue(rotationId, { more });
+      batchNo.current += 1;
       setBatch(next);
       setIndex(0);
-      setLastRemoved(null);
+      setToast(null);
     } catch (e) {
       setError(errorMessage(e, 'Failed to load songs to review.'));
       setBatch((current) => current || {
@@ -84,14 +88,10 @@ const Review = () => {
     setError('');
     try {
       await api.review(rotationId, track.track_id, action);
-      if (action === 'remove') {
-        pendingRemovals.current += 1;
-        setLastRemoved({ track, index });
-      } else {
-        setLastRemoved(null);
-      }
+      if (action === 'remove') pendingRemovals.current += 1;
+      setToast(action === 'remove' ? `Removed “${track.title}”` : null);
       setCounts((c) => ({ ...c, [action]: c[action] + 1 }));
-      setLog((l) => [...l, { track, action }]);
+      setLog((l) => [...l, { track, action, index, batch: batchNo.current, locked: false }]);
       setIndex((i) => i + 1);
     } catch (e) {
       setError(errorMessage(e, "Couldn't save that. Please try again."));
@@ -100,27 +100,31 @@ const Review = () => {
     }
   }, [tracks, index, busy, summary, rotationId]);
 
-  const undo = async () => {
-    if (!lastRemoved || busy) return;
+  // The most recent swipe that can still be undone (this batch, not already pushed to Spotify)
+  const lastEntry = log[log.length - 1];
+  const undoable = lastEntry && lastEntry.batch === batchNo.current && !lastEntry.locked ? lastEntry : null;
+
+  const undo = useCallback(async () => {
+    if (!undoable || busy || summary) return;
     setBusy(true);
+    setError('');
+    setToast(null);
     try {
-      await api.review(rotationId, lastRemoved.track.track_id, 'undo');
-      pendingRemovals.current = Math.max(0, pendingRemovals.current - 1);
-      setCounts((c) => ({ ...c, remove: c.remove - 1 }));
-      // Drop the undone removal from the summary; re-reviewing the song logs it again
-      setLog((l) => {
-        const at = l.map((e) => e.track.track_id === lastRemoved.track.track_id && e.action === 'remove').lastIndexOf(true);
-        return at === -1 ? l : [...l.slice(0, at), ...l.slice(at + 1)];
-      });
-      setIndex(lastRemoved.index);
-      setLastRemoved(null);
+      await api.review(rotationId, undoable.track.track_id, 'undo');
+      if (undoable.action === 'remove') pendingRemovals.current = Math.max(0, pendingRemovals.current - 1);
+      setCounts((c) => ({ ...c, [undoable.action]: c[undoable.action] - 1 }));
+      setLog((l) => l.slice(0, -1));
+      setIndex(undoable.index); // back to that song
     } catch (e) {
-      setError(errorMessage(e, "Couldn't undo. The song may already be removed on Spotify."));
-      setLastRemoved(null);
+      // e.g. the removal already reached Spotify (tab was hidden): it stays in the log
+      setError(errorMessage(e, "Couldn't undo that."));
+      if (e?.response?.status === 409) {
+        setLog((l) => l.map((entry, i) => (i === l.length - 1 ? { ...entry, locked: true } : entry)));
+      }
     } finally {
       setBusy(false);
     }
-  };
+  }, [undoable, busy, summary, rotationId]);
 
   // End the session: push removals to Spotify, then show the one-time summary
   const finish = async () => {
@@ -129,7 +133,7 @@ const Review = () => {
       return;
     }
     setFinishing(true);
-    setLastRemoved(null);
+    setToast(null);
     let flushed = true;
     try {
       if (pendingRemovals.current > 0) await api.flush(rotationId);
@@ -143,17 +147,18 @@ const Review = () => {
     window.scrollTo(0, 0);
   };
 
-  // Keyboard shortcuts: ← remove, → keep, ↓ skip
+  // Keyboard shortcuts: ← remove, → keep, ↓ skip, Z / Backspace undo
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.key === 'ArrowLeft') act('remove');
       else if (e.key === 'ArrowRight') act('keep');
       else if (e.key === 'ArrowDown') act('skip');
+      else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') { e.preventDefault(); undo(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [act]);
+  }, [act, undo]);
 
   if (summary) {
     return (
@@ -169,6 +174,19 @@ const Review = () => {
 
   const track = tracks[index];
   const done = !track;
+  const UNDO_VERB = { keep: 'keep', remove: 'removal', skip: 'skip' };
+  const undoButton = (
+    <Button
+      startIcon={<Undo />}
+      onClick={undo}
+      disabled={!undoable || busy}
+      sx={{ maxWidth: '100%', textTransform: 'none' }}
+    >
+      <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {undoable ? `Undo ${UNDO_VERB[undoable.action]} of “${undoable.track.title}”` : 'Undo'}
+      </Box>
+    </Button>
+  );
   const reviewedInSession = counts.keep + counts.skip + counts.remove;
   // Songs still due after this batch (the server's count is from when the batch was loaded)
   const moreDue = batch.remaining_after_batch;
@@ -218,6 +236,7 @@ const Review = () => {
               Songs you skipped today will come back tomorrow.
             </Typography>
           )}
+          {undoable && <Box mt={1}>{undoButton}</Box>}
           <Box display="flex" justifyContent="center" gap={2} mt={2} flexWrap="wrap">
             <Button variant="contained" onClick={finish} disabled={finishing}>
               {finishing ? 'Updating Spotify…' : 'Done'}
@@ -264,8 +283,9 @@ const Review = () => {
             <Button variant="contained" color="success" size="large" startIcon={<ThumbUp />}
               onClick={() => act('keep')} disabled={busy} sx={{ minWidth: 120 }}>Keep</Button>
           </Box>
-          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={2}>
-            Keyboard: ← remove · ↓ skip · → keep. Skipped songs come back tomorrow.
+          <Box textAlign="center" mt={2}>{undoButton}</Box>
+          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={1}>
+            Keyboard: ← remove · ↓ skip · → keep · Z undo. Skipped songs come back tomorrow.
           </Typography>
           <Box textAlign="center" mt={3}>
             <Button onClick={finish} disabled={finishing}>
@@ -276,10 +296,11 @@ const Review = () => {
       )}
 
       <Snackbar
-        open={!!lastRemoved}
-        onClose={(_, reason) => { if (reason !== 'clickaway') setLastRemoved(null); }}
-        autoHideDuration={6000}
-        message={lastRemoved ? `Removed “${lastRemoved.track.title}”` : ''}
+        open={!!toast}
+        onClose={(_, reason) => { if (reason !== 'clickaway') setToast(null); }}
+        autoHideDuration={5000}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        message={toast || ''}
         action={<Button color="primary" size="small" startIcon={<Undo />} onClick={undo}>Undo</Button>}
       />
     </Layout>

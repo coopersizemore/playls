@@ -20,6 +20,8 @@ class ReviewEventDB(Base):
         Integer, ForeignKey("rotation_track.id", ondelete="CASCADE"), nullable=False, index=True
     )
     action = Column(String(10), nullable=False)
+    # keep only: last_kept_at before this keep, restored if the keep is undone
+    previous_last_kept_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow, index=True)
 
     track = relationship("RotationTrackDB", back_populates="events")

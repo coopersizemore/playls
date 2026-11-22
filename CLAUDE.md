@@ -55,7 +55,7 @@ Frontend `GET /api/auth/login` → redirects to Spotify → Spotify redirects to
 
 ## Known gaps (verify before relying on these)
 - Sessions can't be revoked server-side before their 7-day expiry (logout only clears the cookie). There's no rate limiting.
-- Undo only reverts a pending removal (not a keep), and only until the flush reaches Spotify.
+- Undo (`action: undo`) reverts the track's most recent keep, skip or remove by deleting that `review_event`; a keep's previous `last_kept_at` is stored on the event. A removal can only be undone while it's still pending (before the flush), otherwise 409. Older `undo` rows from before 0006 still exist and count −1 toward the daily tally.
 - Concurrent syncs of the same rotation can hit the `(rotation_id, track_id)` unique constraint; `try_sync` rolls back and reports `sync_ok=false`, and the next sync recovers.
 - Redirect URIs must be HTTPS or `http://127.0.0.1` (`localhost` isn't allowed).
 

@@ -278,20 +278,52 @@ def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: s
     if track is None:
         raise HTTPException(status_code=404, detail="Track not found in this rotation")
 
-    if action in (KEEP, SKIP, REMOVE) and track.status != ACTIVE:
+    if action == UNDO:
+        return _undo_last_review(db, rotation, track)
+    if track.status != ACTIVE:
         raise HTTPException(status_code=409, detail="Track is not active in this rotation")
-    if action == UNDO and track.status != PENDING_REMOVAL:
-        raise HTTPException(status_code=409, detail="Only a pending removal can be undone")
 
+    event = ReviewEventDB(rotation_track_id=track.id, action=action, created_at=utcnow())
     if action == KEEP:
+        event.previous_last_kept_at = track.last_kept_at  # so the keep can be undone
         track.last_kept_at = utcnow()
     elif action == REMOVE:
         track.status = PENDING_REMOVAL
-    elif action == UNDO:
-        track.status = ACTIVE
-    # SKIP changes nothing: the track stays due and shows up next session
+    # SKIP changes nothing on the track: it stays due and comes back tomorrow
 
-    db.add(ReviewEventDB(rotation_track_id=track.id, action=action, created_at=utcnow()))
+    db.add(event)
+    db.commit()
+    db.refresh(track)
+    return track_out(track, rotation)
+
+
+def _undo_last_review(db: orm.Session, rotation: RotationDB, track: RotationTrackDB) -> TrackOut:
+    """Revert the track's most recent keep / skip / remove, as if it never happened.
+
+    The event is deleted, so it also stops counting toward today's review limit and a
+    skipped song is no longer held back until tomorrow. A removal can only be undone
+    while it's still pending (before the flush reaches Spotify).
+    """
+    event = (
+        db.query(ReviewEventDB)
+        .filter(ReviewEventDB.rotation_track_id == track.id, ReviewEventDB.action != UNDO)
+        .order_by(ReviewEventDB.created_at.desc(), ReviewEventDB.id.desc())
+        .first()
+    )
+    if event is None:
+        raise HTTPException(status_code=409, detail="Nothing to undo for this song")
+    if event.action == REMOVE:
+        if track.status != PENDING_REMOVAL:
+            raise HTTPException(
+                status_code=409,
+                detail="That song was already removed from Spotify. Add it back from History or Restock.",
+            )
+        track.status = ACTIVE
+    elif event.action == KEEP:
+        if track.status != ACTIVE:
+            raise HTTPException(status_code=409, detail="Track is not active in this rotation")
+        track.last_kept_at = event.previous_last_kept_at
+    db.delete(event)
     db.commit()
     db.refresh(track)
     return track_out(track, rotation)

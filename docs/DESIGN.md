@@ -42,16 +42,19 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
   - **Setting:** `users.review_limit`, default **50**, range 1–1000, or **NULL for no limit**. Changed in Settings.
   - **Scope:** per rotation, per day. The day resets at the user's local midnight, using the browser's offset sent as `tz_offset`.
   - **Today's batch:** the most overdue due songs, excluding songs skipped today, up to `limit − reviewed_today`.
-  - **What counts:** keep, skip and remove each count toward `reviewed_today`, and an undo refunds one.
+  - **What counts:** keep, skip and remove each count toward `reviewed_today`. Undoing an action deletes its event, so it stops counting.
   - **When the allowance runs out:** the user sees "Done for today" with an opt-in **"Review N more"** button (`?more=true`), which serves another full batch right away. Otherwise the next batch comes the next day.
   - **Home:** shows `ready_today` (what Review will offer now) next to the total `due_count`.
 - **Batching removals:** the user can review any number of songs per session.
   - Each swipe is saved to the backend as soon as it happens, which only writes to the database, so a decision is never lost.
   - Spotify removals are sent in batches of up to 100 URIs per DELETE (`DELETE /playlists/{id}/items`; no `snapshot_id`, since removal by URI drops every copy anyway). A batch is triggered when the user leaves the Review page or app (a `fetch` with `keepalive` on `pagehide`/`visibilitychange`; `sendBeacon` can't send the CSRF header). Pending removals are also flushed before every sync, so a flush that gets interrupted is retried next time.
   - Until a removal reaches Spotify, sync treats that track as removed and doesn't reactivate it.
-  - Undo is allowed while a removal is still pending.
+  - **Undo:** an always-visible Undo button (and Z / Backspace) steps back through the current batch's swipes, one at a time.
+    - It reverts keep (restoring the previous `last_kept_at`), skip (the song is no longer held until tomorrow) and remove.
+    - A removal can only be undone until the flush reaches Spotify. After that, History or Restock offers "Add back".
 - **Duplicates:** removing by URI deletes **every copy** of a track from the playlist. The database keeps one row per `(rotation, track)`. *This decision should be revisited.*
 - **One rotation per playlist** per user.
+- **New playlists** are created with an empty description (`""`), never omitted. Playlists created without one can show "null" in Spotify.
 - **Creating a rotation:** "from existing" wraps an owned playlist and asks whether to apply the grace period. "From scratch" creates an empty playlist with `POST /me/playlists` (still supported), and the user adds songs to it in Spotify until restock arrives in Phase 2.
 - **Removed songs** are recorded only in PlayLS history (`review_event` and the `removed` rows); there's no "rotated out" archive playlist in Spotify. In Phase 2, the user can bring them back through PlayLS.
 
@@ -91,7 +94,7 @@ Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-
 - `/auth/me` returns `missing_scopes`, and the For you tab offers a Reconnect button. Accounts from before this change have to log in again.
 - Sources without a granted scope are skipped, and any one failing source is skipped rather than failing the whole deck.
 
-## Data model (Alembic revisions 0001–0005)
+## Data model (Alembic revisions 0001–0006)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
   - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
@@ -104,7 +107,7 @@ Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-
 - `restock_feedback`: `user_id`, `rotation_id`, `track_id`, `source` (`bring_back` | `picks` | `suggested` | `search`), `action` (`add` | `skip`), `created_at`.
 - `suggestion_cache`: one row per user, `{candidates: {track_id: {meta, features}}, missing_scopes}` as JSON, plus `created_at`.
 - `users.granted_scopes`: the space-separated OAuth scopes from the last login.
-- `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `skip` | `remove` | `undo`), `created_at`. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
+- `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `skip` | `remove`; legacy `undo` rows only), `previous_last_kept_at` (keeps only, for undo), `created_at`. An undone action's row is deleted. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
 - Alembic manages the schema from here on (the one-time wipe was done 2026-11-07). All timestamps are naive UTC.
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 

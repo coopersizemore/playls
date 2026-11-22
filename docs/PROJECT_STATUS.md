@@ -30,10 +30,16 @@ The backend has 63 tests (SQLite plus a fake Spotify). The frontend builds clean
 10. ~~**Cleanup.**~~ Done: removed the dead code, the commented-out endpoints in `app.py`, `init_db.py` and the CRA boilerplate test.
 
 ### Verify Phase 1 (manual, on prod or `vercel dev`)
-- Log in, then create a rotation from a real playlist. Its song count should match Spotify, and the due count should be 0 because of the grace period.
+- Log in, then create a rotation from a real playlist. Its song count should match Spotify, and the due count should be 0 with the grace period on (or reflect each song's add date with it off).
 - Create one with a 1-day interval on a scratch playlist. Change `created_at` in Supabase to an earlier date (or wait a day), then review: keep one song, remove one, skip one.
 - Leave the Review page. The removed song should disappear from the Spotify playlist.
 - Remove a song directly in Spotify, then reload Home. The song count should drop.
+
+## Post-Phase-1 changes (2026-11-22)
+- **Optional grace period:** a per-rotation setting, on by default and editable. When it's off, songs come due from their own `added_at`; songs with an unknown add date are due immediately.
+- **Finer interval control:** the interval is stored in hours (migration `0002`). The picker has presets plus a custom amount in hours, days or weeks.
+- **Daily review limit:** up to N songs per rotation per day, most overdue first (default 50, or no limit; set in Settings). After a batch there's an opt-in "Review N more" button. Skipped songs now come back the next day. Migration `0003`.
+- **Home and Manage Rotations merged:** Home is now the single dashboard (create, edit and delete live in a card menu). The `/rotation` page is gone, and the dialogs are in `RotationDialogs.js`.
 
 ## Phase 2: restock (after recommendations are designed)
 - Replacing removed songs through search (paginated, max 10 results per page), a "bring back" option fed by removal history, and the manually curated PlayLS pick.

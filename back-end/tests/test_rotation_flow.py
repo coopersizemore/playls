@@ -6,11 +6,27 @@ from rest_api.database.models import RotationDB, RotationTrackDB
 from tests.conftest import spotify_item
 
 
-def make_rotation(client, spotify, items, interval=30, playlist_id="p1", **kw):
+def make_rotation(client, spotify, items, interval_days=30, playlist_id="p1", grace=True, **kw):
     spotify.add_playlist(playlist_id, items, **kw)
-    r = client.post("/api/rotation/", json={"playlist_id": playlist_id, "interval_days": interval})
+    r = client.post("/api/rotation/", json={
+        "playlist_id": playlist_id, "interval_hours": interval_days * 24, "grace_period": grace,
+    })
     assert r.status_code == 201, r.text
     return r.json()
+
+
+def shift_events(db, days):
+    """Move every review event `days` into the past (simulates a new day)."""
+    from rest_api.database.models import ReviewEventDB
+    for event in db.query(ReviewEventDB):
+        event.created_at -= timedelta(days=days)
+    db.commit()
+
+
+def set_limit(db, limit):
+    from rest_api.database.models import UserDB
+    db.query(UserDB).one().review_limit = limit
+    db.commit()
 
 
 def backdate_rotation(db, rotation_id, days):
@@ -47,14 +63,14 @@ def test_missing_playlist_is_404(client, spotify):
 
 
 def test_create_from_scratch_creates_private_playlist(client, spotify):
-    r = client.post("/api/rotation/", json={"name": "Fresh", "interval_days": 14})
+    r = client.post("/api/rotation/", json={"name": "Fresh", "interval_hours": 14 * 24})
     assert r.status_code == 201
     assert ("create", "Fresh") in spotify.calls
     assert r.json()["playlist_id"].startswith("new")
 
 
 def test_from_scratch_requires_name(client, spotify):
-    assert client.post("/api/rotation/", json={"interval_days": 14}).status_code == 422
+    assert client.post("/api/rotation/", json={"interval_hours": 14}).status_code == 422
 
 
 def test_server_managed_fields_rejected(client, spotify):
@@ -68,7 +84,7 @@ def test_queue_review_and_flush(client, spotify, db):
     backdate_rotation(db, rot["id"], 60)
     rid = rot["id"]
 
-    queue = client.get(f"/api/rotation/{rid}/queue").json()
+    queue = client.get(f"/api/rotation/{rid}/queue").json()["tracks"]
     assert [t["track_id"] for t in queue] == ["a", "b"]  # c isn't due yet
 
     keep = client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "keep"})
@@ -84,16 +100,20 @@ def test_queue_review_and_flush(client, spotify, db):
     assert ("remove", "p1", ("spotify:track:b",)) in spotify.calls
     assert [i["item"]["id"] for i in spotify.playlists["p1"]["items"]] == ["a", "c"]
 
-    assert client.get(f"/api/rotation/{rid}/queue").json() == []
+    assert client.get(f"/api/rotation/{rid}/queue").json()["tracks"] == []
     history = client.get(f"/api/rotation/{rid}/history").json()
     assert [(h["action"], h["track"]["track_id"]) for h in history] == [("remove", "b"), ("keep", "a")]
 
 
-def test_skip_leaves_song_due(client, spotify, db):
+def test_skip_keeps_song_due_but_holds_it_until_tomorrow(client, spotify, db):
     rot = make_rotation(client, spotify, [spotify_item("a", 100)])
     backdate_rotation(db, rot["id"], 60)
     client.post(f"/api/rotation/{rot['id']}/review", json={"track_id": "a", "action": "skip"})
-    assert [t["track_id"] for t in client.get(f"/api/rotation/{rot['id']}/queue").json()] == ["a"]
+    q = client.get(f"/api/rotation/{rot['id']}/queue").json()
+    assert q["tracks"] == [] and q["due_count"] == 1
+    # Next day: the skip is in the past, so the song is offered again
+    shift_events(db, days=1)
+    assert [t["track_id"] for t in client.get(f"/api/rotation/{rot['id']}/queue").json()["tracks"]] == ["a"]
 
 
 def test_undo_pending_removal(client, spotify, db):
@@ -186,8 +206,8 @@ def test_flush_failure_keeps_removals_pending(client, spotify):
 
 def test_update_and_delete(client, spotify, db):
     rot = make_rotation(client, spotify, [spotify_item("a", 1)])
-    r = client.put(f"/api/rotation/{rot['id']}", json={"interval_days": 7, "name": "Renamed"})
-    assert (r.json()["interval_days"], r.json()["name"]) == (7, "Renamed")
+    r = client.put(f"/api/rotation/{rot['id']}", json={"interval_hours": 12, "name": "Renamed", "grace_period": False})
+    assert (r.json()["interval_hours"], r.json()["name"], r.json()["grace_period"]) == (12, "Renamed", False)
     assert client.put(f"/api/rotation/{rot['id']}", json={"owner_id": 5}).status_code == 422
     assert client.delete(f"/api/rotation/{rot['id']}").status_code == 200
     assert db.query(RotationTrackDB).count() == 0  # cascade
@@ -199,7 +219,7 @@ def test_other_users_rotation_is_404(client, spotify, db):
     other = UserDB(spotify_id="other")
     db.add(other)
     db.commit()
-    db.add(RotationDB(owner_id=other.id, playlist_id="x", name="theirs", interval_days=30, created_at=utcnow()))
+    db.add(RotationDB(owner_id=other.id, playlist_id="x", name="theirs", interval_hours=720, created_at=utcnow()))
     db.commit()
     rid = db.query(RotationDB).filter_by(name="theirs").one().id
     assert client.get(f"/api/rotation/{rid}").status_code == 404
@@ -220,3 +240,137 @@ def test_playlists_flag_rotatable_and_existing_rotation(client, spotify):
     playlists = {p["id"]: p for p in client.get("/api/spotify/playlists").json()}
     assert playlists["p1"]["rotatable"] and playlists["p1"]["rotation_id"] == rot["id"]
     assert not playlists["theirs"]["rotatable"] and playlists["theirs"]["rotation_id"] is None
+
+
+def test_grace_period_off_makes_old_and_undated_songs_due_now(client, spotify):
+    body = make_rotation(client, spotify, [spotify_item("old", 100), spotify_item("undated"), spotify_item("new", 1)],
+                         grace=False)
+    assert body["grace_period"] is False
+    assert body["due_count"] == 2  # old (added 100 days ago) and undated; new isn't due for 29 days
+    due = {t["track_id"] for t in client.get(f"/api/rotation/{body['id']}/queue").json()["tracks"]}
+    assert due == {"old", "undated"}
+
+
+def test_grace_period_defaults_on(client, spotify):
+    spotify.add_playlist("p1", [spotify_item("old", 100)])
+    body = client.post("/api/rotation/", json={"playlist_id": "p1"}).json()
+    assert (body["grace_period"], body["interval_hours"], body["due_count"]) == (True, 720, 0)
+
+
+def test_turning_grace_off_later_applies_retroactively(client, spotify):
+    body = make_rotation(client, spotify, [spotify_item("old", 100)])
+    assert body["due_count"] == 0
+    r = client.put(f"/api/rotation/{body['id']}", json={"grace_period": False})
+    assert r.json()["due_count"] == 1
+
+
+def test_interval_bounds(client, spotify):
+    spotify.add_playlist("p1", [])
+    assert client.post("/api/rotation/", json={"playlist_id": "p1", "interval_hours": 0}).status_code == 422
+    assert client.post("/api/rotation/", json={"playlist_id": "p1", "interval_hours": 365 * 24 + 1}).status_code == 422
+
+
+def many_old_songs(n):
+    # Distinct ages so "most overdue first" is well defined: s000 is the oldest
+    return [spotify_item(f"s{i:03d}", 400 - i) for i in range(n)]
+
+
+def test_queue_is_capped_at_daily_limit_most_overdue_first(client, spotify, db):
+    set_limit(db, 20)
+    rot = make_rotation(client, spotify, many_old_songs(100), grace=False)
+    q = client.get(f"/api/rotation/{rot['id']}/queue").json()
+    assert [t["track_id"] for t in q["tracks"]] == [f"s{i:03d}" for i in range(20)]
+    assert (q["due_count"], q["daily_limit"], q["remaining_after_batch"], q["limit_reached"]) == (100, 20, 80, True)
+
+
+def test_default_limit_is_50(client, spotify, db):
+    rot = make_rotation(client, spotify, many_old_songs(60), grace=False)
+    assert len(client.get(f"/api/rotation/{rot['id']}/queue").json()["tracks"]) == 50
+
+
+def test_reviews_use_up_todays_allowance_and_reset_tomorrow(client, spotify, db):
+    set_limit(db, 5)
+    rot = make_rotation(client, spotify, many_old_songs(12), grace=False)
+    rid = rot["id"]
+    for t in client.get(f"/api/rotation/{rid}/queue").json()["tracks"][:3]:
+        client.post(f"/api/rotation/{rid}/review", json={"track_id": t["track_id"], "action": "keep"})
+    q = client.get(f"/api/rotation/{rid}/queue").json()
+    assert (len(q["tracks"]), q["reviewed_today"]) == (2, 3)  # reload mid-batch: the rest of today's 5
+
+    for t in q["tracks"]:
+        client.post(f"/api/rotation/{rid}/review", json={"track_id": t["track_id"], "action": "keep"})
+    q = client.get(f"/api/rotation/{rid}/queue").json()
+    assert q["tracks"] == [] and q["limit_reached"] and q["remaining_after_batch"] == 7
+
+    shift_events(db, days=1)
+    q = client.get(f"/api/rotation/{rid}/queue").json()
+    assert (len(q["tracks"]), q["reviewed_today"]) == (5, 0)
+
+
+def test_review_more_serves_another_full_batch(client, spotify, db):
+    set_limit(db, 5)
+    rot = make_rotation(client, spotify, many_old_songs(12), grace=False)
+    rid = rot["id"]
+    for t in client.get(f"/api/rotation/{rid}/queue").json()["tracks"]:
+        client.post(f"/api/rotation/{rid}/review", json={"track_id": t["track_id"], "action": "remove"})
+    more = client.get(f"/api/rotation/{rid}/queue", params={"more": True}).json()
+    assert len(more["tracks"]) == 5 and not more["limit_reached"] and more["remaining_after_batch"] == 2
+
+
+def test_undo_refunds_allowance(client, spotify, db):
+    set_limit(db, 2)
+    rot = make_rotation(client, spotify, many_old_songs(5), grace=False)
+    rid = rot["id"]
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "s000", "action": "remove"})
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "s000", "action": "undo"})
+    q = client.get(f"/api/rotation/{rid}/queue").json()
+    assert (q["reviewed_today"], len(q["tracks"])) == (0, 2)
+
+
+def test_no_limit_serves_everything(client, spotify, db):
+    set_limit(db, None)
+    rot = make_rotation(client, spotify, many_old_songs(120), grace=False)
+    q = client.get(f"/api/rotation/{rot['id']}/queue").json()
+    assert (len(q["tracks"]), q["daily_limit"], q["limit_reached"]) == (120, None, False)
+
+
+def test_summary_reports_ready_today(client, spotify, db):
+    set_limit(db, 20)
+    make_rotation(client, spotify, many_old_songs(100), grace=False)
+    [summary] = client.get("/api/user/me/rotations").json()
+    assert (summary["due_count"], summary["ready_today"], summary["daily_limit"]) == (100, 20, 20)
+
+
+def test_day_boundary_follows_client_timezone(client, spotify, db):
+    """An event 3 hours ago counts as 'today' only if local midnight was more than 3 hours ago."""
+    from rest_api.clock import utcnow
+    from rest_api.database.models import ReviewEventDB
+    set_limit(db, 1)
+    rot = make_rotation(client, spotify, many_old_songs(3), grace=False)
+    rid = rot["id"]
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "s000", "action": "keep"})
+    event = db.query(ReviewEventDB).one()
+    event.created_at = utcnow() - timedelta(hours=3)
+    db.commit()
+    now = utcnow()
+    # Pick an offset whose local midnight was 1 hour ago -> the event was "yesterday"
+    offset_yesterday = -((now.hour * 60 + now.minute) - 60)
+    # ...and one whose local midnight was 5 hours ago -> the event was "today"
+    offset_today = -((now.hour * 60 + now.minute) - 300)
+    clamp = lambda m: max(-840, min(840, m))
+    if clamp(offset_yesterday) == offset_yesterday:
+        q = client.get(f"/api/rotation/{rid}/queue", params={"tz_offset": offset_yesterday}).json()
+        assert q["reviewed_today"] == 0
+    if clamp(offset_today) == offset_today:
+        q = client.get(f"/api/rotation/{rid}/queue", params={"tz_offset": offset_today}).json()
+        assert q["reviewed_today"] == 1
+
+
+def test_settings_roundtrip_and_validation(client):
+    assert client.get("/api/user/me/settings").json() == {"review_limit": 50}
+    assert client.put("/api/user/me/settings", json={"review_limit": 20}).json() == {"review_limit": 20}
+    assert client.put("/api/user/me/settings", json={"review_limit": None}).json() == {"review_limit": None}
+    assert client.get("/api/user/me/settings").json() == {"review_limit": None}
+    for bad in (0, 1001, "lots"):
+        assert client.put("/api/user/me/settings", json={"review_limit": bad}).status_code == 422
+    assert client.put("/api/user/me/settings", json={}).status_code == 422

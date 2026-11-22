@@ -36,7 +36,8 @@ class RotationTrackDB(Base):
     image_url = Column(Text, nullable=True)
     duration_ms = Column(Integer, nullable=True)
 
-    added_at = Column(DateTime, nullable=False)  # from Spotify (earliest copy), naive UTC
+    # From Spotify (earliest copy), naive UTC. NULL when Spotify doesn't report it (very old playlists)
+    added_at = Column(DateTime, nullable=True)
     last_kept_at = Column(DateTime, nullable=True)
     status = Column(String(20), nullable=False, default=ACTIVE, server_default=ACTIVE)
     removed_at = Column(DateTime, nullable=True)

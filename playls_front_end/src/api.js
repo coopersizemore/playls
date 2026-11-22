@@ -11,18 +11,26 @@ axios.defaults.headers.common['X-Requested-With'] = CSRF_HEADER['X-Requested-Wit
 
 const data = (promise) => promise.then((r) => r.data);
 
+// The daily review limit resets at the user's local midnight
+const tz = () => ({ tz_offset: new Date().getTimezoneOffset() });
+
 export const api = {
-  rotations: () => data(axios.get(`${API_BASE}/user/me/rotations`)),
-  rotation: (id, { sync = true } = {}) => data(axios.get(`${API_BASE}/rotation/${id}`, { params: { sync } })),
+  rotations: () => data(axios.get(`${API_BASE}/user/me/rotations`, { params: tz() })),
+  rotation: (id, { sync = true } = {}) =>
+    data(axios.get(`${API_BASE}/rotation/${id}`, { params: { sync, ...tz() } })),
   createRotation: (body) => data(axios.post(`${API_BASE}/rotation/`, body)),
   updateRotation: (id, body) => data(axios.put(`${API_BASE}/rotation/${id}`, body)),
   deleteRotation: (id) => data(axios.delete(`${API_BASE}/rotation/${id}`)),
-  queue: (id) => data(axios.get(`${API_BASE}/rotation/${id}/queue`)),
+  // Today's batch: { tracks, due_count, daily_limit, reviewed_today, remaining_after_batch, limit_reached }
+  queue: (id, { more = false } = {}) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/queue`, { params: { more, ...tz() } })),
   review: (id, trackId, action) =>
     data(axios.post(`${API_BASE}/rotation/${id}/review`, { track_id: trackId, action })),
   flush: (id) => data(axios.post(`${API_BASE}/rotation/${id}/flush`)),
   history: (id) => data(axios.get(`${API_BASE}/rotation/${id}/history`)),
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
+  settings: () => data(axios.get(`${API_BASE}/user/me/settings`)),
+  updateSettings: (body) => data(axios.put(`${API_BASE}/user/me/settings`, body)),
   deleteAccount: () => data(axios.delete(`${API_BASE}/user/me`)),
 };
 

@@ -35,12 +35,12 @@ Will be called a Rotation once connected
 
 User sets a rotation interval (e.g., every 30 days)
 Songs will be added to a queue every time interval starting from the time the song was added (or the time Rotation was created if already in playlist)
-[Changed: a song is due at added_at + N even if it was already in the playlist; after a keep it's due at keep_date + N. Notifications are not planned.]
+[Changed: the grace period is optional per rotation. On: songs already in the playlist are first due at creation + N. Off: added_at + N (immediately if unknown). After a keep: keep_date + N. N can be set in hours, days or weeks. Notifications are not planned.]
 
 
 Interface for reviewing songs and removing or keeping them
 User can, at their will, go to this queue of songs and start swiping left and right to “rotate” their playlist
-[Actions are keep / skip / remove. Skip leaves the song in the playlist and it stays due. Removals are saved per swipe and sent to Spotify in batches when the user leaves.]
+[A daily review limit (default 50 songs per rotation per day, most overdue first, or no limit) keeps a big backlog from arriving all at once, and there's an opt-in "review more" button. Actions are keep / skip / remove. Skip leaves the song in the playlist and it comes back the next day. Removals are saved per swipe and sent to Spotify in batches when the user leaves.]
 
 
 Recommend new songs based on user preferences or current playlist  [DEFERRED: will be a recommendation system that doesn't depend on the Spotify API; restock is PHASE 2]

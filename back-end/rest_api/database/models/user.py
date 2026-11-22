@@ -1,13 +1,22 @@
 """User model. Rows hold Spotify tokens, so never return them from a route."""
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import CheckConstraint, Column, Integer, String, DateTime
 from sqlalchemy.orm import relationship
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 from rest_api.database.encryption import EncryptedText
 
+DEFAULT_REVIEW_LIMIT = 50
+MAX_REVIEW_LIMIT = 1000
+
 
 class UserDB(Base):
     __tablename__ = "users"  # "user" is a reserved word in Postgres
+    __table_args__ = (
+        CheckConstraint(
+            f"review_limit IS NULL OR (review_limit BETWEEN 1 AND {MAX_REVIEW_LIMIT})",
+            name="ck_users_review_limit_range",
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     # Music provider the account logs in with (only "spotify" today; Apple is a maybe-later)
@@ -19,6 +28,8 @@ class UserDB(Base):
     refresh_token = Column(EncryptedText, nullable=True)
     token_expires_at = Column(DateTime, nullable=True)  # naive UTC
     created_at = Column(DateTime, nullable=False, default=utcnow)
+    # Max songs offered for review per rotation per day; NULL = no limit
+    review_limit = Column(Integer, nullable=True, default=DEFAULT_REVIEW_LIMIT, server_default=str(DEFAULT_REVIEW_LIMIT))
 
     rotations = relationship(
         "RotationDB", back_populates="owner", cascade="all, delete-orphan", passive_deletes=True

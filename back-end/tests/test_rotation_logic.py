@@ -3,11 +3,14 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from rest_api.clock import utcnow
-from rest_api.services.rotation_logic import due_at, is_due, parse_playlist_items, sort_queue
+from rest_api.services.rotation_logic import (
+    due_at, is_due, local_day_start, parse_playlist_items, sort_queue, todays_batch_size,
+)
 from tests.conftest import spotify_item
 
 CREATED = datetime(2026, 1, 1)
-ROTATION = SimpleNamespace(created_at=CREATED, interval_days=30)
+ROTATION = SimpleNamespace(created_at=CREATED, interval_hours=30 * 24, grace_period=True)
+NO_GRACE = SimpleNamespace(created_at=CREATED, interval_hours=30 * 24, grace_period=False)
 
 
 def track(added_at, last_kept_at=None, status="active", title="t"):
@@ -31,7 +34,7 @@ def test_keep_resets_anchor_to_keep_date():
 
 def test_interval_change_applies_immediately():
     t = track(datetime(2026, 2, 1))
-    assert due_at(t, SimpleNamespace(created_at=CREATED, interval_days=7)) == datetime(2026, 2, 8)
+    assert due_at(t, SimpleNamespace(created_at=CREATED, interval_hours=7 * 24, grace_period=True)) == datetime(2026, 2, 8)
 
 
 def test_non_active_tracks_are_never_due():
@@ -86,3 +89,45 @@ def test_duplicates_collapse_to_earliest_added_at():
 
 def test_missing_added_at_is_none():
     assert parse_playlist_items([spotify_item("t1")])["t1"].added_at is None
+
+
+def test_without_grace_existing_song_is_due_from_its_added_at():
+    old = track(datetime(2024, 1, 1))
+    assert due_at(old, NO_GRACE) == datetime(2024, 1, 31)
+    assert is_due(old, NO_GRACE, CREATED)
+
+
+def test_without_grace_unknown_added_at_is_due_at_creation():
+    assert due_at(track(None), NO_GRACE) == CREATED
+
+
+def test_with_grace_unknown_added_at_waits_full_interval():
+    assert due_at(track(None), ROTATION) == CREATED + timedelta(days=30)
+
+
+def test_keep_overrides_grace_setting():
+    kept = track(None, last_kept_at=datetime(2026, 5, 1))
+    assert due_at(kept, NO_GRACE) == due_at(kept, ROTATION) == datetime(2026, 5, 31)
+
+
+def test_sub_day_interval():
+    hourly = SimpleNamespace(created_at=CREATED, interval_hours=6, grace_period=True)
+    assert due_at(track(datetime(2026, 2, 1)), hourly) == datetime(2026, 2, 1, 6)
+
+
+def test_local_day_start():
+    now = datetime(2026, 3, 10, 3, 30)  # 03:30 UTC
+    assert local_day_start(now, 0) == datetime(2026, 3, 10)
+    # UTC-5 (offset 300): local time is 22:30 on the 9th -> local midnight = 05:00 UTC on the 9th
+    assert local_day_start(now, 300) == datetime(2026, 3, 9, 5)
+    # UTC+2 (offset -120): local 05:30 on the 10th -> midnight = 22:00 UTC on the 9th
+    assert local_day_start(now, -120) == datetime(2026, 3, 9, 22)
+
+
+def test_todays_batch_size():
+    assert todays_batch_size(None, 999, 300, more=False) == 300
+    assert todays_batch_size(50, 0, 300, more=False) == 50
+    assert todays_batch_size(50, 30, 300, more=False) == 20
+    assert todays_batch_size(50, 80, 300, more=False) == 0
+    assert todays_batch_size(50, 80, 300, more=True) == 50
+    assert todays_batch_size(50, 0, 10, more=False) == 10

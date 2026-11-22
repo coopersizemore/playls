@@ -16,9 +16,6 @@ export const Layout = ({ children, maxWidth = 'lg' }) => (
         >
           PlayLS
         </Typography>
-        <Button color="inherit" component={RouterLink} to="/rotation">
-          Rotations
-        </Button>
         <Button color="inherit" component={RouterLink} to="/settings">
           Settings
         </Button>

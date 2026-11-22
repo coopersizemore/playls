@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from ..database.config import get_db
 from ..database.models.user import UserDB
 from ..models.rotation import RotationOut
+from ..models.user import SettingsOut, SettingsUpdate
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
 from ..services.db import user_service as us
@@ -16,11 +17,29 @@ router = APIRouter(prefix="/user", tags=["user"])
 @router.get("/me/rotations", response_model=list[RotationOut])
 async def get_current_user_rotations(
     sync: bool = Query(True, description="Sync each rotation with Spotify first (cheap when unchanged)"),
+    tz_offset: int = Query(0, ge=-840, le=840, description="JS Date.getTimezoneOffset() of the client"),
     current_user: UserDB = Depends(AuthService.get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    """The current user's rotations with due counts."""
-    return await rs.list_rotation_summaries(db, current_user, sync=sync)
+    """The current user's rotations with due counts and today's review allowance."""
+    return await rs.list_rotation_summaries(db, current_user, sync=sync, tz_offset_minutes=tz_offset)
+
+
+@router.get("/me/settings", response_model=SettingsOut)
+async def get_settings(current_user: UserDB = Depends(AuthService.get_current_user_from_token)):
+    return SettingsOut(review_limit=current_user.review_limit)
+
+
+@router.put("/me/settings", response_model=SettingsOut)
+async def update_settings(
+    data: SettingsUpdate,
+    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """review_limit: songs offered per rotation per day (1-1000), or null for no limit."""
+    current_user.review_limit = data.review_limit
+    db.commit()
+    return SettingsOut(review_limit=current_user.review_limit)
 
 
 @router.delete("/me")

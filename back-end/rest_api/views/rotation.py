@@ -6,6 +6,7 @@ from ..database.models.user import UserDB
 from ..models.rotation import (
     FlushOut,
     HistoryEventOut,
+    QueueOut,
     ReviewIn,
     RotationCreate,
     RotationOut,
@@ -44,12 +45,13 @@ async def create_rotation(data: RotationCreate, db: Session = Depends(get_db), u
 async def get_rotation(
     rotation_id: int,
     sync: bool = Query(True, description="Sync with Spotify first"),
+    tz_offset: int = Query(0, ge=-840, le=840, description="JS Date.getTimezoneOffset() of the client"),
     db: Session = Depends(get_db),
     user: UserDB = current_user_dep,
 ):
     rotation = _get_owned_or_404(db, rotation_id, user)
     sync_ok = await rs.try_sync(db, rotation, user) if sync else True
-    return rs.summarize_one(db, rotation, sync_ok)
+    return rs.summarize_one(db, rotation, sync_ok, tz_offset)
 
 
 @router.put("/{rotation_id}", response_model=RotationOut)
@@ -66,12 +68,19 @@ async def delete_rotation(rotation_id: int, db: Session = Depends(get_db), user:
     return {"message": "Rotation deleted"}
 
 
-@router.get("/{rotation_id}/queue", response_model=list[TrackOut])
-async def get_queue(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
-    """Songs due for review, most overdue first. Syncs with Spotify first (best effort)."""
+@router.get("/{rotation_id}/queue", response_model=QueueOut)
+async def get_queue(
+    rotation_id: int,
+    tz_offset: int = Query(0, ge=-840, le=840, description="JS Date.getTimezoneOffset() of the client"),
+    more: bool = Query(False, description="Serve another batch after today's limit is used up"),
+    db: Session = Depends(get_db),
+    user: UserDB = current_user_dep,
+):
+    """Today's batch of due songs (most overdue first, capped by the daily review limit).
+    Syncs with Spotify first (best effort)."""
     rotation = _get_owned_or_404(db, rotation_id, user)
     await rs.try_sync(db, rotation, user)
-    return rs.due_queue(db, rotation)
+    return rs.due_queue(db, rotation, tz_offset, more)
 
 
 @router.get("/{rotation_id}/tracks", response_model=list[TrackOut])

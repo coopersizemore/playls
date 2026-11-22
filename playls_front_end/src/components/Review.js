@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -16,13 +16,16 @@ import { SkipNext, ThumbDown, ThumbUp, Undo } from '@mui/icons-material';
 import { api, errorMessage, flushOnExit } from '../api';
 import { Layout, formatDate } from './Layout';
 
-// Review a rotation's due songs. Each swipe is saved right away (DB only); removals are
-// pushed to Spotify in one batch when leaving the page (and before any later sync).
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// Review a rotation's due songs in daily batches (the user's review limit, most overdue
+// first). Each swipe is saved right away (DB only); removals are pushed to Spotify in one
+// batch when leaving the page (and before any later sync).
 const Review = () => {
   const { rotationId } = useParams();
   const navigate = useNavigate();
   const [rotation, setRotation] = useState(null);
-  const [queue, setQueue] = useState(null);
+  const [batch, setBatch] = useState(null); // queue response for the current batch
   const [index, setIndex] = useState(0);
   const [counts, setCounts] = useState({ keep: 0, skip: 0, remove: 0 });
   const [lastRemoved, setLastRemoved] = useState(null); // { track, index }
@@ -31,20 +34,25 @@ const Review = () => {
   const [error, setError] = useState('');
   const pendingRemovals = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // The queue call syncs with Spotify; the summary afterwards doesn't need to again
-        const tracks = await api.queue(rotationId);
-        const summary = await api.rotation(rotationId, { sync: false });
-        if (!cancelled) { setQueue(tracks); setRotation(summary); }
-      } catch (e) {
-        if (!cancelled) { setError(errorMessage(e, 'Failed to load songs to review.')); setQueue([]); }
-      }
-    })();
-    return () => { cancelled = true; };
+  const loadBatch = useCallback(async (more = false) => {
+    setError('');
+    try {
+      const next = await api.queue(rotationId, { more });
+      setBatch(next);
+      setIndex(0);
+      setLastRemoved(null);
+    } catch (e) {
+      setError(errorMessage(e, 'Failed to load songs to review.'));
+      setBatch((current) => current || {
+        tracks: [], due_count: 0, daily_limit: null, reviewed_today: 0, remaining_after_batch: 0, limit_reached: false,
+      });
+    }
   }, [rotationId]);
+
+  useEffect(() => {
+    // The queue call syncs with Spotify; the summary afterwards doesn't need to again
+    loadBatch().then(() => api.rotation(rotationId, { sync: false }).then(setRotation).catch(() => {}));
+  }, [rotationId, loadBatch]);
 
   // Flush pending removals when the tab is hidden/closed or the user navigates away
   useEffect(() => {
@@ -64,8 +72,10 @@ const Review = () => {
     };
   }, [rotationId]);
 
+  const tracks = useMemo(() => batch?.tracks || [], [batch]);
+
   const act = useCallback(async (action) => {
-    const track = queue?.[index];
+    const track = tracks[index];
     if (!track || busy) return;
     setBusy(true);
     setError('');
@@ -84,7 +94,7 @@ const Review = () => {
     } finally {
       setBusy(false);
     }
-  }, [queue, index, busy, rotationId]);
+  }, [tracks, index, busy, rotationId]);
 
   const undo = async () => {
     if (!lastRemoved || busy) return;
@@ -131,24 +141,28 @@ const Review = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [act]);
 
-  if (queue === null) {
+  if (batch === null) {
     return <Layout maxWidth="sm"><Box textAlign="center" mt={8}><CircularProgress /></Box></Layout>;
   }
 
-  const track = queue[index];
+  const track = tracks[index];
   const done = !track;
-  const reviewed = Math.min(index, queue.length);
+  const reviewedInSession = counts.keep + counts.skip + counts.remove;
+  // Songs still due after this batch (the server's count is from when the batch was loaded)
+  const moreDue = batch.remaining_after_batch;
+  const nextBatchSize = batch.daily_limit ? Math.min(batch.daily_limit, moreDue) : moreDue;
 
   return (
     <Layout maxWidth="sm">
       <Box textAlign="center" mb={3}>
         <Typography variant="h4" gutterBottom>{rotation?.name || 'Review Songs'}</Typography>
-        {queue.length > 0 && (
+        {tracks.length > 0 && (
           <>
             <Typography color="text.secondary">
-              {done ? `Reviewed ${queue.length} of ${queue.length}` : `${index + 1} of ${queue.length}`}
+              {done ? `Reviewed ${tracks.length} of ${tracks.length}` : `${index + 1} of ${tracks.length}`}
+              {batch.due_count > tracks.length && ` · ${batch.due_count} due in total`}
             </Typography>
-            <LinearProgress variant="determinate" value={(reviewed / queue.length) * 100} sx={{ mt: 1 }} />
+            <LinearProgress variant="determinate" value={(Math.min(index, tracks.length) / tracks.length) * 100} sx={{ mt: 1 }} />
           </>
         )}
       </Box>
@@ -157,17 +171,34 @@ const Review = () => {
       {done ? (
         <Box textAlign="center" mt={4}>
           <Typography variant="h5" gutterBottom>
-            {queue.length === 0 ? 'Nothing to review' : 'All caught up!'}
+            {moreDue > 0 ? 'Done for today!' : tracks.length === 0 && reviewedInSession === 0 ? 'Nothing to review' : 'All caught up!'}
           </Typography>
-          {queue.length > 0 && (
+          {reviewedInSession > 0 && (
             <Typography color="text.secondary" paragraph>
               Kept {counts.keep} · Removed {counts.remove} · Skipped {counts.skip}
             </Typography>
           )}
-          <Box display="flex" justifyContent="center" gap={2} mt={2}>
+          {moreDue > 0 && (
+            <Typography color="text.secondary" paragraph>
+              {plural(moreDue, 'more song')} {moreDue === 1 ? 'is' : 'are'} due. The next{' '}
+              {batch.daily_limit ? `${Math.min(batch.daily_limit, moreDue)} ` : ''}will be ready tomorrow,
+              or you can keep going now.
+            </Typography>
+          )}
+          {moreDue === 0 && batch.due_count > 0 && tracks.length === 0 && (
+            <Typography color="text.secondary" paragraph>
+              Songs you skipped today will come back tomorrow.
+            </Typography>
+          )}
+          <Box display="flex" justifyContent="center" gap={2} mt={2} flexWrap="wrap">
             <Button variant="contained" onClick={finish} disabled={finishing}>
               {finishing ? 'Updating Spotify…' : 'Done'}
             </Button>
+            {moreDue > 0 && (
+              <Button variant="outlined" onClick={() => loadBatch(true)} disabled={finishing}>
+                Review {nextBatchSize} more
+              </Button>
+            )}
             <Button component={RouterLink} to={`/rotation/${rotationId}/history`}>History</Button>
           </Box>
         </Box>
@@ -188,7 +219,7 @@ const Review = () => {
               <Typography color="text.secondary" gutterBottom>{track.artists}</Typography>
               {track.album && <Typography variant="body2" color="text.secondary">{track.album}</Typography>}
               <Box display="flex" gap={1} mt={2} flexWrap="wrap">
-                <Chip size="small" label={`Added ${formatDate(track.added_at)}`} />
+                <Chip size="small" label={track.added_at ? `Added ${formatDate(track.added_at)}` : 'Added date unknown'} />
                 {track.last_kept_at && <Chip size="small" label={`Last kept ${formatDate(track.last_kept_at)}`} />}
               </Box>
             </CardContent>
@@ -203,7 +234,7 @@ const Review = () => {
               onClick={() => act('keep')} disabled={busy} sx={{ minWidth: 120 }}>Keep</Button>
           </Box>
           <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={2}>
-            Keyboard: ← remove · ↓ skip · → keep. Skipped songs come back next time.
+            Keyboard: ← remove · ↓ skip · → keep. Skipped songs come back tomorrow.
           </Typography>
           <Box textAlign="center" mt={3}>
             <Button onClick={finish} disabled={finishing}>

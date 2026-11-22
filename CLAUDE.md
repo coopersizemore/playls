@@ -9,21 +9,23 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
   - `views/` routers: `auth`, `user`, `rotation`, `spotify` (all mounted in `app.py`).
   - `services/auth_service.py` — Spotify OAuth + app session (JWT via python-jose, HS256, 7 days, in an httpOnly cookie). `get_current_user_from_token` is the auth dependency (cookie + CSRF check).
   - `services/spotify/spotify_service.py` — thin httpx wrapper over the post-Feb-2026 Spotify API. Raises `SpotifyAPIError` (an `HTTPException` carrying `upstream_status`); on a 401 it force-refreshes the token and retries once.
-  - `services/rotation_logic.py` — pure rules: due-date math (incl. grace period), parsing playlist items, queue order. No DB/network; unit-tested.
+  - `services/rotation_logic.py` — pure rules: due-date math (interval in hours; optional per-rotation grace period; NULL `added_at` = unknown), parsing playlist items, queue order. No DB/network; unit-tested.
   - `services/sync_service.py` — `flush_pending_removals` and `sync_rotation` (snapshot short-circuit, diff against `rotation_track`). Skips the diff if items come back but none parse, so a response-shape change can't mark everything removed.
-  - `services/db/rotation_service.py` — rotation CRUD, summaries/due counts, queue, `apply_review`, history. `try_sync` is the best-effort wrapper routes use (returns `sync_ok`).
+  - `services/db/rotation_service.py` — rotation CRUD, summaries/due counts, queue (daily limit via `_todays_activity` over `review_event`), `apply_review`, history. `try_sync` is the best-effort wrapper routes use (returns `sync_ok`).
   - `database/models/*` — SQLAlchemy: `UserDB`, `RotationDB`, `RotationTrackDB`, `ReviewEventDB`. `models/*` are the Pydantic schemas (`extra="forbid"` on request bodies).
   - `database/config.py` connects to **Supabase Postgres** via `DATABASE_URL` (psycopg 3, `NullPool`, `prepare_threshold=None` for the transaction pooler). The user table is `users` (`user` is reserved in Postgres).
   - `database/encryption.py` — `EncryptedText` (Fernet, `TOKEN_ENCRYPTION_KEY`) for the Spotify tokens.
   - `clock.py` — `utcnow()`. All timestamps are **naive UTC**; use it instead of `datetime.utcnow()`.
 - `back-end/alembic/` — migrations. Run `alembic upgrade head` from `back-end/` (with `.venv`). Local and prod share the DB, so a migration applies to prod. New tables must `ENABLE ROW LEVEL SECURITY` in their migration (no policies; this blocks Supabase's Data API). `alembic check` verifies models match migrations.
-- `playls_front_end/` — CRA (react-scripts 5), React 19, MUI 7 (`Grid` uses the `size` prop), react-router 7, axios. Pages in `src/components/`; shared chrome, `RequireAuth` and date helpers in `Layout.js`; API calls in `src/api.js` (`api.*`, `flushOnExit`, `errorMessage`). Auth state in `src/contexts/AuthContext.js` (asks `GET /api/auth/me` on load; it never sees a token).
+- `playls_front_end/` — CRA (react-scripts 5), React 19, MUI 7 (`Grid` uses the `size` prop), react-router 7, axios. Pages in `src/components/`: Home is the single dashboard (rotation cards plus create/edit/delete dialogs from `RotationDialogs.js`, which also holds `IntervalPicker`/`formatInterval`); then Review, History and Settings. Shared chrome, `RequireAuth` and date helpers in `Layout.js`; API calls in `src/api.js` (`api.*`, `flushOnExit`, `errorMessage`). Auth state in `src/contexts/AuthContext.js` (asks `GET /api/auth/me` on load; it never sees a token).
 - Root `start-*.bat`/`.sh` launch the dev servers.
 
 ## API (all under /api)
-- `GET /user/me/rotations` (syncs each rotation; `?sync=false` skips) → summaries with `due_count`, `active_count`, `pending_removal_count`, `next_due_at`, `sync_ok`.
-- `POST /rotation/` `{playlist_id?, name?, description?, interval_days}`: wraps an owned/collaborative playlist, or creates a private one via `POST /me/playlists` when `playlist_id` is omitted. Then runs the initial sync.
-- `GET|PUT|DELETE /rotation/{id}`, `GET /rotation/{id}/queue` (syncs, then due tracks), `/tracks`, `POST /rotation/{id}/review` `{track_id, action: keep|skip|remove|undo}`, `POST /rotation/{id}/flush`, `GET /rotation/{id}/history`.
+- `GET /user/me/rotations` (syncs each rotation; `?sync=false` skips) → summaries with `due_count`, `ready_today`, `reviewed_today`, `daily_limit`, `active_count`, `pending_removal_count`, `next_due_at`, `sync_ok`.
+- `GET|PUT /user/me/settings` `{review_limit: int 1–1000 | null}` (null = no limit; default 50).
+- Daily-limit endpoints take `tz_offset` (JS `getTimezoneOffset()`, minutes) so "today" is the user's local day. The frontend sends it automatically from `api.js`.
+- `POST /rotation/` `{playlist_id?, name?, description?, interval_hours, grace_period}`: wraps an owned/collaborative playlist, or creates a private one via `POST /me/playlists` when `playlist_id` is omitted. Then runs the initial sync.
+- `GET|PUT|DELETE /rotation/{id}`, `GET /rotation/{id}/queue[?more=true]` (syncs, then today's batch: `{tracks, due_count, daily_limit, reviewed_today, remaining_after_batch, limit_reached}`), `/tracks`, `POST /rotation/{id}/review` `{track_id, action: keep|skip|remove|undo}`, `POST /rotation/{id}/flush`, `GET /rotation/{id}/history`.
 - `GET /spotify/playlists` (flattened, with `rotatable`/`rotation_id`), `GET /spotify/search` (limit ≤ 10; for Phase 2).
 
 ## Routing and deployment (Vercel services)

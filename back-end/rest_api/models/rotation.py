@@ -4,6 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+MAX_INTERVAL_HOURS = 365 * 24
+DEFAULT_INTERVAL_HOURS = 30 * 24
+
 
 class RotationCreate(BaseModel):
     """Wrap an existing playlist (playlist_id set) or create a new one (playlist_id omitted)."""
@@ -13,7 +16,9 @@ class RotationCreate(BaseModel):
     playlist_id: str | None = Field(None, min_length=1, max_length=64)
     name: str | None = Field(None, min_length=1, max_length=100)
     description: str | None = Field(None, max_length=300)
-    interval_days: int = Field(30, ge=1, le=365)
+    interval_hours: int = Field(DEFAULT_INTERVAL_HOURS, ge=1, le=MAX_INTERVAL_HOURS)
+    # Off: songs already in the playlist are due from their own added_at (immediately if unknown)
+    grace_period: bool = True
 
     @model_validator(mode="after")
     def _name_required_for_new_playlist(self):
@@ -27,7 +32,8 @@ class RotationUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=100)
     description: str | None = Field(None, max_length=300)
-    interval_days: int | None = Field(None, ge=1, le=365)
+    interval_hours: int | None = Field(None, ge=1, le=MAX_INTERVAL_HOURS)
+    grace_period: bool | None = None
 
 
 class RotationOut(BaseModel):
@@ -36,13 +42,18 @@ class RotationOut(BaseModel):
     playlist_id: str
     name: str
     description: str | None
-    interval_days: int
+    interval_hours: int
+    grace_period: bool
     created_at: datetime
     last_synced_at: datetime | None
     active_count: int
     due_count: int
     pending_removal_count: int
     next_due_at: datetime | None
+    # Daily review limit (per rotation, resets at the user's local midnight)
+    daily_limit: int | None  # None = no limit
+    reviewed_today: int
+    ready_today: int  # due songs offered today (not skipped today, within the limit)
     # False when the last sync attempt with Spotify failed (counts may be stale)
     sync_ok: bool = True
 
@@ -55,10 +66,21 @@ class TrackOut(BaseModel):
     album: str | None
     image_url: str | None
     duration_ms: int | None
-    added_at: datetime
+    added_at: datetime | None  # None when Spotify didn't report it
     last_kept_at: datetime | None
     status: str
     due_at: datetime | None  # None unless active
+
+
+class QueueOut(BaseModel):
+    tracks: list[TrackOut]  # this batch, most overdue first
+    due_count: int  # everything currently due, including songs skipped today
+    daily_limit: int | None
+    reviewed_today: int
+    # Due songs left after this batch (excludes songs skipped today; they return tomorrow)
+    remaining_after_batch: int
+    # True when today's allowance is used up and more songs are due ("review more" offer)
+    limit_reached: bool
 
 
 class ReviewIn(BaseModel):

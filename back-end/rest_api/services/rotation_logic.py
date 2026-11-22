@@ -1,9 +1,11 @@
 """Pure rotation rules (no DB or network), per docs/DESIGN.md.
 
-Due date: anchor + interval_days, where
-    anchor = last_kept_at, else max(added_at, rotation.created_at)
-The max() is the one-time grace period: songs already in the playlist when the
-rotation was created first come due at creation + N.
+Due date for an active song, with interval = rotation.interval_hours:
+  - kept before:              last_kept_at + interval
+  - grace period on:          max(added_at, rotation.created_at) + interval
+                              (songs already in the playlist first come due at creation + interval)
+  - grace period off:         added_at + interval
+                              (if Spotify didn't report added_at: due at rotation creation)
 """
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -13,23 +15,47 @@ from rest_api.clock import to_naive_utc
 from rest_api.database.models.rotation_track import ACTIVE
 
 
-def review_anchor(added_at: datetime, last_kept_at: Optional[datetime], rotation_created_at: datetime) -> datetime:
-    if last_kept_at is not None:
-        return last_kept_at
-    return max(added_at, rotation_created_at)
-
-
 def due_at(track, rotation) -> Optional[datetime]:
     """When an active track comes due; None for tracks that aren't active."""
     if track.status != ACTIVE:
         return None
-    anchor = review_anchor(track.added_at, track.last_kept_at, rotation.created_at)
-    return anchor + timedelta(days=rotation.interval_days)
+    interval = timedelta(hours=rotation.interval_hours)
+    if track.last_kept_at is not None:
+        return track.last_kept_at + interval
+    if rotation.grace_period:
+        added = track.added_at or rotation.created_at
+        return max(added, rotation.created_at) + interval
+    if track.added_at is None:
+        return rotation.created_at
+    return track.added_at + interval
 
 
 def is_due(track, rotation, now: datetime) -> bool:
     when = due_at(track, rotation)
     return when is not None and when <= now
+
+
+def local_day_start(now: datetime, tz_offset_minutes: int) -> datetime:
+    """Start of the user's current local day, as naive UTC.
+
+    tz_offset_minutes follows JS Date.getTimezoneOffset(): minutes *behind* UTC
+    (UTC-5 -> 300, UTC+2 -> -120).
+    """
+    local_now = now - timedelta(minutes=tz_offset_minutes)
+    local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_midnight + timedelta(minutes=tz_offset_minutes)
+
+
+def todays_batch_size(limit: Optional[int], reviewed_today: int, eligible: int, more: bool) -> int:
+    """How many due songs to offer now under the daily review limit (None = no limit).
+
+    `more` is the user's opt-in "review another batch" after finishing today's.
+    """
+    if limit is None:
+        return eligible
+    if more:
+        return min(limit, eligible)
+    return min(max(0, limit - reviewed_today), eligible)
 
 
 @dataclass

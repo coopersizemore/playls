@@ -13,6 +13,7 @@ from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, Rot
 from rest_api.database.models.user import UserDB
 from rest_api.models.rotation import (
     HistoryEventOut,
+    QueueOut,
     RotationCreate,
     RotationOut,
     RotationUpdate,
@@ -51,30 +52,83 @@ def _live_tracks(db: orm.Session, rotation_ids: Iterable[int]) -> dict[int, list
     return by_rotation
 
 
-def summarize(rotation: RotationDB, tracks: list[RotationTrackDB], sync_ok: bool = True) -> RotationOut:
+class DailyActivity:
+    """Today's review activity for one rotation (since the user's local midnight)."""
+
+    def __init__(self):
+        self.reviewed = 0  # keep + skip + remove, minus undos
+        self.skipped_track_ids: set[int] = set()  # rotation_track ids skipped today
+
+
+def _todays_activity(db: orm.Session, rotation_ids: Iterable[int], since) -> dict[int, DailyActivity]:
+    ids = list(rotation_ids)
+    activity: dict[int, DailyActivity] = defaultdict(DailyActivity)
+    if not ids:
+        return activity
+    rows = (
+        db.query(RotationTrackDB.rotation_id, ReviewEventDB.rotation_track_id, ReviewEventDB.action)
+        .join(RotationTrackDB, ReviewEventDB.rotation_track_id == RotationTrackDB.id)
+        .filter(RotationTrackDB.rotation_id.in_(ids), ReviewEventDB.created_at >= since)
+    )
+    for rotation_id, track_row_id, action in rows:
+        day = activity[rotation_id]
+        day.reviewed += -1 if action == UNDO else 1
+        if action == SKIP:
+            day.skipped_track_ids.add(track_row_id)
+    for day in activity.values():
+        day.reviewed = max(0, day.reviewed)
+    return activity
+
+
+def _eligible_due(rotation: RotationDB, tracks: list[RotationTrackDB], day: DailyActivity, now) -> list:
+    """Due active tracks that weren't skipped today, most overdue first."""
+    due = [
+        t for t in tracks
+        if t.status == ACTIVE and logic.is_due(t, rotation, now) and t.id not in day.skipped_track_ids
+    ]
+    return logic.sort_queue(due, rotation)
+
+
+def summarize(
+    rotation: RotationDB,
+    tracks: list[RotationTrackDB],
+    sync_ok: bool = True,
+    day: DailyActivity | None = None,
+) -> RotationOut:
     now = utcnow()
+    day = day or DailyActivity()
+    limit = rotation.owner.review_limit
     active = [t for t in tracks if t.status == ACTIVE]
     due_dates = [logic.due_at(t, rotation) for t in active]
     upcoming = [d for d in due_dates if d > now]
+    eligible = len(_eligible_due(rotation, tracks, day, now))
     return RotationOut(
         id=rotation.id,
         provider=rotation.provider,
         playlist_id=rotation.playlist_id,
         name=rotation.name,
         description=rotation.description,
-        interval_days=rotation.interval_days,
+        interval_hours=rotation.interval_hours,
+        grace_period=rotation.grace_period,
         created_at=rotation.created_at,
         last_synced_at=rotation.last_synced_at,
         active_count=len(active),
         due_count=sum(1 for d in due_dates if d <= now),
         pending_removal_count=sum(1 for t in tracks if t.status == PENDING_REMOVAL),
         next_due_at=min(upcoming) if upcoming else None,
+        daily_limit=limit,
+        reviewed_today=day.reviewed,
+        ready_today=logic.todays_batch_size(limit, day.reviewed, eligible, more=False),
         sync_ok=sync_ok,
     )
 
 
-def summarize_one(db: orm.Session, rotation: RotationDB, sync_ok: bool = True) -> RotationOut:
-    return summarize(rotation, _live_tracks(db, [rotation.id])[rotation.id], sync_ok)
+def summarize_one(
+    db: orm.Session, rotation: RotationDB, sync_ok: bool = True, tz_offset_minutes: int = 0
+) -> RotationOut:
+    since = logic.local_day_start(utcnow(), tz_offset_minutes)
+    day = _todays_activity(db, [rotation.id], since)[rotation.id]
+    return summarize(rotation, _live_tracks(db, [rotation.id])[rotation.id], sync_ok, day)
 
 
 def track_out(track: RotationTrackDB, rotation: RotationDB) -> TrackOut:
@@ -107,11 +161,15 @@ async def try_sync(db: orm.Session, rotation: RotationDB, user: UserDB, force: b
         return False
 
 
-async def list_rotation_summaries(db: orm.Session, user: UserDB, sync: bool = True) -> list[RotationOut]:
+async def list_rotation_summaries(
+    db: orm.Session, user: UserDB, sync: bool = True, tz_offset_minutes: int = 0
+) -> list[RotationOut]:
     rotations = get_user_rotations(db, user.id)
     sync_ok = {r.id: (await try_sync(db, r, user)) if sync else True for r in rotations}
-    tracks = _live_tracks(db, [r.id for r in rotations])
-    return [summarize(r, tracks[r.id], sync_ok[r.id]) for r in rotations]
+    ids = [r.id for r in rotations]
+    tracks = _live_tracks(db, ids)
+    activity = _todays_activity(db, ids, logic.local_day_start(utcnow(), tz_offset_minutes))
+    return [summarize(r, tracks[r.id], sync_ok[r.id], activity[r.id]) for r in rotations]
 
 
 # ---------- create / update / delete ----------
@@ -146,20 +204,21 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
         playlist_id=playlist_id,
         name=name[:100],
         description=description,
-        interval_days=data.interval_days,
+        interval_hours=data.interval_hours,
+        grace_period=data.grace_period,
         created_at=utcnow(),
     )
     db.add(rotation)
     db.commit()
     db.refresh(rotation)
-    # Initial import; songs already in the playlist get the one-time grace period
+    # Initial import (grace_period decides when songs already in the playlist come due)
     sync_ok = await try_sync(db, rotation, owner, force=True)
     return rotation, sync_ok
 
 
 def update_rotation(db: orm.Session, rotation: RotationDB, data: RotationUpdate) -> RotationDB:
     for key, value in data.model_dump(exclude_unset=True).items():
-        if key in ("name", "interval_days") and value is None:
+        if key in ("name", "interval_hours", "grace_period") and value is None:
             continue  # not nullable
         setattr(rotation, key, value)
     db.commit()
@@ -181,10 +240,26 @@ def _tracks(db: orm.Session, rotation: RotationDB, statuses: tuple[str, ...]) ->
     ).all()
 
 
-def due_queue(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:
+def due_queue(db: orm.Session, rotation: RotationDB, tz_offset_minutes: int = 0, more: bool = False) -> QueueOut:
+    """Today's batch of due songs, most overdue first, capped by the owner's daily review limit.
+
+    Songs skipped today are held back until tomorrow. `more` serves another full batch
+    after today's allowance is used up.
+    """
     now = utcnow()
-    due = [t for t in _tracks(db, rotation, (ACTIVE,)) if logic.is_due(t, rotation, now)]
-    return [track_out(t, rotation) for t in logic.sort_queue(due, rotation)]
+    limit = rotation.owner.review_limit
+    day = _todays_activity(db, [rotation.id], logic.local_day_start(now, tz_offset_minutes))[rotation.id]
+    active = _tracks(db, rotation, (ACTIVE,))
+    eligible = _eligible_due(rotation, active, day, now)
+    size = logic.todays_batch_size(limit, day.reviewed, len(eligible), more)
+    return QueueOut(
+        tracks=[track_out(t, rotation) for t in eligible[:size]],
+        due_count=sum(1 for t in active if logic.is_due(t, rotation, now)),
+        daily_limit=limit,
+        reviewed_today=day.reviewed,
+        remaining_after_batch=len(eligible) - size,
+        limit_reached=limit is not None and not more and size < len(eligible),
+    )
 
 
 def all_tracks(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:

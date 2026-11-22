@@ -59,7 +59,7 @@ def apply_playlist_snapshot(
     rows = {t.track_id: t for t in db.query(RotationTrackDB).filter(RotationTrackDB.rotation_id == rotation.id)}
 
     for track_id, track in present.items():
-        added_at = track.added_at or rotation.created_at
+        added_at = track.added_at  # None if Spotify didn't report it
         row = rows.get(track_id)
         if row is None:
             db.add(RotationTrackDB(

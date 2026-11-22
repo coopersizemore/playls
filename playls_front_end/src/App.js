@@ -4,7 +4,6 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Home from './components/Home';
 import Login from './components/Login';
-import Rotation from './components/Rotation';
 import Review from './components/Review';
 import History from './components/History';
 import Settings from './components/Settings';
@@ -45,7 +44,6 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/rotation" element={authed(<Rotation />)} />
             <Route path="/rotation/:rotationId/review" element={authed(<Review />)} />
             <Route path="/rotation/:rotationId/history" element={authed(<History />)} />
             <Route path="/settings" element={authed(<Settings />)} />

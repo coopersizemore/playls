@@ -1,5 +1,5 @@
 """One row per (rotation, track). Spotify is the source of truth; sync keeps these in line."""
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from rest_api.database.config import Base
 
@@ -35,10 +35,14 @@ class RotationTrackDB(Base):
     album = Column(String(300), nullable=True)
     image_url = Column(Text, nullable=True)
     duration_ms = Column(Integer, nullable=True)
+    # False when the song is still in the playlist but unavailable on Spotify (greyed out)
+    is_playable = Column(Boolean, nullable=False, default=True, server_default="true")
 
     # From Spotify (earliest copy), naive UTC. NULL when Spotify doesn't report it (very old playlists)
     added_at = Column(DateTime, nullable=True)
     last_kept_at = Column(DateTime, nullable=True)
+    # Intervals until the next review after the last keep: 1 (keep) or 3 (super keep)
+    keep_multiplier = Column(Integer, nullable=False, default=1, server_default="1")
     status = Column(String(20), nullable=False, default=ACTIVE, server_default=ACTIVE)
     removed_at = Column(DateTime, nullable=True)
     removed_by = Column(String(10), nullable=True)

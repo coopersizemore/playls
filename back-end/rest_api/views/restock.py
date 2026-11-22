@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from ..database.config import get_db
 from ..database.models.user import UserDB
-from ..models.restock import DeckOut, DeckSource, RestockActionIn, SearchOut
+from ..models.restock import BlockedSongOut, DeckOut, DeckSource, RestockActionIn, SearchOut
 from ..models.rotation import TrackOut
 from ..services import restock_service as restock
 from ..services.auth_service import AuthService
@@ -67,3 +67,10 @@ async def add(rotation_id: int, data: RestockActionIn, db: Session = Depends(get
 async def skip(rotation_id: int, data: RestockActionIn, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """"Not now": hidden for the rest of today, and weighted lower from then on."""
     restock.record_skip(db, _owned(db, rotation_id, user), user, data.track_id, data.source)
+
+
+@router.post("/block", response_model=BlockedSongOut, status_code=201)
+async def block(rotation_id: int, data: RestockActionIn, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """"Stop suggesting": the song never appears in a restock deck again (it stays in History).
+    Undo with DELETE /api/user/me/blocked-songs/{track_id}."""
+    return await restock.block_suggestions(db, _owned(db, rotation_id, user), user, data.track_id)

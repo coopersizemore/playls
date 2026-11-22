@@ -67,8 +67,10 @@ class TrackOut(BaseModel):
     album: str | None
     image_url: str | None
     duration_ms: int | None
+    is_playable: bool = True  # False: in the playlist but unavailable on Spotify
     added_at: datetime | None  # None when Spotify didn't report it
     last_kept_at: datetime | None
+    keep_multiplier: int = 1  # 3 after a super keep
     status: str
     due_at: datetime | None  # None unless active
 
@@ -88,7 +90,16 @@ class ReviewIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     track_id: str = Field(..., min_length=1, max_length=64)
-    action: Literal["keep", "skip", "remove", "undo"]
+    action: Literal["keep", "super_keep", "skip", "remove", "undo"]
+
+
+class UnplayableOut(BaseModel):
+    tracks: list[TrackOut]  # active songs Spotify reports as unavailable
+
+
+class RemoveUnplayableOut(BaseModel):
+    removed: int
+    flushed: bool  # False: Spotify couldn't be reached; removals are retried on the next sync
 
 
 class FlushOut(BaseModel):

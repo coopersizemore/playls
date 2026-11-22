@@ -11,8 +11,9 @@ from rest_api.database.models.review_event import ReviewEventDB
 from rest_api.database.models.curated_pick import CuratedPickDB
 from rest_api.database.models.restock_feedback import RestockFeedbackDB
 from rest_api.database.models.suggestion_cache import SuggestionCacheDB
+from rest_api.database.models.restock_block import RestockBlockDB
 
 __all__ = [
     "UserDB", "RotationDB", "RotationTrackDB", "ReviewEventDB",
-    "CuratedPickDB", "RestockFeedbackDB", "SuggestionCacheDB",
+    "CuratedPickDB", "RestockFeedbackDB", "SuggestionCacheDB", "RestockBlockDB",
 ]

@@ -29,6 +29,7 @@ from rest_api.database.models.review_event import KEEP, ReviewEventDB
 from rest_api.database.models.rotation import RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, REMOVED, RotationTrackDB
 from rest_api.database.models.suggestion_cache import SuggestionCacheDB
+from rest_api.database.models.restock_block import RestockBlockDB
 from rest_api.database.models.user import UserDB
 from rest_api.models.restock import CandidateOut, DeckOut, SearchOut
 from rest_api.services import restock_logic as logic
@@ -93,6 +94,11 @@ def _skipped_since(db: orm.Session, user: UserDB, since) -> set:
     return {track_id for (track_id,) in rows}
 
 
+def _blocked(db: orm.Session, user: UserDB) -> set:
+    """Songs the user asked to stop suggesting (excluded from every deck)."""
+    return {t for (t,) in db.query(RestockBlockDB.track_id).filter(RestockBlockDB.user_id == user.id)}
+
+
 def _seed(user: UserDB, rotation: RotationDB, source: str, day_start) -> int:
     return logic.daily_seed(user.id, rotation.id, source, day_start.date().isoformat())
 
@@ -123,13 +129,13 @@ def _row_meta(row) -> Dict[str, Any]:
 def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_minutes: int = 0) -> DeckOut:
     now = utcnow()
     today = _today(tz_offset_minutes)
-    skipped_today = _skipped_since(db, user, today)
+    hidden = _skipped_since(db, user, today) | _blocked(db, user)
     skips = _skip_counts(db, user)
     removed = [
         r for r in db.query(RotationTrackDB).filter(
             RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.status == REMOVED
         )
-        if r.track_id not in skipped_today
+        if r.track_id not in hidden and r.is_playable
     ]
     keeps = Counter({
         row_id: n for row_id, n in db.query(ReviewEventDB.rotation_track_id, func.count())
@@ -158,7 +164,7 @@ def active_picks_query(db: orm.Session, now):
 def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_minutes: int = 0) -> DeckOut:
     now = utcnow()
     rows = _rotation_rows(db, rotation)
-    skipped_today = _skipped_since(db, user, _today(tz_offset_minutes))
+    skipped_today = _skipped_since(db, user, _today(tz_offset_minutes)) | _blocked(db, user)
     skips = _skip_counts(db, user)
     seen, picks = set(), []
     for pick in active_picks_query(db, now).order_by(CuratedPickDB.created_at.desc(), CuratedPickDB.id.desc()):
@@ -306,7 +312,7 @@ async def suggested_deck(
     now = utcnow()
     today = _today(tz_offset_minutes)
     rows = _rotation_rows(db, rotation)  # in rotation, or removed from it (that's "bring back")
-    skipped_today = _skipped_since(db, user, today)
+    skipped_today = _skipped_since(db, user, today) | _blocked(db, user)
     skips = _skip_counts(db, user)
     elsewhere = _in_other_rotations(db, user, rotation)
 
@@ -386,7 +392,7 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
     row.uri, row.title, row.artists = meta["uri"], meta["title"], meta.get("artists")
     row.album, row.image_url, row.duration_ms = meta.get("album"), meta.get("image_url"), meta.get("duration_ms")
     # A fresh start: comes due one interval from now
-    row.status, row.added_at, row.last_kept_at = ACTIVE, now, None
+    row.status, row.added_at, row.last_kept_at, row.keep_multiplier = ACTIVE, now, None, 1
     row.removed_at = row.removed_by = None
     db.add(RestockFeedbackDB(
         user_id=user.id, rotation_id=rotation.id, track_id=track_id, source=source, action=ADD, created_at=now,
@@ -403,6 +409,41 @@ def record_skip(db: orm.Session, rotation: RotationDB, user: UserDB, track_id: s
         created_at=utcnow(),
     ))
     db.commit()
+
+
+async def block_suggestions(db: orm.Session, rotation: RotationDB, user: UserDB, track_id: str):
+    """"Stop suggesting": never offer this song in a restock deck again (until resumed)."""
+    existing = db.query(RestockBlockDB).filter(
+        RestockBlockDB.user_id == user.id, RestockBlockDB.track_id == track_id
+    ).first()
+    if existing is not None:
+        return existing
+    row = db.query(RotationTrackDB).filter(
+        RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.track_id == track_id
+    ).first()
+    meta = await _resolve_meta(db, user, track_id, row)
+    block = RestockBlockDB(
+        user_id=user.id, track_id=track_id, title=meta["title"], artists=meta.get("artists"),
+        image_url=meta.get("image_url"), created_at=utcnow(),
+    )
+    db.add(block)
+    db.commit()
+    db.refresh(block)
+    return block
+
+
+def list_blocks(db: orm.Session, user: UserDB) -> list:
+    return db.query(RestockBlockDB).filter(RestockBlockDB.user_id == user.id).order_by(
+        RestockBlockDB.created_at.desc(), RestockBlockDB.id.desc()
+    ).all()
+
+
+def unblock(db: orm.Session, user: UserDB, track_id: str) -> bool:
+    deleted = db.query(RestockBlockDB).filter(
+        RestockBlockDB.user_id == user.id, RestockBlockDB.track_id == track_id
+    ).delete()
+    db.commit()
+    return bool(deleted)
 
 
 # ---------- curation (admin) ----------

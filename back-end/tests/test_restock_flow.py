@@ -235,3 +235,35 @@ def test_history_reflects_current_status_for_add_back(client, spotify):
     assert client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "a", "source": "bring_back"}).status_code == 201
     assert client.get(f"/api/rotation/{rid}/history").json()[0]["track"]["status"] == "active"
     assert ("add", "p1", ("spotify:track:a",)) in spotify.calls
+
+
+def test_stop_suggesting_hides_everywhere_keeps_history_and_can_be_undone(client, spotify, db):
+    rid = make_rotation(client, spotify, [spotify_item("a", 10), spotify_item("b", 10)])
+    for t in ("a", "b"):
+        remove(client, rid, t)
+    client.post(f"/api/rotation/{rid}/flush")
+    for row in db.query(RotationTrackDB):
+        row.removed_at = utcnow() - timedelta(days=200)
+    db.commit()
+    assert set(ids(deck(client, rid, "bring_back"))) == {"a", "b"}
+
+    r = client.post(f"/api/rotation/{rid}/restock/block", json={"track_id": "a", "source": "bring_back"})
+    assert r.status_code == 201 and r.json()["title"] == "Song a"
+    # Blocking twice is harmless
+    assert client.post(f"/api/rotation/{rid}/restock/block", json={"track_id": "a", "source": "bring_back"}).status_code == 201
+    assert ids(deck(client, rid, "bring_back")) == ["b"]
+    # Still in History, and can still be added back by hand
+    assert "a" in [h["track"]["track_id"] for h in client.get(f"/api/rotation/{rid}/history").json()]
+    blocked = client.get("/api/user/me/blocked-songs").json()
+    assert [b["track_id"] for b in blocked] == ["a"]
+
+    # Also never suggested in "For you" or picks
+    spotify.liked = [(track_object("a"), "2026-11-01T00:00:00Z")]
+    rid2 = make_rotation(client, spotify, [], playlist_id="p2")
+    assert "a" not in ids(deck(client, rid2, "suggested"))
+
+    # Undo
+    assert client.delete("/api/user/me/blocked-songs/a").status_code == 204
+    assert client.delete("/api/user/me/blocked-songs/a").status_code == 404
+    assert set(ids(deck(client, rid, "bring_back"))) == {"a", "b"}
+    assert "a" in ids(deck(client, rid2, "suggested", refresh=True))

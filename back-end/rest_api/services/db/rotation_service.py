@@ -7,7 +7,7 @@ import sqlalchemy.orm as orm
 from fastapi import HTTPException
 
 from rest_api.clock import utcnow
-from rest_api.database.models.review_event import KEEP, REMOVE, SKIP, UNDO, ReviewEventDB
+from rest_api.database.models.review_event import KEEP, KEEP_ACTIONS, REMOVE, SKIP, SUPER_KEEP, UNDO, ReviewEventDB
 from rest_api.database.models.rotation import RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, RotationTrackDB
 from rest_api.database.models.user import UserDB
@@ -24,6 +24,8 @@ from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifySe
 from rest_api.services.sync_service import sync_rotation
 
 logger = logging.getLogger(__name__)
+
+SUPER_KEEP_MULTIPLIER = 3
 
 PLAYLIST_META_FIELDS = "id,name,description,snapshot_id,collaborative,owner(id),images"
 
@@ -141,8 +143,10 @@ def track_out(track: RotationTrackDB, rotation: RotationDB) -> TrackOut:
         album=track.album,
         image_url=track.image_url,
         duration_ms=track.duration_ms,
+        is_playable=track.is_playable,
         added_at=track.added_at,
         last_kept_at=track.last_kept_at,
+        keep_multiplier=track.keep_multiplier or 1,
         status=track.status,
         due_at=logic.due_at(track, rotation),
     )
@@ -242,6 +246,60 @@ def _tracks(db: orm.Session, rotation: RotationDB, statuses: tuple[str, ...]) ->
     ).all()
 
 
+def all_songs_queue(db: orm.Session, rotation: RotationDB, tz_offset_minutes: int = 0) -> QueueOut:
+    """Every active song, soonest due first (overdue ones first), ignoring the daily limit."""
+    now = utcnow()
+    day = _todays_activity(db, [rotation.id], logic.local_day_start(now, tz_offset_minutes))[rotation.id]
+    active = logic.sort_queue(_tracks(db, rotation, (ACTIVE,)), rotation)
+    return QueueOut(
+        tracks=[track_out(t, rotation) for t in active],
+        due_count=sum(1 for t in active if logic.is_due(t, rotation, now)),
+        daily_limit=None,
+        reviewed_today=day.reviewed,
+        remaining_after_batch=0,
+        limit_reached=False,
+    )
+
+
+def reset_due_dates(db: orm.Session, rotation: RotationDB) -> int:
+    """Treat every active song as just reviewed: each comes due one interval from now.
+
+    Not recorded as keeps (no review events), so it doesn't touch History or the daily limit.
+    """
+    now = utcnow()
+    tracks = _tracks(db, rotation, (ACTIVE,))
+    for track in tracks:
+        track.last_kept_at = now
+        track.keep_multiplier = 1
+    db.commit()
+    return len(tracks)
+
+
+def unplayable_tracks(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:
+    rows = db.query(RotationTrackDB).filter(
+        RotationTrackDB.rotation_id == rotation.id,
+        RotationTrackDB.status == ACTIVE,
+        RotationTrackDB.is_playable.is_(False),
+    ).order_by(RotationTrackDB.title)
+    return [track_out(t, rotation) for t in rows]
+
+
+def queue_unplayable_removals(db: orm.Session, rotation: RotationDB) -> int:
+    """Mark every unavailable active song for removal (pushed to Spotify by the caller's flush).
+
+    A cleanup, not a review: no review events, so it doesn't use up the daily limit.
+    """
+    rows = db.query(RotationTrackDB).filter(
+        RotationTrackDB.rotation_id == rotation.id,
+        RotationTrackDB.status == ACTIVE,
+        RotationTrackDB.is_playable.is_(False),
+    ).all()
+    for row in rows:
+        row.status = PENDING_REMOVAL
+    db.commit()
+    return len(rows)
+
+
 def due_queue(db: orm.Session, rotation: RotationDB, tz_offset_minutes: int = 0, more: bool = False) -> QueueOut:
     """Today's batch of due songs, most overdue first, capped by the owner's daily review limit.
 
@@ -284,9 +342,12 @@ def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: s
         raise HTTPException(status_code=409, detail="Track is not active in this rotation")
 
     event = ReviewEventDB(rotation_track_id=track.id, action=action, created_at=utcnow())
-    if action == KEEP:
-        event.previous_last_kept_at = track.last_kept_at  # so the keep can be undone
+    if action in KEEP_ACTIONS:
+        # Remember the previous keep state so this keep can be undone
+        event.previous_last_kept_at = track.last_kept_at
+        event.previous_keep_multiplier = track.keep_multiplier
         track.last_kept_at = utcnow()
+        track.keep_multiplier = SUPER_KEEP_MULTIPLIER if action == SUPER_KEEP else 1
     elif action == REMOVE:
         track.status = PENDING_REMOVAL
     # SKIP changes nothing on the track: it stays due and comes back tomorrow
@@ -319,10 +380,11 @@ def _undo_last_review(db: orm.Session, rotation: RotationDB, track: RotationTrac
                 detail="That song was already removed from Spotify. Add it back from History or Restock.",
             )
         track.status = ACTIVE
-    elif event.action == KEEP:
+    elif event.action in KEEP_ACTIONS:
         if track.status != ACTIVE:
             raise HTTPException(status_code=409, detail="Track is not active in this rotation")
         track.last_kept_at = event.previous_last_kept_at
+        track.keep_multiplier = event.previous_keep_multiplier or 1
     db.delete(event)
     db.commit()
     db.refresh(track)

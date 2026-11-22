@@ -71,6 +71,7 @@ def apply_playlist_snapshot(
                 album=track.album,
                 image_url=track.image_url,
                 duration_ms=track.duration_ms,
+                is_playable=track.is_playable,
                 added_at=added_at,
                 status=ACTIVE,
             ))
@@ -79,12 +80,14 @@ def apply_playlist_snapshot(
         # Refresh display metadata from Spotify
         row.uri, row.title, row.artists = track.uri, track.title, track.artists
         row.album, row.image_url, row.duration_ms = track.album, track.image_url, track.duration_ms
+        row.is_playable = track.is_playable
 
         if row.status == REMOVED:
             # Re-added on Spotify after a removal: start over from the new added_at
             row.status = ACTIVE
             row.added_at = added_at
             row.last_kept_at = None
+            row.keep_multiplier = 1
             row.removed_at = None
             row.removed_by = None
         elif row.status == ACTIVE:

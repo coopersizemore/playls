@@ -11,10 +11,16 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Avatar,
   FormControlLabel,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemText,
   TextField,
   Typography,
 } from '@mui/material';
+import { MusicNote } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
 import { Layout } from './Layout';
@@ -89,6 +95,52 @@ const ReviewLimitCard = () => {
   );
 };
 
+// Songs the user asked Restock to stop suggesting, with a way to undo each
+const BlockedSongsCard = () => {
+  const [songs, setSongs] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.blockedSongs().then(setSongs)
+      .catch((e) => { setError(errorMessage(e, 'Failed to load.')); setSongs([]); });
+  }, []);
+
+  const resume = async (song) => {
+    try {
+      await api.unblockSong(song.track_id);
+      setSongs((list) => list.filter((s) => s.track_id !== song.track_id));
+    } catch (e) {
+      setError(errorMessage(e, "Couldn't resume that song."));
+    }
+  };
+
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h6" gutterBottom>Songs you've stopped suggesting</Typography>
+        <Typography color="text.secondary" paragraph>
+          These never come up in Restock. They stay in your rotation history, and you can still add them by search.
+        </Typography>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {songs && songs.length === 0 && <Typography color="text.secondary">None.</Typography>}
+        {songs && songs.length > 0 && (
+          <List dense sx={{ maxHeight: 320, overflow: 'auto' }}>
+            {songs.map((s) => (
+              <ListItem key={s.track_id} disableGutters
+                secondaryAction={<Button size="small" onClick={() => resume(s)}>Resume suggesting</Button>}>
+                <ListItemAvatar>
+                  <Avatar variant="rounded" src={s.image_url || undefined}><MusicNote /></Avatar>
+                </ListItemAvatar>
+                <ListItemText primary={s.title} secondary={s.artists} sx={{ pr: 18 }} />
+              </ListItem>
+            ))}
+          </List>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 const Settings = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -117,6 +169,7 @@ const Settings = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <ReviewLimitCard />
+      <BlockedSongsCard />
 
       <Card sx={{ mb: 3 }}>
         <CardContent>

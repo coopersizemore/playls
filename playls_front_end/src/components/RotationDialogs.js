@@ -14,6 +14,7 @@ import {
   FormControlLabel,
   InputLabel,
   List,
+  ListItem,
   ListItemAvatar,
   ListItemButton,
   ListItemText,
@@ -301,6 +302,133 @@ export const DeleteRotationDialog = ({ rotation, onClose, onDeleted }) => {
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button color="error" variant="contained" onClick={confirm}>Delete</Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+// ---------- reset due dates ----------
+
+export const ResetDueDialog = ({ rotation, onClose, onDone }) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { setError(''); setBusy(false); }, [rotation]);
+
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await api.resetDue(rotation.id);
+      onDone();
+    } catch (e) {
+      setError(errorMessage(e, "Couldn't reset due dates."));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!rotation} onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Reset all due dates?</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <Typography paragraph>
+          Every song in “{rotation?.name}” will be treated as just reviewed, so nothing is due now.
+          Each song comes up again {rotation ? `in ${formatInterval(rotation.interval_hours)}` : 'one interval from now'}.
+        </Typography>
+        <Typography color="text.secondary" variant="body2">
+          {rotation?.due_count > 0
+            ? `${rotation.due_count} song${rotation.due_count === 1 ? ' is' : 's are'} due right now. `
+            : ''}
+          This can't be undone. Your Spotify playlist isn't changed.
+        </Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button color="warning" variant="contained" onClick={confirm} disabled={busy}>
+          {busy ? 'Resetting…' : 'Reset due dates'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+// ---------- remove unavailable songs ----------
+
+export const RemoveUnplayableDialog = ({ rotation, onClose, onDone }) => {
+  const [tracks, setTracks] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    if (!rotation) return;
+    setTracks(null); setError(''); setBusy(false); setResult(null);
+    api.unplayable(rotation.id)
+      .then((r) => setTracks(r.tracks))
+      .catch((e) => { setError(errorMessage(e, "Couldn't check the playlist with Spotify.")); setTracks([]); });
+  }, [rotation]);
+
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      setResult(await api.removeUnplayable(rotation.id));
+    } catch (e) {
+      setError(errorMessage(e, "Couldn't remove the songs."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const close = () => { if (result) onDone(); else onClose(); };
+
+  return (
+    <Dialog open={!!rotation} onClose={busy ? undefined : close} maxWidth="sm" fullWidth>
+      <DialogTitle>Remove unavailable songs</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {result ? (
+          <Alert severity={result.flushed ? 'success' : 'warning'}>
+            {result.flushed
+              ? `Removed ${result.removed} song${result.removed === 1 ? '' : 's'} from the rotation and your Spotify playlist.`
+              : `Removed ${result.removed} from the rotation. Spotify couldn't be reached, so they'll be taken out of the playlist at the next sync.`}
+          </Alert>
+        ) : tracks === null ? (
+          <Box textAlign="center" my={3}>
+            <CircularProgress size={28} />
+            <Typography color="text.secondary" variant="body2" mt={1}>Checking every song with Spotify…</Typography>
+          </Box>
+        ) : tracks.length === 0 ? (
+          <Typography>Every song in “{rotation?.name}” is playable. Nothing to remove.</Typography>
+        ) : (
+          <>
+            <Typography paragraph>
+              {tracks.length} song{tracks.length === 1 ? ' is' : 's are'} still in the playlist but no longer
+              playable on Spotify (greyed out). Remove {tracks.length === 1 ? 'it' : 'them'} from the rotation and the
+              Spotify playlist?
+            </Typography>
+            <List dense sx={{ maxHeight: 280, overflow: 'auto' }}>
+              {tracks.map((t) => (
+                <ListItem key={t.track_id} disableGutters>
+                  <ListItemAvatar>
+                    <Avatar variant="rounded" src={t.image_url || undefined}><MusicNote /></Avatar>
+                  </ListItemAvatar>
+                  <ListItemText primary={t.title} secondary={t.artists} />
+                </ListItem>
+              ))}
+            </List>
+          </>
+        )}
+      </DialogContent>
+      <DialogActions>
+        {result || (tracks && tracks.length === 0) ? (
+          <Button variant="contained" onClick={close}>Done</Button>
+        ) : (
+          <>
+            <Button onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button color="error" variant="contained" onClick={confirm} disabled={busy || !tracks}>
+              {busy ? 'Removing…' : `Remove ${tracks ? tracks.length : ''} song${tracks && tracks.length === 1 ? '' : 's'}`}
+            </Button>
+          </>
+        )}
       </DialogActions>
     </Dialog>
   );

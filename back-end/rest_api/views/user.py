@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from ..database.config import get_db
 from ..database.models.user import UserDB
 from ..models.rotation import RotationOut
 from ..models.user import SettingsOut, SettingsUpdate
+from ..models.restock import BlockedSongOut
+from ..services import restock_service as restock
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
 from ..services.db import user_service as us
@@ -40,6 +42,25 @@ async def update_settings(
     current_user.review_limit = data.review_limit
     db.commit()
     return SettingsOut(review_limit=current_user.review_limit)
+
+
+@router.get("/me/blocked-songs", response_model=list[BlockedSongOut])
+async def get_blocked_songs(
+    current_user: UserDB = Depends(AuthService.get_current_user_from_token), db: Session = Depends(get_db)
+):
+    """Songs the user asked PlayLS to stop suggesting."""
+    return restock.list_blocks(db, current_user)
+
+
+@router.delete("/me/blocked-songs/{track_id}", status_code=204)
+async def unblock_song(
+    track_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9]+$"),
+    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Resume suggesting a song."""
+    if not restock.unblock(db, current_user, track_id):
+        raise HTTPException(status_code=404, detail="That song isn't blocked")
 
 
 @router.delete("/me")

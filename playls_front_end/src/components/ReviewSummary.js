@@ -14,7 +14,7 @@ import {
   ListItemText,
   Typography,
 } from '@mui/material';
-import { MusicNote, SkipNext, ThumbDown, ThumbUp } from '@mui/icons-material';
+import { MusicNote, SkipNext, Star, ThumbDown, ThumbUp } from '@mui/icons-material';
 import { formatInterval } from './RotationDialogs';
 import { PlaylistCover } from './Layout';
 
@@ -49,9 +49,11 @@ const ReviewSummary = ({ rotationId, rotation, log, flushed }) => {
   log.forEach((entry) => latest.set(entry.track.track_id, entry));
   const byAction = (action) => [...latest.values()].filter((e) => e.action === action).map((e) => e.track);
   const kept = byAction('keep');
+  const superKept = byAction('super_keep');
   const removed = byAction('remove');
   const skipped = byAction('skip');
   const interval = rotation ? formatInterval(rotation.interval_hours) : null;
+  const superInterval = rotation ? formatInterval(rotation.interval_hours * 3) : null;
 
   return (
     <Box>
@@ -84,6 +86,14 @@ const ReviewSummary = ({ rotationId, rotation, log, flushed }) => {
           title="Kept"
           subtitle={interval ? `Staying in the playlist. They'll come up for review again in ${interval}.` : 'Staying in the playlist.'}
           tracks={kept}
+        />
+      )}
+      {superKept.length > 0 && (
+        <Section
+          icon={<Star color="warning" />}
+          title="Super kept"
+          subtitle={superInterval ? `Staying put for longer: back up for review in ${superInterval}.` : 'Staying in the playlist for longer.'}
+          tracks={superKept}
         />
       )}
       {skipped.length > 0 && (

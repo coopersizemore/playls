@@ -23,12 +23,13 @@ import { Layout, RotationHeader, formatDate } from './Layout';
 const TABS = [
   { label: 'All', filter: () => true },
   { label: 'Removed', filter: (e) => e.action === 'remove' },
-  { label: 'Kept', filter: (e) => e.action === 'keep' },
+  { label: 'Kept', filter: (e) => e.action === 'keep' || e.action === 'super_keep' },
   { label: 'Skipped', filter: (e) => e.action === 'skip' },
 ];
 
 const ACTION_CHIP = {
   keep: { label: 'Kept', color: 'success' },
+  super_keep: { label: 'Super kept', color: 'warning' },
   remove: { label: 'Removed', color: 'error' },
   skip: { label: 'Skipped', color: 'default' },
   undo: { label: 'Undo', color: 'default' },

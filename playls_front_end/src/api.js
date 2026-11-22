@@ -22,8 +22,13 @@ export const api = {
   updateRotation: (id, body) => data(axios.put(`${API_BASE}/rotation/${id}`, body)),
   deleteRotation: (id) => data(axios.delete(`${API_BASE}/rotation/${id}`)),
   // Today's batch: { tracks, due_count, daily_limit, reviewed_today, remaining_after_batch, limit_reached }
-  queue: (id, { more = false } = {}) =>
-    data(axios.get(`${API_BASE}/rotation/${id}/queue`, { params: { more, ...tz() } })),
+  // all: every song in the rotation (soonest due first), ignoring the daily limit
+  queue: (id, { more = false, all = false } = {}) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/queue`, { params: { more, all, ...tz() } })),
+  resetDue: (id) => data(axios.post(`${API_BASE}/rotation/${id}/reset-due`)),
+  // Re-reads the whole playlist, then lists songs Spotify reports as unavailable
+  unplayable: (id) => data(axios.get(`${API_BASE}/rotation/${id}/unplayable`)),
+  removeUnplayable: (id) => data(axios.post(`${API_BASE}/rotation/${id}/remove-unplayable`)),
   review: (id, trackId, action) =>
     data(axios.post(`${API_BASE}/rotation/${id}/review`, { track_id: trackId, action })),
   flush: (id) => data(axios.post(`${API_BASE}/rotation/${id}/flush`)),
@@ -40,6 +45,11 @@ export const api = {
     data(axios.post(`${API_BASE}/rotation/${id}/restock/add`, { track_id: trackId, source })),
   restockSkip: (id, trackId, source) =>
     data(axios.post(`${API_BASE}/rotation/${id}/restock/skip`, { track_id: trackId, source })),
+  // "Stop suggesting" a song in every restock deck (undo: unblockSong)
+  restockBlock: (id, trackId, source) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/block`, { track_id: trackId, source })),
+  blockedSongs: () => data(axios.get(`${API_BASE}/user/me/blocked-songs`)),
+  unblockSong: (trackId) => data(axios.delete(`${API_BASE}/user/me/blocked-songs/${encodeURIComponent(trackId)}`)),
   // Admin: curating PlayLS picks
   picks: () => data(axios.get(`${API_BASE}/admin/picks`)),
   createPick: (body) => data(axios.post(`${API_BASE}/admin/picks`, body)),

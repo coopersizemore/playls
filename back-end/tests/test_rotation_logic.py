@@ -131,3 +131,27 @@ def test_todays_batch_size():
     assert todays_batch_size(50, 80, 300, more=False) == 0
     assert todays_batch_size(50, 80, 300, more=True) == 50
     assert todays_batch_size(50, 0, 10, more=False) == 10
+
+
+def test_relinked_track_keeps_playlist_identity():
+    """With market=from_token Spotify may swap in a playable version; the playlist still holds the original."""
+    entry = spotify_item("relinked", 3)
+    entry["item"]["linked_from"] = {"id": "orig", "uri": "spotify:track:orig"}
+    entry["item"]["is_playable"] = True
+    t = parse_playlist_items([entry])["orig"]
+    assert (t.track_id, t.uri, t.title) == ("orig", "spotify:track:orig", "Song relinked")
+
+
+def test_unplayable_flag():
+    gone = spotify_item("gone", 3)
+    gone["item"]["is_playable"] = False
+    gone["item"]["restrictions"] = {"reason": "market"}
+    parsed = parse_playlist_items([gone, spotify_item("fine", 3)])
+    assert parsed["gone"].is_playable is False
+    assert parsed["fine"].is_playable is True  # field absent -> playable
+
+
+def test_super_keep_triples_the_wait():
+    kept = SimpleNamespace(added_at=datetime(2024, 1, 1), last_kept_at=datetime(2026, 5, 1),
+                           status="active", title="t", keep_multiplier=3)
+    assert due_at(kept, ROTATION) == datetime(2026, 5, 1) + timedelta(days=90)

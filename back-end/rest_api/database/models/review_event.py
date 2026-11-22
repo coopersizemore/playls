@@ -5,10 +5,12 @@ from rest_api.clock import utcnow
 from rest_api.database.config import Base
 
 KEEP = "keep"
+SUPER_KEEP = "super_keep"  # comes due at SUPER_KEEP_MULTIPLIER x the interval
 SKIP = "skip"
 REMOVE = "remove"
 UNDO = "undo"
-ACTIONS = (KEEP, SKIP, REMOVE, UNDO)
+ACTIONS = (KEEP, SUPER_KEEP, SKIP, REMOVE, UNDO)
+KEEP_ACTIONS = (KEEP, SUPER_KEEP)
 
 
 class ReviewEventDB(Base):
@@ -19,9 +21,10 @@ class ReviewEventDB(Base):
     rotation_track_id = Column(
         Integer, ForeignKey("rotation_track.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    action = Column(String(10), nullable=False)
-    # keep only: last_kept_at before this keep, restored if the keep is undone
+    action = Column(String(12), nullable=False)
+    # keeps only: the track's keep state before this keep, restored if the keep is undone
     previous_last_kept_at = Column(DateTime, nullable=True)
+    previous_keep_multiplier = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow, index=True)
 
     track = relationship("RotationTrackDB", back_populates="events")

@@ -7,6 +7,8 @@ from ..models.rotation import (
     FlushOut,
     HistoryEventOut,
     QueueOut,
+    RemoveUnplayableOut,
+    UnplayableOut,
     ReviewIn,
     RotationCreate,
     RotationOut,
@@ -15,7 +17,7 @@ from ..models.rotation import (
 )
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
-from ..services.sync_service import flush_pending_removals
+from ..services.sync_service import flush_pending_removals, sync_rotation
 
 # Every rotation route requires a logged-in user
 router = APIRouter(
@@ -73,6 +75,7 @@ async def get_queue(
     rotation_id: int,
     tz_offset: int = Query(0, ge=-840, le=840, description="JS Date.getTimezoneOffset() of the client"),
     more: bool = Query(False, description="Serve another batch after today's limit is used up"),
+    all: bool = Query(False, description="Every song in the rotation, soonest due first, no limit"),
     db: Session = Depends(get_db),
     user: UserDB = current_user_dep,
 ):
@@ -80,7 +83,40 @@ async def get_queue(
     Syncs with Spotify first (best effort)."""
     rotation = _get_owned_or_404(db, rotation_id, user)
     await rs.try_sync(db, rotation, user)
+    if all:
+        return rs.all_songs_queue(db, rotation, tz_offset)
     return rs.due_queue(db, rotation, tz_offset, more)
+
+
+@router.post("/{rotation_id}/reset-due", response_model=RotationOut)
+async def reset_due_dates(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """Mark every song as not due: each comes due one interval from now."""
+    rotation = _get_owned_or_404(db, rotation_id, user)
+    rs.reset_due_dates(db, rotation)
+    return rs.summarize_one(db, rotation)
+
+
+@router.get("/{rotation_id}/unplayable", response_model=UnplayableOut)
+async def get_unplayable(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """Songs still in the playlist but unavailable on Spotify. Re-reads the whole playlist
+    first, since availability can change without the playlist changing."""
+    rotation = _get_owned_or_404(db, rotation_id, user)
+    await sync_rotation(db, rotation, user, force=True)
+    return UnplayableOut(tracks=rs.unplayable_tracks(db, rotation))
+
+
+@router.post("/{rotation_id}/remove-unplayable", response_model=RemoveUnplayableOut)
+async def remove_unplayable(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """Remove every unavailable song from the rotation and the Spotify playlist now."""
+    rotation = _get_owned_or_404(db, rotation_id, user)
+    removed = rs.queue_unplayable_removals(db, rotation)
+    flushed = True
+    try:
+        await flush_pending_removals(db, rotation, user)
+    except Exception:
+        db.rollback()
+        flushed = False  # stays pending; the next sync retries
+    return RemoveUnplayableOut(removed=removed, flushed=flushed)
 
 
 @router.get("/{rotation_id}/tracks", response_model=list[TrackOut])

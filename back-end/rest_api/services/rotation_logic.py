@@ -1,7 +1,7 @@
 """Pure rotation rules (no DB or network), per docs/DESIGN.md.
 
 Due date for an active song, with interval = rotation.interval_hours:
-  - kept before:              last_kept_at + interval
+  - kept before:              last_kept_at + interval x keep_multiplier (3 after a super keep)
   - grace period on:          max(added_at, rotation.created_at) + interval
                               (songs already in the playlist first come due at creation + interval)
   - grace period off:         added_at + interval
@@ -21,7 +21,7 @@ def due_at(track, rotation) -> Optional[datetime]:
         return None
     interval = timedelta(hours=rotation.interval_hours)
     if track.last_kept_at is not None:
-        return track.last_kept_at + interval
+        return track.last_kept_at + interval * (getattr(track, "keep_multiplier", None) or 1)
     if rotation.grace_period:
         added = track.added_at or rotation.created_at
         return max(added, rotation.created_at) + interval
@@ -70,6 +70,7 @@ class PlaylistTrack:
     image_url: Optional[str]
     duration_ms: Optional[int]
     added_at: Optional[datetime]  # None for very old playlists that lack added_at
+    is_playable: bool = True  # False: still in the playlist but unavailable (greyed out)
 
 
 def _parse_added_at(value: Optional[str]) -> Optional[datetime]:
@@ -103,6 +104,12 @@ def parse_playlist_items(entries: Iterable[Dict[str, Any]]) -> Dict[str, Playlis
 
     Skips local files, episodes and unavailable (null) items. Duplicate copies of a
     track collapse to one entry anchored on the earliest added_at.
+
+    Items are fetched with market=from_token, so Spotify may *relink* a track to a
+    playable version with a different id. The playlist still holds the original, given in
+    `linked_from`: that's the identity (and the URI to remove) we keep, while display
+    metadata comes from the relinked item. `is_playable` is only present with a market;
+    missing means playable.
     """
     tracks: Dict[str, PlaylistTrack] = {}
     for entry in entries:
@@ -113,22 +120,28 @@ def parse_playlist_items(entries: Iterable[Dict[str, Any]]) -> Dict[str, Playlis
         if not item or item.get("type", "track") != "track" or not item.get("id") or item.get("is_local"):
             continue
         added_at = _parse_added_at(entry.get("added_at"))
-        existing = tracks.get(item["id"])
+        original = item.get("linked_from") or {}
+        track_id = original.get("id") or item["id"]
+        uri = original.get("uri") or (item.get("uri") if not original else None) or f"spotify:track:{track_id}"
+        playable = item.get("is_playable") is not False
+        existing = tracks.get(track_id)
         if existing is not None:
+            existing.is_playable = existing.is_playable or playable
             if added_at is not None and (existing.added_at is None or added_at < existing.added_at):
                 existing.added_at = added_at
             continue
         album = item.get("album") or {}
         artists = ", ".join(a["name"] for a in item.get("artists") or [] if a.get("name"))
-        tracks[item["id"]] = PlaylistTrack(
-            track_id=item["id"],
-            uri=item.get("uri") or f"spotify:track:{item['id']}",
+        tracks[track_id] = PlaylistTrack(
+            track_id=track_id,
+            uri=uri,
             title=(item.get("name") or "Unknown track")[:300],
             artists=artists[:500] or None,
             album=(album.get("name") or None) and album["name"][:300],
             image_url=_pick_image(album),
             duration_ms=item.get("duration_ms"),
             added_at=added_at,
+            is_playable=playable,
         )
     return tracks
 

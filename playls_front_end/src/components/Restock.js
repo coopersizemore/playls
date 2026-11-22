@@ -15,12 +15,13 @@ import {
   ListItem,
   ListItemAvatar,
   ListItemText,
+  Snackbar,
   Tab,
   Tabs,
   TextField,
   Typography,
 } from '@mui/material';
-import { Add, Check, Close, MusicNote, Refresh, Search as SearchIcon } from '@mui/icons-material';
+import { Add, Block, Check, Close, MusicNote, Refresh, Search as SearchIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
 import { Layout, RotationHeader, SpotifyEmbed } from './Layout';
@@ -40,6 +41,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(0);
   const [error, setError] = useState('');
+  const [blocked, setBlocked] = useState(null); // { track, index } for the Undo toast
 
   const load = useCallback(async (refresh = false) => {
     setDeck(null);
@@ -67,8 +69,13 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
         await api.restockAdd(rotationId, current.track_id, source);
         setAdded((n) => n + 1);
         onAdded();
+        setBlocked(null);
+      } else if (action === 'block') {
+        await api.restockBlock(rotationId, current.track_id, source);
+        setBlocked({ track: current, index });
       } else {
         await api.restockSkip(rotationId, current.track_id, source);
+        setBlocked(null);
       }
       setIndex((i) => i + 1);
     } catch (e) {
@@ -77,7 +84,19 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
     } finally {
       setBusy(false);
     }
-  }, [current, busy, rotationId, source, onAdded]);
+  }, [current, busy, index, rotationId, source, onAdded]);
+
+  const undoBlock = async () => {
+    if (!blocked) return;
+    try {
+      await api.unblockSong(blocked.track.track_id);
+      setIndex(blocked.index); // show the card again
+    } catch (e) {
+      setError(errorMessage(e, "Couldn't undo. You can resume it from Settings."));
+    } finally {
+      setBlocked(null);
+    }
+  };
 
   useEffect(() => {
     const onKey = (e) => {
@@ -129,11 +148,27 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
             <Button variant="contained" size="large" startIcon={<Add />} onClick={() => act('add')}
               disabled={busy} sx={{ minWidth: 140 }}>Add</Button>
           </Box>
+          {source === 'bring_back' && (
+            <Box textAlign="center" mt={1.5}>
+              <Button color="inherit" size="small" startIcon={<Block />} onClick={() => act('block')} disabled={busy}
+                sx={{ color: 'text.secondary' }}>
+                Stop suggesting this song
+              </Button>
+            </Box>
+          )}
           <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={2}>
             Keyboard: ← not now · → add. Adding puts the song in your Spotify playlist right away.
           </Typography>
         </>
       )}
+      <Snackbar
+        open={!!blocked}
+        onClose={(_, reason) => { if (reason !== 'clickaway') setBlocked(null); }}
+        autoHideDuration={6000}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        message={blocked ? `Won't suggest “${blocked.track.title}” again` : ''}
+        action={<Button color="primary" size="small" onClick={undoBlock}>Undo</Button>}
+      />
     </Box>
   );
 };

@@ -42,6 +42,16 @@ class RestockActionIn(BaseModel):
     source: Source
 
 
+class BlockedSongOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    track_id: str
+    title: str
+    artists: str | None
+    image_url: str | None
+    created_at: datetime
+
+
 class PickIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

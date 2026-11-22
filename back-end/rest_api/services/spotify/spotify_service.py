@@ -91,7 +91,11 @@ class SpotifyService:
     ) -> Dict[str, Any]:
         """One page of playlist items (only for playlists the user owns or collaborates on)."""
         return await SpotifyService.make_spotify_request(
-            f"/playlists/{playlist_id}/items", user, db, params={"limit": limit, "offset": offset}
+            f"/playlists/{playlist_id}/items",
+            user,
+            db,
+            # from_token adds is_playable (unavailable tracks) and relinks to playable versions
+            params={"limit": limit, "offset": offset, "market": "from_token"},
         )
 
     @staticmethod

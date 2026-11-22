@@ -28,6 +28,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 - **Interval (N):** stored in hours (`interval_hours`, 1 hour to 365 days). The UI offers presets plus a custom amount in hours, days or weeks.
 - **Due date:** computed when read, not stored, so changes to the interval or the grace period apply immediately to every song not yet kept.
   - **After a keep:** due at the keep date + N.
+  - **After a super keep:** due at the keep date + **3 × N**. `rotation_track.keep_multiplier` is set to 3, so if N changes later the wait is still three intervals. A plain keep, a reset or a fresh start sets it back to 1.
   - **Grace period on** (per-rotation option, default on): due at `max(added_at, rotation.created_at)` + N.
     - Songs already in the playlist when the rotation was created first come due at creation + N.
     - Songs added later come due at `added_at` + N.
@@ -49,11 +50,25 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
   - Each swipe is saved to the backend as soon as it happens, which only writes to the database, so a decision is never lost.
   - Spotify removals are sent in batches of up to 100 URIs per DELETE (`DELETE /playlists/{id}/items`; no `snapshot_id`, since removal by URI drops every copy anyway). A batch is triggered when the user leaves the Review page or app (a `fetch` with `keepalive` on `pagehide`/`visibilitychange`; `sendBeacon` can't send the CSRF header). Pending removals are also flushed before every sync, so a flush that gets interrupted is retried next time.
   - Until a removal reaches Spotify, sync treats that track as removed and doesn't reactivate it.
-  - **Undo:** an always-visible Undo button (and Z / Backspace) steps back through the current batch's swipes, one at a time.
-    - It reverts keep (restoring the previous `last_kept_at`), skip (the song is no longer held until tomorrow) and remove.
-    - A removal can only be undone until the flush reaches Spotify. After that, History or Restock offers "Add back".
+  - **Navigating a batch** (Review page):
+    - **Keep, Super keep and Remove** decide and move to the next song.
+    - **Back** (Backspace / Z) and **Skip / Next** (↓) move through the batch, so earlier songs can be revisited. A revisited song shows its decision.
+    - **Skip** on an undecided song records a skip. On a decided song the button reads "Next" and just moves forward.
+    - **Changing a decision:** picking a different action on a decided song undoes the old one server-side (the API's `undo`), then applies the new one.
+    - **Removal toast:** after a removal, an "Undo" toast reverts it and returns to that song.
+    - **Limit:** a removal can only be changed until the flush reaches Spotify. After that, History or Restock offers "Add back".
 - **Duplicates:** removing by URI deletes **every copy** of a track from the playlist. The database keeps one row per `(rotation, track)`. *This decision should be revisited.*
 - **One rotation per playlist** per user.
+- **Super keep** (review action `super_keep`, star button, ↑ key): a keep that doesn't ask again for three intervals. It counts toward the daily limit like any review. Undo restores the previous `last_kept_at` and `keep_multiplier`, which are stored on the event.
+- **Stop suggesting** (the Bring back deck's "Stop suggesting this song"): adds a `restock_block` row for the user and track.
+  - The song gets a score of 0 in **every** restock deck (Bring back, picks, For you) and is never offered again.
+  - It stays in rotation History, and manual Search and History's "Add back" still work.
+  - **Undo:** a toast right after blocking, or Settings → "Songs you've stopped suggesting" → Resume suggesting (`DELETE /user/me/blocked-songs/{track_id}`).
+- **Rotation menu actions:**
+  - **Review all songs** (`queue?all=true`): every active song, soonest due first, with no daily limit. Keeping a song that isn't due yet pushes its next review out a full interval.
+  - **Reset all songs to not due** (after a confirmation): sets every active song's `last_kept_at` to now. This isn't recorded as review events, so it doesn't affect History or the daily limit, and it can't be undone.
+  - **Remove unavailable songs** (after a confirmation that lists them): the preview force-syncs, because availability can change without the playlist's snapshot changing. Removal then marks the songs `pending_removal` and flushes right away. This is a cleanup, not a review: no review events, and Bring back never offers unplayable songs.
+- **Availability:** `rotation_track.is_playable` is refreshed on every full read of the playlist (see the Spotify notes in CLAUDE.md about relinking). Review shows an "Unavailable on Spotify" chip on those songs.
 - **New playlists** are created with an empty description (`""`), never omitted. Playlists created without one can show "null" in Spotify.
 - **Creating a rotation:** "from existing" wraps an owned playlist and asks whether to apply the grace period. "From scratch" creates an empty playlist with `POST /me/playlists` (still supported), and the user adds songs to it in Spotify until restock arrives in Phase 2.
 - **Removed songs** are recorded only in PlayLS history (`review_event` and the `removed` rows); there's no "rotated out" archive playlist in Spotify. In Phase 2, the user can bring them back through PlayLS.
@@ -94,20 +109,21 @@ Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-
 - `/auth/me` returns `missing_scopes`, and the For you tab offers a Reconnect button. Accounts from before this change have to log in again.
 - Sources without a granted scope are skipped, and any one failing source is skipped rather than failing the whole deck.
 
-## Data model (Alembic revisions 0001–0006)
+## Data model (Alembic revisions 0001–0008)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
   - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
   - `snapshot_id`, `last_synced_at`, `created_at`
 - `rotation_track`, which replaces `song`:
   - Keys: a surrogate `id`, unique on `(rotation_id, track_id)`. `track_id` is the provider's ID, and `uri` is stored for removal.
-  - Track metadata: `title`, `artists`, `album`, `image_url`, `duration_ms`
-  - Review state: `added_at` (from Spotify; NULL if unknown), `last_kept_at`, `status` (`active` | `pending_removal` | `removed`), `removed_at`, `removed_by` (`user` | `external`)
+  - Track metadata: `title`, `artists`, `album`, `image_url`, `duration_ms`, `is_playable`
+  - Review state: `added_at` (from Spotify; NULL if unknown), `last_kept_at`, `keep_multiplier` (1, or 3 after a super keep), `status` (`active` | `pending_removal` | `removed`), `removed_at`, `removed_by` (`user` | `external`)
+- `restock_block`: `user_id`, `track_id` (unique together), display metadata, `created_at`.
 - `curated_pick`: track metadata plus `note`, optional `starts_at`/`ends_at`, and `created_by`.
 - `restock_feedback`: `user_id`, `rotation_id`, `track_id`, `source` (`bring_back` | `picks` | `suggested` | `search`), `action` (`add` | `skip`), `created_at`.
 - `suggestion_cache`: one row per user, `{candidates: {track_id: {meta, features}}, missing_scopes}` as JSON, plus `created_at`.
 - `users.granted_scopes`: the space-separated OAuth scopes from the last login.
-- `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `skip` | `remove`; legacy `undo` rows only), `previous_last_kept_at` (keeps only, for undo), `created_at`. An undone action's row is deleted. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
+- `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `super_keep` | `skip` | `remove`; legacy `undo` rows only), `previous_last_kept_at` / `previous_keep_multiplier` (keeps only, for undo), `created_at`. An undone action's row is deleted. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
 - Alembic manages the schema from here on (the one-time wipe was done 2026-11-07). All timestamps are naive UTC.
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 

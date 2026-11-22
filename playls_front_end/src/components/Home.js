@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
   Alert,
   AppBar,
@@ -12,6 +12,7 @@ import {
   Chip,
   CircularProgress,
   Container,
+  Divider,
   Grid,
   IconButton,
   ListItemIcon,
@@ -20,13 +21,17 @@ import {
   Toolbar,
   Typography,
 } from '@mui/material';
-import { Add, Delete, Edit, History, LibraryAdd, MoreVert, RotateLeft, SyncProblem } from '@mui/icons-material';
+import {
+  Add, Delete, Edit, History, LibraryAdd, MoreVert, PlaylistRemove, RestartAlt, RotateLeft, SyncProblem, ViewList,
+} from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
 import { Layout, PlaylistCover, relativeDays } from './Layout';
 import {
   CreateRotationDialog,
   DeleteRotationDialog,
+  RemoveUnplayableDialog,
+  ResetDueDialog,
   EditRotationDialog,
   formatInterval,
 } from './RotationDialogs';
@@ -57,7 +62,8 @@ const Landing = ({ login }) => (
   </Box>
 );
 
-const RotationCard = ({ rotation, onEdit, onDelete }) => {
+const RotationCard = ({ rotation, onEdit, onDelete, onResetDue, onRemoveUnplayable }) => {
+  const navigate = useNavigate();
   const [menuAnchor, setMenuAnchor] = useState(null);
   const due = rotation.due_count;
   const ready = rotation.ready_today;
@@ -121,6 +127,17 @@ const RotationCard = ({ rotation, onEdit, onDelete }) => {
         <MenuItem onClick={() => { closeMenu(); onEdit(rotation); }}>
           <ListItemIcon><Edit fontSize="small" /></ListItemIcon>Edit
         </MenuItem>
+        <MenuItem onClick={() => { closeMenu(); navigate(`/rotation/${rotation.id}/review?all=1`); }}
+          disabled={rotation.active_count === 0}>
+          <ListItemIcon><ViewList fontSize="small" /></ListItemIcon>Review all songs
+        </MenuItem>
+        <MenuItem onClick={() => { closeMenu(); onResetDue(rotation); }} disabled={rotation.active_count === 0}>
+          <ListItemIcon><RestartAlt fontSize="small" /></ListItemIcon>Reset all songs to not due…
+        </MenuItem>
+        <MenuItem onClick={() => { closeMenu(); onRemoveUnplayable(rotation); }} disabled={rotation.active_count === 0}>
+          <ListItemIcon><PlaylistRemove fontSize="small" /></ListItemIcon>Remove unavailable songs…
+        </MenuItem>
+        <Divider />
         <MenuItem onClick={() => { closeMenu(); onDelete(rotation); }} sx={{ color: 'error.main' }}>
           <ListItemIcon><Delete fontSize="small" color="error" /></ListItemIcon>Delete
         </MenuItem>
@@ -136,6 +153,8 @@ const Home = () => {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [resetting, setResetting] = useState(null);
+  const [cleaning, setCleaning] = useState(null);
 
   const fetchRotations = useCallback(async () => {
     try {
@@ -188,7 +207,8 @@ const Home = () => {
         <Grid container spacing={3}>
           {rotations.map((rotation) => (
             <Grid key={rotation.id} size={{ xs: 12, sm: 6, md: 4 }}>
-              <RotationCard rotation={rotation} onEdit={setEditing} onDelete={setDeleting} />
+              <RotationCard rotation={rotation} onEdit={setEditing} onDelete={setDeleting}
+                onResetDue={setResetting} onRemoveUnplayable={setCleaning} />
             </Grid>
           ))}
         </Grid>
@@ -200,6 +220,10 @@ const Home = () => {
         onSaved={() => { setEditing(null); fetchRotations(); }} />
       <DeleteRotationDialog rotation={deleting} onClose={() => setDeleting(null)}
         onDeleted={() => { setDeleting(null); fetchRotations(); }} />
+      <ResetDueDialog rotation={resetting} onClose={() => setResetting(null)}
+        onDone={() => { setResetting(null); fetchRotations(); }} />
+      <RemoveUnplayableDialog rotation={cleaning} onClose={() => setCleaning(null)}
+        onDone={() => { setCleaning(null); fetchRotations(); }} />
     </Layout>
   );
 };

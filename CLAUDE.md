@@ -26,9 +26,9 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
 - `GET|PUT /user/me/settings` `{review_limit: int 1–1000 | null}` (null = no limit; default 50).
 - Daily-limit endpoints take `tz_offset` (JS `getTimezoneOffset()`, minutes) so "today" is the user's local day. The frontend sends it automatically from `api.js`.
 - `POST /rotation/` `{playlist_id?, name?, description?, interval_hours, grace_period}`: wraps an owned/collaborative playlist, or creates a private one via `POST /me/playlists` when `playlist_id` is omitted. Then runs the initial sync.
-- `GET|PUT|DELETE /rotation/{id}`, `GET /rotation/{id}/queue[?more=true]` (syncs, then today's batch: `{tracks, due_count, daily_limit, reviewed_today, remaining_after_batch, limit_reached}`), `/tracks`, `POST /rotation/{id}/review` `{track_id, action: keep|skip|remove|undo}`, `POST /rotation/{id}/flush`, `GET /rotation/{id}/history`.
+- `GET|PUT|DELETE /rotation/{id}`, `GET /rotation/{id}/queue[?more=true | ?all=true]` (syncs, then today's batch: `{tracks, due_count, daily_limit, reviewed_today, remaining_after_batch, limit_reached}`), `/tracks`, `POST /rotation/{id}/review` `{track_id, action: keep|super_keep|skip|remove|undo}`, `POST /rotation/{id}/flush`, `GET /rotation/{id}/history`, `POST /rotation/{id}/reset-due`, `GET /rotation/{id}/unplayable` (force-syncs), `POST /rotation/{id}/remove-unplayable`.
 - `GET /spotify/playlists` (flattened, with `rotatable`/`rotation_id`), `GET /spotify/search` (limit ≤ 10).
-- Restock, under `/rotation/{id}/restock/`: `GET deck/{bring_back|picks|suggested}[?refresh=true]` → `{source, items, missing_scopes}`; `GET search?q=&offset=`; `POST add` and `POST skip` with `{track_id, source}`.
+- Restock, under `/rotation/{id}/restock/`: `GET deck/{bring_back|picks|suggested}[?refresh=true]` → `{source, items, missing_scopes}`; `GET search?q=&offset=`; `POST add`, `POST skip` and `POST block` ("stop suggesting") with `{track_id, source}`. Blocks are listed and undone via `GET /user/me/blocked-songs` and `DELETE /user/me/blocked-songs/{track_id}`.
 - Admin (accounts in `ADMIN_SPOTIFY_IDS`; others get 404): `GET|POST /admin/picks`, `DELETE /admin/picks/{id}`. `/auth/me` returns `is_admin` and `missing_scopes`.
 
 ## Routing and deployment (Vercel services)
@@ -61,6 +61,7 @@ Frontend `GET /api/auth/login` → redirects to Spotify → Spotify redirects to
 
 ## Spotify API constraints (Development Mode, after Feb 2026)
 This app is in Development Mode: max 5 allowlisted users per Client ID, and the owner needs Premium. Extended quota is effectively unavailable. Build against the post-Feb-2026 API (changelog: developer.spotify.com/documentation/web-api/references/changes/february-2026):
+- Playlist items are read with `market=from_token`. Every track then carries `is_playable` (with `restrictions.reason`, e.g. `market`). Spotify may also **relink** a track to a playable version with a different `id`, giving the original in `linked_from`. The parser keys on `linked_from` (the version actually in the playlist, and the URI to remove), so relinked tracks aren't treated as removed and re-added. Verified on a real 550-track playlist: 60 were relinked and 6 were unplayable.
 - Playlist items: `GET|POST|DELETE /playlists/{id}/items` (the `/tracks` versions were removed). Items pages max out at **50**; add/remove take at most **100** URIs per request. The removal body is `{"items": [{"uri": ...}]}`. Response fields are renamed (`tracks` → `items`, `track` → `item`; parsing accepts both). Contents are only returned for playlists the user **owns or collaborates on**.
 - Create playlist: `POST /me/playlists` (`POST /users/{id}/playlists` was removed).
 - `GET /me/playlists` still works (item count is `items.total`; `tracks.total` is deprecated). `GET /users/{id}/playlists` was removed.

@@ -1,211 +1,79 @@
-import logging
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional, List
+
 from ..database.config import get_db
 from ..database.models.user import UserDB
 from ..services.auth_service import AuthService
-from ..services.spotify.spotify_service import SpotifyService
+from ..services.db import rotation_service as rs
+from ..services.spotify.spotify_service import SEARCH_LIMIT_MAX, SpotifyService
 
-logger = logging.getLogger(__name__)
+router = APIRouter(
+    prefix="/spotify",
+    tags=["spotify"],
+    dependencies=[Depends(AuthService.get_current_user_from_token)],
+)
 
-router = APIRouter(prefix="/spotify", tags=["spotify"])
+current_user_dep = Depends(AuthService.get_current_user_from_token)
 
-@router.get("/profile")
-async def get_user_profile(
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Get current user's Spotify profile"""
-    try:
-        profile = await SpotifyService.get_user_profile(current_user, db)
-        return profile
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
+MAX_PLAYLIST_PAGES = 20  # 20 x 50 = 1000 playlists
 
-@router.get("/playlists")
-async def get_user_playlists(
-    limit: int = Query(20, ge=1, le=50),
-    offset: int = Query(0, ge=0),
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Get current user's Spotify playlists"""
-    try:
-        playlists = await SpotifyService.get_user_playlists(current_user, db, limit, offset)
-        return playlists
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
 
-@router.get("/playlist/{playlist_id}")
-async def get_playlist(
-    playlist_id: str,
-    fields: Optional[str] = None,
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Get a specific playlist"""
-    try:
-        playlist = await SpotifyService.get_playlist(playlist_id, current_user, db, fields)
-        return playlist
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
+class PlaylistOut(BaseModel):
+    id: str
+    name: str
+    image_url: str | None
+    total_items: int | None
+    owner_name: str | None
+    # Only playlists the user owns or collaborates on expose their contents
+    rotatable: bool
+    rotation_id: int | None
 
-@router.get("/playlist/{playlist_id}/tracks")
-async def get_playlist_tracks(
-    playlist_id: str,
-    limit: int = Query(100, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    fields: Optional[str] = None,
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Get tracks from a specific playlist"""
-    try:
-        tracks = await SpotifyService.get_playlist_tracks(
-            playlist_id, current_user, db, limit, offset, fields
-        )
-        return tracks
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
 
-@router.post("/playlist/{playlist_id}/tracks")
-async def add_tracks_to_playlist(
-    playlist_id: str,
-    track_uris: List[str],
-    position: Optional[int] = None,
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Add tracks to a playlist"""
-    try:
-        result = await SpotifyService.add_tracks_to_playlist(
-            playlist_id, track_uris, current_user, db, position
-        )
-        return result
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
+def _item_total(playlist: dict) -> int | None:
+    # Feb 2026: "items" replaces "tracks" on playlist objects
+    for key in ("items", "tracks"):
+        value = playlist.get(key)
+        if isinstance(value, dict) and value.get("total") is not None:
+            return value["total"]
+    return None
 
-@router.delete("/playlist/{playlist_id}/tracks")
-async def remove_tracks_from_playlist(
-    playlist_id: str,
-    track_uris: List[str],
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Remove tracks from a playlist"""
-    try:
-        result = await SpotifyService.remove_tracks_from_playlist(
-            playlist_id, track_uris, current_user, db
-        )
-        return result
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
 
-@router.post("/playlist")
-async def create_playlist(
-    name: str,
-    description: Optional[str] = None,
-    public: bool = False,
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Create a new playlist"""
-    try:
-        playlist = await SpotifyService.create_playlist(
-            name, current_user, db, description, public
-        )
-        return playlist
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
+@router.get("/playlists", response_model=list[PlaylistOut])
+async def get_user_playlists(db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """All of the user's playlists, flagged with whether they can be rotated."""
+    rotation_by_playlist = {r.playlist_id: r.id for r in rs.get_user_rotations(db, user.id)}
+    results: list[PlaylistOut] = []
+    offset = 0
+    for _ in range(MAX_PLAYLIST_PAGES):
+        page = await SpotifyService.get_user_playlists(user, db, limit=50, offset=offset)
+        items = [p for p in page.get("items") or [] if p]
+        for p in items:
+            owner = p.get("owner") or {}
+            images = p.get("images") or []
+            results.append(PlaylistOut(
+                id=p["id"],
+                name=p.get("name") or "Untitled",
+                image_url=images[0].get("url") if images else None,
+                total_items=_item_total(p),
+                owner_name=owner.get("display_name") or owner.get("id"),
+                rotatable=owner.get("id") == user.spotify_id or bool(p.get("collaborative")),
+                rotation_id=rotation_by_playlist.get(p["id"]),
+            ))
+        offset += len(items)
+        if not page.get("next") or not items:
+            break
+    return results
 
-@router.get("/recommendations")
-async def get_recommendations(
-    seed_artists: Optional[str] = Query(None, description="Comma-separated artist IDs"),
-    seed_genres: Optional[str] = Query(None, description="Comma-separated genre names"),
-    seed_tracks: Optional[str] = Query(None, description="Comma-separated track IDs"),
-    limit: int = Query(20, ge=1, le=100),
-    min_danceability: Optional[float] = Query(None, ge=0.0, le=1.0),
-    max_danceability: Optional[float] = Query(None, ge=0.0, le=1.0),
-    target_danceability: Optional[float] = Query(None, ge=0.0, le=1.0),
-    min_energy: Optional[float] = Query(None, ge=0.0, le=1.0),
-    max_energy: Optional[float] = Query(None, ge=0.0, le=1.0),
-    target_energy: Optional[float] = Query(None, ge=0.0, le=1.0),
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
-):
-    """Get song recommendations"""
-    try:
-        # Parse comma-separated values
-        seed_artists_list = seed_artists.split(",") if seed_artists else None
-        seed_genres_list = seed_genres.split(",") if seed_genres else None
-        seed_tracks_list = seed_tracks.split(",") if seed_tracks else None
-        
-        # Build audio features dict
-        audio_features = {}
-        if min_danceability is not None:
-            audio_features["min_danceability"] = min_danceability
-        if max_danceability is not None:
-            audio_features["max_danceability"] = max_danceability
-        if target_danceability is not None:
-            audio_features["target_danceability"] = target_danceability
-        if min_energy is not None:
-            audio_features["min_energy"] = min_energy
-        if max_energy is not None:
-            audio_features["max_energy"] = max_energy
-        if target_energy is not None:
-            audio_features["target_energy"] = target_energy
-        
-        recommendations = await SpotifyService.get_recommendations(
-            current_user, db, seed_artists_list, seed_genres_list, 
-            seed_tracks_list, limit, **audio_features
-        )
-        return recommendations
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
 
 @router.get("/search")
 async def search_spotify(
-    q: str = Query(..., description="Search query"),
-    type: str = Query("track", description="Search type: track, artist, album, playlist"),
-    limit: int = Query(20, ge=1, le=50),
-    offset: int = Query(0, ge=0),
-    market: str = Query("US", description="Market code"),
-    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
-    db: Session = Depends(get_db)
+    q: str = Query(..., min_length=1, max_length=200),
+    type: str = Query("track", pattern="^(track|artist|album)$"),
+    limit: int = Query(SEARCH_LIMIT_MAX, ge=1, le=SEARCH_LIMIT_MAX),
+    offset: int = Query(0, ge=0, le=1000),
+    db: Session = Depends(get_db),
+    user: UserDB = current_user_dep,
 ):
-    """Search Spotify catalog"""
-    try:
-        results = await SpotifyService.search(
-            q, current_user, db, type, limit, offset, market
-        )
-        return results
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Spotify route failed")
-        raise HTTPException(status_code=502, detail="Spotify request failed")
+    """Search the catalog (Phase 2 restock). Spotify caps limit at 10."""
+    return await SpotifyService.search(q, user, db, type, limit, offset)

@@ -1,11 +1,20 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+
 from ..database.config import get_db
 from ..database.models.user import UserDB
-from ..models.rotation import Rotation
-from ..models.song import Song
+from ..models.rotation import (
+    FlushOut,
+    HistoryEventOut,
+    ReviewIn,
+    RotationCreate,
+    RotationOut,
+    RotationUpdate,
+    TrackOut,
+)
 from ..services.auth_service import AuthService
-
 from ..services.db import rotation_service as rs
+from ..services.sync_service import flush_pending_removals
 
 # Every rotation route requires a logged-in user
 router = APIRouter(
@@ -16,49 +25,83 @@ router = APIRouter(
 
 current_user_dep = Depends(AuthService.get_current_user_from_token)
 
-def _get_owned_or_404(db, rotation_id: int, user: UserDB):
+
+def _get_owned_or_404(db: Session, rotation_id: int, user: UserDB):
     # 404 (not 403) for other users' rotations so ids don't leak
     rotation = rs.get_owned_rotation(db, rotation_id, user.id)
     if not rotation:
         raise HTTPException(status_code=404, detail="Rotation not found")
     return rotation
 
-@router.get("/{rotation_id}")
-async def get_rotation(rotation_id: int, db=Depends(get_db), current_user: UserDB = current_user_dep):
-    return _get_owned_or_404(db, rotation_id, current_user)
 
-@router.post("/")
-async def create_rotation(rotation: Rotation, db=Depends(get_db), current_user: UserDB = current_user_dep):
-    rotation = await rs.create_rotation(db, rotation=rotation, owner=current_user)
-    if not rotation:
-        raise HTTPException(status_code=500, detail="Failed to create rotation")
-    return rotation
+@router.post("/", response_model=RotationOut, status_code=201)
+async def create_rotation(data: RotationCreate, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    rotation, sync_ok = await rs.create_rotation(db, data, user)
+    return rs.summarize_one(db, rotation, sync_ok)
 
-@router.put("/{rotation_id}")
-async def update_rotation(
-    rotation_id: int, rotation: Rotation, db=Depends(get_db), current_user: UserDB = current_user_dep
+
+@router.get("/{rotation_id}", response_model=RotationOut)
+async def get_rotation(
+    rotation_id: int,
+    sync: bool = Query(True, description="Sync with Spotify first"),
+    db: Session = Depends(get_db),
+    user: UserDB = current_user_dep,
 ):
-    existing = _get_owned_or_404(db, rotation_id, current_user)
-    return rs.update_rotation(db, existing, rotation)
+    rotation = _get_owned_or_404(db, rotation_id, user)
+    sync_ok = await rs.try_sync(db, rotation, user) if sync else True
+    return rs.summarize_one(db, rotation, sync_ok)
+
+
+@router.put("/{rotation_id}", response_model=RotationOut)
+async def update_rotation(
+    rotation_id: int, data: RotationUpdate, db: Session = Depends(get_db), user: UserDB = current_user_dep
+):
+    rotation = rs.update_rotation(db, _get_owned_or_404(db, rotation_id, user), data)
+    return rs.summarize_one(db, rotation)
+
 
 @router.delete("/{rotation_id}")
-async def delete_rotation(rotation_id: int, db=Depends(get_db), current_user: UserDB = current_user_dep):
-    existing = _get_owned_or_404(db, rotation_id, current_user)
-    rs.delete_rotation(db, existing)
-    return {"message": "Rotation deleted successfully"}
+async def delete_rotation(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    rs.delete_rotation(db, _get_owned_or_404(db, rotation_id, user))
+    return {"message": "Rotation deleted"}
 
-@router.get("/{rotation_id}/rotate")
-async def rotate_playlist(rotation_id: int, db=Depends(get_db)):
-    pass
 
-@router.get("/{rotation_id}/songs")
-async def get_rotation_songs(rotation_id: int, db=Depends(get_db)):
-    pass
+@router.get("/{rotation_id}/queue", response_model=list[TrackOut])
+async def get_queue(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """Songs due for review, most overdue first. Syncs with Spotify first (best effort)."""
+    rotation = _get_owned_or_404(db, rotation_id, user)
+    await rs.try_sync(db, rotation, user)
+    return rs.due_queue(db, rotation)
 
-@router.post("/{rotation_id}/song")
-async def add_song_to_rotation(rotation_id: int, song: Song, db=Depends(get_db)):
-    pass
 
-@router.delete("/{rotation_id}/song/{song_id}")
-async def remove_song_from_rotation(rotation_id: int, song_id: str, db=Depends(get_db)):
-    pass
+@router.get("/{rotation_id}/tracks", response_model=list[TrackOut])
+async def get_tracks(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """Every track currently in rotation (active, then pending removal), with due dates."""
+    return rs.all_tracks(db, _get_owned_or_404(db, rotation_id, user))
+
+
+@router.post("/{rotation_id}/review", response_model=TrackOut)
+async def review_track(
+    rotation_id: int, data: ReviewIn, db: Session = Depends(get_db), user: UserDB = current_user_dep
+):
+    """Record one swipe (keep / skip / remove / undo). Removals are applied on flush."""
+    return rs.apply_review(db, _get_owned_or_404(db, rotation_id, user), data.track_id, data.action)
+
+
+@router.post("/{rotation_id}/flush", response_model=FlushOut)
+async def flush_removals(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """Apply pending removals to the Spotify playlist (called when leaving Review)."""
+    rotation = _get_owned_or_404(db, rotation_id, user)
+    removed = await flush_pending_removals(db, rotation, user)
+    return FlushOut(removed=removed, pending=rs.summarize_one(db, rotation).pending_removal_count)
+
+
+@router.get("/{rotation_id}/history", response_model=list[HistoryEventOut])
+async def get_history(
+    rotation_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    user: UserDB = current_user_dep,
+):
+    return rs.history(db, _get_owned_or_404(db, rotation_id, user), limit, offset)

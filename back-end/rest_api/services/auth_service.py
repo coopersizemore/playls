@@ -1,6 +1,7 @@
 import os
 import httpx
 import secrets
+from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import HTTPException, Depends, Request, Response, status
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from ..database.config import get_db
 from ..database.models.user import UserDB
 from ..models.user import User
+from ..clock import utcnow
 
 # JWT Configuration
 # No fallback: a known default key would let anyone forge tokens for any user.
@@ -65,24 +67,21 @@ class SpotifyOAuthService:
         """Generate Spotify OAuth authorization URL with state parameter"""
         state = secrets.token_urlsafe(32)
         
+        # Only what the rotation loop needs. /me returns id and display_name without scopes.
         scopes = [
             "playlist-read-private",
-            "playlist-modify-private", 
+            "playlist-read-collaborative",
+            "playlist-modify-private",
             "playlist-modify-public",
-            "user-read-private",
-            "user-read-email",
-            "user-library-read",
-            "user-library-modify"
         ]
-        
-        auth_url = (
-            "https://accounts.spotify.com/authorize?"
-            f"response_type=code&"
-            f"client_id={SPOTIFY_CLIENT_ID}&"
-            f"redirect_uri={SPOTIFY_REDIRECT_URI}&"
-            f"scope={'+'.join(scopes)}&"
-            f"state={state}"
-        )
+        query = urlencode({
+            "response_type": "code",
+            "client_id": SPOTIFY_CLIENT_ID,
+            "redirect_uri": SPOTIFY_REDIRECT_URI,
+            "scope": " ".join(scopes),
+            "state": state,
+        })
+        auth_url = f"https://accounts.spotify.com/authorize?{query}"
         
         return auth_url, state
     
@@ -105,7 +104,7 @@ class SpotifyOAuthService:
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=400, 
-                    detail=f"Failed to exchange code for tokens: {response.text}"
+                    detail="Failed to exchange code for tokens"
                 )
             
             return response.json()
@@ -122,7 +121,7 @@ class SpotifyOAuthService:
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Failed to get user info from Spotify: {response.text}"
+                    detail="Failed to get user info from Spotify"
                 )
             
             return response.json()
@@ -159,9 +158,9 @@ class AuthService:
         """Create JWT access token"""
         to_encode = data.copy()
         if expires_delta:
-            expire = datetime.utcnow() + expires_delta
+            expire = utcnow() + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -222,8 +221,8 @@ class AuthService:
         return user
     
     @staticmethod
-    async def ensure_valid_spotify_token(user: UserDB, db: Session) -> str:
-        """Ensure user has valid Spotify access token, refresh if needed"""
+    async def ensure_valid_spotify_token(user: UserDB, db: Session, force_refresh: bool = False) -> str:
+        """Return a valid Spotify access token, refreshing it if expired (or if force_refresh)"""
         if not user.access_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -231,7 +230,8 @@ class AuthService:
             )
         
         # Check if token is expired (with 5 minute buffer)
-        if user.token_expires_at and user.token_expires_at <= datetime.utcnow() + timedelta(minutes=5):
+        expired = user.token_expires_at is not None and user.token_expires_at <= utcnow() + timedelta(minutes=5)
+        if force_refresh or expired:
             if not user.refresh_token:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -243,7 +243,7 @@ class AuthService:
             
             # Update user with new token
             user.access_token = token_data["access_token"]
-            user.token_expires_at = datetime.utcnow() + timedelta(seconds=token_data["expires_in"])
+            user.token_expires_at = utcnow() + timedelta(seconds=token_data["expires_in"])
             
             # Update refresh token if provided
             if "refresh_token" in token_data:

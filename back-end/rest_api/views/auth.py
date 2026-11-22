@@ -5,7 +5,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import timedelta
+from ..clock import utcnow
 from ..database.config import get_db
 from ..database.models.user import UserDB
 from ..models.user import User
@@ -89,7 +90,7 @@ async def spotify_callback(
 
         # Check if user already exists
         existing_user = db.query(UserDB).filter(UserDB.spotify_id == spotify_id).first()
-        token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        token_expires_at = utcnow() + timedelta(seconds=expires_in)
 
         if existing_user:
             existing_user.access_token = access_token

@@ -125,7 +125,11 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
           <Typography variant="h6" gutterBottom>
             {items.length > 0 ? `That's everything for now${added ? `: added ${added}` : ''}` : 'Nothing here'}
           </Typography>
-          <Typography color="text.secondary" paragraph>{items.length === 0 && emptyText}</Typography>
+          <Typography color="text.secondary" paragraph>
+            {items.length === 0 && (deck.already_in_rotation > 0
+              ? `${deck.already_in_rotation} current PlayLS pick${deck.already_in_rotation === 1 ? ' is' : 's are'} already in this rotation, so there's nothing new to add.`
+              : emptyText)}
+          </Typography>
           <Button startIcon={<Refresh />} onClick={() => load(source === 'suggested')}>Refresh</Button>
         </Box>
       ) : (

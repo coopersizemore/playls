@@ -53,6 +53,7 @@ export const api = {
   // Admin: curating PlayLS picks
   picks: () => data(axios.get(`${API_BASE}/admin/picks`)),
   createPick: (body) => data(axios.post(`${API_BASE}/admin/picks`, body)),
+  updatePick: (pickId, body) => data(axios.put(`${API_BASE}/admin/picks/${pickId}`, body)),
   deletePick: (pickId) => data(axios.delete(`${API_BASE}/admin/picks/${pickId}`)),
   searchSpotify: (q, offset = 0) =>
     data(axios.get(`${API_BASE}/spotify/search`, { params: { q, offset, type: 'track' } })),

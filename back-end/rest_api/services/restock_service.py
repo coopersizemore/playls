@@ -166,10 +166,13 @@ def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_mi
     rows = _rotation_rows(db, rotation)
     skipped_today = _skipped_since(db, user, _today(tz_offset_minutes)) | _blocked(db, user)
     skips = _skip_counts(db, user)
-    seen, picks = set(), []
+    seen, picks, already_in = set(), [], set()
     for pick in active_picks_query(db, now).order_by(CuratedPickDB.created_at.desc(), CuratedPickDB.id.desc()):
         row = rows.get(pick.track_id)
-        if pick.track_id in seen or pick.track_id in skipped_today or (row and row.status != REMOVED):
+        if row and row.status != REMOVED:
+            already_in.add(pick.track_id)  # reported, so an empty deck can explain itself
+            continue
+        if pick.track_id in seen or pick.track_id in skipped_today:
             continue
         seen.add(pick.track_id)
         picks.append(pick)
@@ -178,7 +181,7 @@ def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_mi
     return DeckOut(source=PICKS, items=[
         _candidate(_row_meta(p), PICKS, note=p.note, reason=p.note or "PlayLS pick")
         for p in picks[:logic.DECK_SIZE]
-    ])
+    ], already_in_rotation=len(already_in))
 
 
 # ---------- 3. suggested for you ----------
@@ -467,6 +470,21 @@ async def create_pick(db: orm.Session, admin: UserDB, track_id: str, note, start
         note=note, starts_at=starts_at, ends_at=ends_at, created_by=admin.id, created_at=utcnow(),
     )
     db.add(pick)
+    db.commit()
+    db.refresh(pick)
+    return pick
+
+
+def update_pick(db: orm.Session, pick: CuratedPickDB, changes: Dict[str, Any]) -> CuratedPickDB:
+    """Apply an admin's edits (note and/or active window). `changes` holds only fields sent."""
+    if "note" in changes:
+        pick.note = (changes["note"] or "").strip() or None
+    for key in ("starts_at", "ends_at"):
+        if key in changes:
+            setattr(pick, key, to_naive_utc(changes[key]) if changes[key] else None)
+    if pick.starts_at and pick.ends_at and pick.ends_at <= pick.starts_at:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="The end date must be after the start date")
     db.commit()
     db.refresh(pick)
     return pick

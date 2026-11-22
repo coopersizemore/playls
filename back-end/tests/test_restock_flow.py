@@ -267,3 +267,42 @@ def test_stop_suggesting_hides_everywhere_keeps_history_and_can_be_undone(client
     assert client.delete("/api/user/me/blocked-songs/a").status_code == 404
     assert set(ids(deck(client, rid, "bring_back"))) == {"a", "b"}
     assert "a" in ids(deck(client, rid2, "suggested", refresh=True))
+
+
+def test_picks_already_in_rotation_are_counted_not_silently_hidden(client, spotify, admin):
+    spotify.catalog["inrot"] = track_object("inrot")
+    spotify.catalog["fresh"] = track_object("fresh")
+    client.post("/api/admin/picks", json={"track_id": "inrot"})
+    client.post("/api/admin/picks", json={"track_id": "fresh"})
+    rid = make_rotation(client, spotify, [spotify_item("inrot", 1)])
+    d = deck(client, rid, "picks")
+    assert ids(d) == ["fresh"] and d["already_in_rotation"] == 1
+
+
+def test_admin_edits_pick_note_and_dates(client, spotify, admin):
+    spotify.catalog["p1"] = track_object("p1")
+    pick = client.post("/api/admin/picks", json={"track_id": "p1", "note": "old"}).json()
+    rid = make_rotation(client, spotify, [])
+    assert ids(deck(client, rid, "picks")) == ["p1"]
+
+    r = client.put(f"/api/admin/picks/{pick['id']}", json={"note": "Pick of the week"})
+    assert r.status_code == 200 and r.json()["note"] == "Pick of the week"
+    assert deck(client, rid, "picks")["items"][0]["reason"] == "Pick of the week"
+
+    # Move the window into the future: no longer active
+    future = (utcnow() + timedelta(days=3)).isoformat() + "Z"
+    r = client.put(f"/api/admin/picks/{pick['id']}", json={"starts_at": future})
+    assert r.json()["active"] is False and r.json()["note"] == "Pick of the week"  # note untouched
+    assert ids(deck(client, rid, "picks")) == []
+
+    # Clearing the date makes it active again; end before start is rejected
+    assert client.put(f"/api/admin/picks/{pick['id']}", json={"starts_at": None}).json()["active"] is True
+    past = (utcnow() - timedelta(days=3)).isoformat() + "Z"
+    client.put(f"/api/admin/picks/{pick['id']}", json={"starts_at": future})
+    assert client.put(f"/api/admin/picks/{pick['id']}", json={"ends_at": past}).status_code == 422
+    assert client.put("/api/admin/picks/999", json={"note": "x"}).status_code == 404
+    assert client.put(f"/api/admin/picks/{pick['id']}", json={"track_id": "other"}).status_code == 422
+
+
+def test_pick_edit_is_admin_only(client, spotify):
+    assert client.put("/api/admin/picks/1", json={"note": "x"}).status_code == 404

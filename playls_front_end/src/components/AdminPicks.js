@@ -9,6 +9,10 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   InputAdornment,
   List,
@@ -20,13 +24,96 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { Delete, MusicNote, Search as SearchIcon } from '@mui/icons-material';
+import { Delete, Edit, MusicNote, Search as SearchIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
-import { Layout, formatDate } from './Layout';
+import { Layout } from './Layout';
 
-// <input type="date"> value -> ISO at local midnight (the API stores UTC)
-const dateToIso = (value) => (value ? new Date(`${value}T00:00:00`).toISOString() : null);
+// Dates are whole local days. The API's window is [starts_at, ends_at), so a pick that
+// "ends Nov 30" is sent as ending at local midnight starting Dec 1.
+const startToIso = (value) => (value ? new Date(`${value}T00:00:00`).toISOString() : null);
+const endToIso = (value) => {
+  if (!value) return null;
+  const d = new Date(`${value}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+};
+const pad = (n) => String(n).padStart(2, '0');
+const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseUtc = (iso) => new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+// API -> <input type="date"> values (end shown as the last day the pick is active)
+const startToInput = (iso) => (iso ? toInput(parseUtc(iso)) : '');
+const endToInput = (iso) => (iso ? toInput(new Date(parseUtc(iso).getTime() - 1)) : '');
+const showDate = (value) => (value ? new Date(`${value}T00:00:00`).toLocaleDateString() : '…');
+
+const EditPickDialog = ({ pick, onClose, onSaved }) => {
+  const [note, setNote] = useState('');
+  const [startsOn, setStartsOn] = useState('');
+  const [endsOn, setEndsOn] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!pick) return;
+    setNote(pick.note || '');
+    setStartsOn(startToInput(pick.starts_at));
+    setEndsOn(endToInput(pick.ends_at));
+    setError('');
+    setSaving(false);
+  }, [pick]);
+
+  const invalid = startsOn && endsOn && endsOn < startsOn;
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.updatePick(pick.id, {
+        note: note.trim() || null,
+        starts_at: startToIso(startsOn),
+        ends_at: endToIso(endsOn),
+      });
+      onSaved();
+    } catch (e) {
+      setError(errorMessage(e, "Couldn't save the pick."));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!pick} onClose={saving ? undefined : onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Edit pick</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {pick && (
+          <Box display="flex" alignItems="center" gap={2} mb={2} mt={1}>
+            <Avatar variant="rounded" src={pick.image_url || undefined}><MusicNote /></Avatar>
+            <Box>
+              <Typography>{pick.title}</Typography>
+              <Typography variant="body2" color="text.secondary">{pick.artists}</Typography>
+            </Box>
+          </Box>
+        )}
+        <TextField fullWidth label="Note (optional)" placeholder="Pick of the week" value={note}
+          onChange={(e) => setNote(e.target.value)} inputProps={{ maxLength: 300 }} sx={{ mb: 2 }} />
+        <Stack direction="row" spacing={2}>
+          <TextField type="date" label="First day (optional)" value={startsOn}
+            onChange={(e) => setStartsOn(e.target.value)} InputLabelProps={{ shrink: true }} />
+          <TextField type="date" label="Last day (optional)" value={endsOn} error={!!invalid}
+            helperText={invalid ? 'Must be on or after the first day' : ' '}
+            onChange={(e) => setEndsOn(e.target.value)} InputLabelProps={{ shrink: true }} />
+        </Stack>
+        <Typography variant="body2" color="text.secondary">
+          Leave the dates empty to keep the pick active indefinitely. To change the song, remove this pick and add a new one.
+        </Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button variant="contained" onClick={save} disabled={saving || !!invalid}>{saving ? 'Saving…' : 'Save'}</Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
 
 const artistsOf = (t) => (t.artists || []).map((a) => a.name).join(', ');
 
@@ -41,6 +128,7 @@ const AdminPicks = () => {
   const [endsOn, setEndsOn] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const loadPicks = useCallback(() => {
     api.picks().then(setPicks).catch((e) => { setError(errorMessage(e, 'Failed to load picks.')); setPicks([]); });
@@ -68,8 +156,8 @@ const AdminPicks = () => {
       await api.createPick({
         track_id: selected.id,
         note: note.trim() || null,
-        starts_at: dateToIso(startsOn),
-        ends_at: dateToIso(endsOn),
+        starts_at: startToIso(startsOn),
+        ends_at: endToIso(endsOn),
       });
       setSelected(null); setNote(''); setStartsOn(''); setEndsOn(''); setResults([]); setQuery('');
       loadPicks();
@@ -113,9 +201,9 @@ const AdminPicks = () => {
               <TextField fullWidth label="Note (optional)" placeholder="Pick of the week" value={note}
                 onChange={(e) => setNote(e.target.value)} inputProps={{ maxLength: 300 }} sx={{ mb: 2 }} />
               <Stack direction="row" spacing={2} mb={2}>
-                <TextField type="date" label="Starts (optional)" value={startsOn}
+                <TextField type="date" label="First day (optional)" value={startsOn}
                   onChange={(e) => setStartsOn(e.target.value)} InputLabelProps={{ shrink: true }} />
-                <TextField type="date" label="Ends (optional)" value={endsOn}
+                <TextField type="date" label="Last day (optional)" value={endsOn}
                   onChange={(e) => setEndsOn(e.target.value)} InputLabelProps={{ shrink: true }} />
               </Stack>
               <Button variant="contained" onClick={create} disabled={saving}>
@@ -159,12 +247,15 @@ const AdminPicks = () => {
         <List>
           {picks.map((p) => (
             <ListItem key={p.id} divider secondaryAction={
-              <IconButton edge="end" aria-label={`Remove ${p.title}`} onClick={() => remove(p)}><Delete /></IconButton>
+              <Box display="flex">
+                <IconButton aria-label={`Edit ${p.title}`} onClick={() => setEditing(p)}><Edit /></IconButton>
+                <IconButton edge="end" aria-label={`Remove ${p.title}`} onClick={() => remove(p)}><Delete /></IconButton>
+              </Box>
             }>
               <ListItemAvatar>
                 <Avatar variant="rounded" src={p.image_url || undefined}><MusicNote /></Avatar>
               </ListItemAvatar>
-              <ListItemText
+              <ListItemText sx={{ pr: 10 }}
                 primary={<Box display="flex" alignItems="center" gap={1}>{p.title}
                   <Chip size="small" label={p.active ? 'Active' : 'Inactive'} color={p.active ? 'success' : 'default'} />
                 </Box>}
@@ -172,7 +263,7 @@ const AdminPicks = () => {
                   p.artists,
                   p.note,
                   p.starts_at || p.ends_at
-                    ? `${p.starts_at ? formatDate(p.starts_at) : '…'} – ${p.ends_at ? formatDate(p.ends_at) : '…'}`
+                    ? `${showDate(startToInput(p.starts_at))} – ${showDate(endToInput(p.ends_at))}`
                     : null,
                 ].filter(Boolean).join(' · ')}
               />
@@ -180,6 +271,8 @@ const AdminPicks = () => {
           ))}
         </List>
       )}
+      <EditPickDialog pick={editing} onClose={() => setEditing(null)}
+        onSaved={() => { setEditing(null); loadPicks(); }} />
     </Layout>
   );
 };

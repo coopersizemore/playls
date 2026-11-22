@@ -28,6 +28,8 @@ class DeckOut(BaseModel):
     items: list[CandidateOut]
     # Spotify permissions this source needs that the user hasn't granted (reconnect to fix)
     missing_scopes: list[str] = []
+    # picks only: active picks hidden because they're already in this rotation
+    already_in_rotation: int = 0
 
 
 class SearchOut(BaseModel):
@@ -59,6 +61,16 @@ class PickIn(BaseModel):
     note: str | None = Field(None, max_length=300)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
+
+
+class PickUpdate(BaseModel):
+    """Edit a pick. Omitted fields are left as they are; null clears a note or date."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(None, max_length=300)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None  # exclusive: the pick stops showing at this moment
 
 
 class PickOut(BaseModel):

@@ -14,7 +14,8 @@ import {
 } from '@mui/material';
 import { SkipNext, ThumbDown, ThumbUp, Undo } from '@mui/icons-material';
 import { api, errorMessage, flushOnExit } from '../api';
-import { Layout, formatDate } from './Layout';
+import { Layout, RotationHeader, formatDate } from './Layout';
+import ReviewSummary from './ReviewSummary';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -29,6 +30,8 @@ const Review = () => {
   const [index, setIndex] = useState(0);
   const [counts, setCounts] = useState({ keep: 0, skip: 0, remove: 0 });
   const [lastRemoved, setLastRemoved] = useState(null); // { track, index }
+  const [log, setLog] = useState([]); // [{ track, action }] for the end-of-session summary
+  const [summary, setSummary] = useState(null); // { flushed } once the session has ended
   const [busy, setBusy] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState('');
@@ -76,7 +79,7 @@ const Review = () => {
 
   const act = useCallback(async (action) => {
     const track = tracks[index];
-    if (!track || busy) return;
+    if (!track || busy || summary) return;
     setBusy(true);
     setError('');
     try {
@@ -88,13 +91,14 @@ const Review = () => {
         setLastRemoved(null);
       }
       setCounts((c) => ({ ...c, [action]: c[action] + 1 }));
+      setLog((l) => [...l, { track, action }]);
       setIndex((i) => i + 1);
     } catch (e) {
       setError(errorMessage(e, "Couldn't save that. Please try again."));
     } finally {
       setBusy(false);
     }
-  }, [tracks, index, busy, rotationId]);
+  }, [tracks, index, busy, summary, rotationId]);
 
   const undo = async () => {
     if (!lastRemoved || busy) return;
@@ -103,6 +107,11 @@ const Review = () => {
       await api.review(rotationId, lastRemoved.track.track_id, 'undo');
       pendingRemovals.current = Math.max(0, pendingRemovals.current - 1);
       setCounts((c) => ({ ...c, remove: c.remove - 1 }));
+      // Drop the undone removal from the summary; re-reviewing the song logs it again
+      setLog((l) => {
+        const at = l.map((e) => e.track.track_id === lastRemoved.track.track_id && e.action === 'remove').lastIndexOf(true);
+        return at === -1 ? l : [...l.slice(0, at), ...l.slice(at + 1)];
+      });
       setIndex(lastRemoved.index);
       setLastRemoved(null);
     } catch (e) {
@@ -113,20 +122,25 @@ const Review = () => {
     }
   };
 
+  // End the session: push removals to Spotify, then show the one-time summary
   const finish = async () => {
-    setFinishing(true);
-    try {
-      if (pendingRemovals.current > 0) {
-        await api.flush(rotationId);
-        pendingRemovals.current = 0;
-      }
+    if (log.length === 0) {
       navigate('/');
+      return;
+    }
+    setFinishing(true);
+    setLastRemoved(null);
+    let flushed = true;
+    try {
+      if (pendingRemovals.current > 0) await api.flush(rotationId);
     } catch (e) {
       // Removals stay pending server-side and are retried on the next sync
-      setError(errorMessage(e, "Couldn't update Spotify yet. Removals will be retried automatically."));
-      pendingRemovals.current = 0;
-      setFinishing(false);
+      flushed = false;
     }
+    pendingRemovals.current = 0;
+    setSummary({ flushed });
+    setFinishing(false);
+    window.scrollTo(0, 0);
   };
 
   // Keyboard shortcuts: ← remove, → keep, ↓ skip
@@ -140,6 +154,14 @@ const Review = () => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [act]);
+
+  if (summary) {
+    return (
+      <Layout maxWidth="sm">
+        <ReviewSummary rotationId={rotationId} rotation={rotation} log={log} flushed={summary.flushed} />
+      </Layout>
+    );
+  }
 
   if (batch === null) {
     return <Layout maxWidth="sm"><Box textAlign="center" mt={8}><CircularProgress /></Box></Layout>;
@@ -155,7 +177,7 @@ const Review = () => {
   return (
     <Layout maxWidth="sm">
       <Box textAlign="center" mb={3}>
-        <Typography variant="h4" gutterBottom>{rotation?.name || 'Review Songs'}</Typography>
+        <RotationHeader rotation={rotation} title={rotation?.name || 'Review Songs'} centered />
         {tracks.length > 0 && (
           <>
             <Typography color="text.secondary">
@@ -165,6 +187,17 @@ const Review = () => {
             <LinearProgress variant="determinate" value={(Math.min(index, tracks.length) / tracks.length) * 100} sx={{ mt: 1 }} />
           </>
         )}
+        {(tracks.length > 0 || reviewedInSession > 0) && (
+          // Live tally for the whole session (carries across "Review more" batches; undo takes a removal back)
+          <Box display="flex" justifyContent="center" gap={1} mt={1.5} flexWrap="wrap" aria-live="polite">
+            <Chip size="small" color="success" variant={counts.keep ? 'filled' : 'outlined'}
+              icon={<ThumbUp />} label={`${counts.keep} kept`} />
+            <Chip size="small" color="error" variant={counts.remove ? 'filled' : 'outlined'}
+              icon={<ThumbDown />} label={`${counts.remove} removed`} />
+            <Chip size="small" variant={counts.skip ? 'filled' : 'outlined'}
+              icon={<SkipNext />} label={`${counts.skip} skipped`} />
+          </Box>
+        )}
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
@@ -173,11 +206,6 @@ const Review = () => {
           <Typography variant="h5" gutterBottom>
             {moreDue > 0 ? 'Done for today!' : tracks.length === 0 && reviewedInSession === 0 ? 'Nothing to review' : 'All caught up!'}
           </Typography>
-          {reviewedInSession > 0 && (
-            <Typography color="text.secondary" paragraph>
-              Kept {counts.keep} · Removed {counts.remove} · Skipped {counts.skip}
-            </Typography>
-          )}
           {moreDue > 0 && (
             <Typography color="text.secondary" paragraph>
               {plural(moreDue, 'more song')} {moreDue === 1 ? 'is' : 'are'} due. The next{' '}

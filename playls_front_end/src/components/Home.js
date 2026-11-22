@@ -20,10 +20,10 @@ import {
   Toolbar,
   Typography,
 } from '@mui/material';
-import { Add, Delete, Edit, History, LibraryAdd, MoreVert, MusicNote, RotateLeft, SyncProblem } from '@mui/icons-material';
+import { Add, Delete, Edit, History, LibraryAdd, MoreVert, RotateLeft, SyncProblem } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
-import { Layout, relativeDays } from './Layout';
+import { Layout, PlaylistCover, relativeDays } from './Layout';
 import {
   CreateRotationDialog,
   DeleteRotationDialog,
@@ -68,9 +68,9 @@ const RotationCard = ({ rotation, onEdit, onDelete }) => {
       <CardContent sx={{ flexGrow: 1 }}>
         <Box display="flex" alignItems="center" mb={1.5}>
           <Badge badgeContent={ready} color="primary" max={999} sx={{ mr: 2 }}>
-            <MusicNote color="primary" />
+            <PlaylistCover rotation={rotation} size={56} />
           </Badge>
-          <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{rotation.name}</Typography>
+          <Typography variant="h6" noWrap sx={{ flexGrow: 1, minWidth: 0 }}>{rotation.name}</Typography>
           <IconButton size="small" aria-label={`More options for ${rotation.name}`}
             onClick={(e) => setMenuAnchor(e.currentTarget)}>
             <MoreVert fontSize="small" />

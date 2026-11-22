@@ -69,13 +69,19 @@ def _in_other_rotations(db: orm.Session, user: UserDB, rotation: RotationDB) -> 
 
 
 def _skip_counts(db: orm.Session, user: UserDB) -> Counter:
-    """All-time "Not now" count per track for this user (any source, any rotation)."""
-    rows = (
-        db.query(RestockFeedbackDB.track_id, func.count())
-        .filter(RestockFeedbackDB.user_id == user.id, RestockFeedbackDB.action == SKIP)
-        .group_by(RestockFeedbackDB.track_id)
+    """Fading "Not now" count per track for this user (any source, any rotation).
+
+    Each skip counts 1.0 when fresh and halves every SKIP_HALF_LIFE_DAYS, so the
+    penalty wears off over time. Unknown tracks read as 0.
+    """
+    now = utcnow()
+    rows = db.query(RestockFeedbackDB.track_id, RestockFeedbackDB.created_at).filter(
+        RestockFeedbackDB.user_id == user.id, RestockFeedbackDB.action == SKIP
     )
-    return Counter({track_id: n for track_id, n in rows})
+    effective: Counter = Counter()
+    for track_id, created_at in rows:
+        effective[track_id] += logic.skip_decay(created_at, now)
+    return effective
 
 
 def _skipped_since(db: orm.Session, user: UserDB, since) -> set:

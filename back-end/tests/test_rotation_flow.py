@@ -374,3 +374,20 @@ def test_settings_roundtrip_and_validation(client):
     for bad in (0, 1001, "lots"):
         assert client.put("/api/user/me/settings", json={"review_limit": bad}).status_code == 422
     assert client.put("/api/user/me/settings", json={}).status_code == 422
+
+
+def test_rotation_carries_playlist_cover_and_refreshes_it(client, spotify):
+    spotify.add_playlist("p1", [spotify_item("a", 1)])
+    spotify.playlists["p1"]["images"] = [{"url": "cover-640", "width": 640}, {"url": "cover-300", "width": 300}]
+    body = client.post("/api/rotation/", json={"playlist_id": "p1"}).json()
+    assert body["image_url"] == "cover-300"
+    # Spotify regenerates mosaic covers when the contents change; sync picks it up
+    spotify.playlists["p1"]["images"] = [{"url": "new-cover", "width": None}]
+    assert client.get(f"/api/rotation/{body['id']}").json()["image_url"] == "new-cover"
+    [summary] = client.get("/api/user/me/rotations").json()
+    assert summary["image_url"] == "new-cover"
+
+
+def test_new_empty_playlist_has_no_cover(client, spotify):
+    body = client.post("/api/rotation/", json={"name": "Fresh"}).json()
+    assert body["image_url"] is None

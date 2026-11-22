@@ -18,6 +18,8 @@ class RotationDB(Base):
     playlist_id = Column(String(64), nullable=False)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    # Playlist cover from Spotify, refreshed on every sync (mosaic covers change with the contents)
+    image_url = Column(Text, nullable=True)
     # Review interval in hours (UI offers hours / days / weeks)
     interval_hours = Column(Integer, nullable=False, default=30 * 24)
     # True: songs already in the playlist first come due at creation + interval.

@@ -58,7 +58,14 @@ def test_not_now_hides_for_today_and_halves_weight(client, spotify, db):
         fb.created_at -= timedelta(days=1)
     db.commit()
     [c] = deck(client, rid, "bring_back")["items"]
-    assert c["score"] == 0.5
+    # A day-old skip still counts almost fully (half-life 30 days)
+    assert c["score"] == pytest.approx(0.5 ** (0.5 ** (1 / 30)), abs=1e-3)
+    # Months later the penalty has mostly worn off
+    for fb in db.query(RestockFeedbackDB):
+        fb.created_at -= timedelta(days=150)
+    db.commit()
+    [c] = deck(client, rid, "bring_back")["items"]
+    assert c["score"] > 0.97
 
 
 def test_adding_brings_song_back_into_rotation_and_playlist(client, spotify, db):
@@ -215,3 +222,16 @@ def test_restock_validation_and_ownership(client, spotify, db):
     assert client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "a", "source": "nope"}).status_code == 422
     assert client.get(f"/api/rotation/{rid}/restock/deck/nope").status_code == 422
     assert client.get("/api/rotation/999/restock/deck/picks").status_code == 404
+
+
+def test_history_reflects_current_status_for_add_back(client, spotify):
+    """History's per-event track status drives its "Undo removal" / "Add back" buttons."""
+    rid = make_rotation(client, spotify, [spotify_item("a", 10)])
+    remove(client, rid, "a")
+    [event] = client.get(f"/api/rotation/{rid}/history").json()
+    assert event["track"]["status"] == "pending_removal"  # -> "Undo removal"
+    client.post(f"/api/rotation/{rid}/flush")
+    assert client.get(f"/api/rotation/{rid}/history").json()[0]["track"]["status"] == "removed"  # -> "Add back"
+    assert client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "a", "source": "bring_back"}).status_code == 201
+    assert client.get(f"/api/rotation/{rid}/history").json()[0]["track"]["status"] == "active"
+    assert ("add", "p1", ("spotify:track:a",)) in spotify.calls

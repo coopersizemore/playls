@@ -6,6 +6,8 @@ from rest_api.services.restock_logic import (
     bring_back_weight,
     is_discovery,
     score_suggestion,
+    skip_decay,
+    skip_multiplier,
     track_meta,
     weighted_order,
 )
@@ -89,3 +91,19 @@ def test_track_meta():
     assert (meta["artists"], meta["artist_ids"], meta["album_id"]) == ("A, B", ["a1", "b1"], "alb_1")
     assert track_meta({"id": "e1", "type": "episode"}) is None
     assert track_meta(None) is None
+
+
+def test_skip_penalty_fades_with_a_30_day_half_life():
+    assert skip_decay(NOW, NOW) == 1.0
+    assert skip_decay(NOW - timedelta(days=30), NOW) == 0.5
+    assert skip_decay(NOW - timedelta(days=90), NOW) == 0.125
+    assert skip_multiplier(1.0) == 0.5  # fresh skip halves
+    assert skip_multiplier(0.0) == 1.0  # fully faded
+    assert skip_multiplier(skip_decay(NOW - timedelta(days=30), NOW)) == 0.5 ** 0.5  # ~0.71
+
+
+def test_old_skips_hurt_less_than_fresh_ones():
+    fresh = score_suggestion({"top": {"short_term": 0}}, skips=skip_decay(NOW, NOW))[0]
+    old = score_suggestion({"top": {"short_term": 0}}, skips=skip_decay(NOW - timedelta(days=60), NOW))[0]
+    none = score_suggestion({"top": {"short_term": 0}})[0]
+    assert fresh < old < none

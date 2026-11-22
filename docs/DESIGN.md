@@ -58,13 +58,13 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 ## Restock (owner decisions, 2026-11-22)
 Restocking is open-ended, per rotation: there's a Restock page for each rotation, reached from its Home card or from the end of a review session that removed songs. It has four tabs. The first three are swipe decks of up to 30 songs (Add / Not now, with a player); Search is a list.
 - **Adding a song** writes it to the Spotify playlist right away (`POST /playlists/{id}/items`). It also upserts the `rotation_track` row as `active`, with `added_at = now`, so the song comes due one interval later. Spotify stays the source of truth, and the next sync reconciles anything else.
-- **Not now** (`restock_feedback.action = skip`) hides the song for the rest of the user's local day. Every skip permanently halves its weight in every source.
+- **Not now** (`restock_feedback.action = skip`) hides the song for the rest of the user's local day. It also lowers the song's weight in every source, by a penalty that fades: a fresh skip halves the weight, and each skip's effect halves every **30 days** (`weight × 0.5^Σ 0.5^(age_days/30)`). After 30 days a single skip costs about ×0.71, and after 90 days about ×0.92.
 - **Deck order** is a weighted random sample (Efraimidis–Spirakis), seeded per user, rotation, source and day. Heavier songs usually come first, but lighter ones still show up, and reloading the same day doesn't reshuffle.
 
 Sources:
 1. **Bring back:** songs removed from *this* rotation, whether removed by the user or externally.
    - Weight is 0.1 right after removal and rises linearly to 1.0 at **90 days**.
-   - Each Not now multiplies it by 0.5, and each past keep adds 10% (up to +50%).
+   - The fading Not now penalty applies, and each past keep adds 10% (up to +50%).
 2. **PlayLS picks:** active `curated_pick` rows (inside their optional start/end window), newest first.
    - Songs the user has passed on sink to the back.
    - Songs already in the rotation are hidden.
@@ -81,7 +81,7 @@ Sources:
    - Liked: +1, or +1.5 if liked in the last 60 days.
    - By a top artist: up to +1.5.
    - Discovery novelty: +1.2.
-   - Adjustments: ×0.5 per Not now, and ×0.6 if the song is already in another of the user's rotations.
+   - Adjustments: the fading Not now penalty, and ×0.6 if the song is already in another of the user's rotations.
 
    Excluded: songs that are in, or were ever in, this rotation (those belong to Bring back). The deck blends known songs and discoveries about 2:1.
 4. **Search:** Spotify track search (10 per page, `offset` ≤ 1000), with songs already in the rotation flagged.
@@ -91,10 +91,10 @@ Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-
 - `/auth/me` returns `missing_scopes`, and the For you tab offers a Reconnect button. Accounts from before this change have to log in again.
 - Sources without a granted scope are skipped, and any one failing source is skipped rather than failing the whole deck.
 
-## Data model (Alembic revisions 0001–0004)
+## Data model (Alembic revisions 0001–0005)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
-  - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `interval_hours`, `grace_period`
+  - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
   - `snapshot_id`, `last_synced_at`, `created_at`
 - `rotation_track`, which replaces `song`:
   - Keys: a surrogate `id`, unique on `(rotation_id, track_id)`. `track_id` is the provider's ID, and `uri` is stored for removal.
@@ -109,7 +109,6 @@ Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 
 ## Decisions to revisit
-- Restock skips penalize permanently (×0.5 each). Consider decaying them if songs get buried for good.
 - Recently played only covers the last 50 plays. Saving snapshots (on each visit, or from a daily cron) would give a longer listening history.
 - Daily limit is per rotation, so several big rotations can still add up to several × N in one day.
 - Removing every duplicate copy of a track (above).

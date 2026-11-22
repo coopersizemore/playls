@@ -18,7 +18,7 @@ from rest_api.database.models.rotation_track import (
     RotationTrackDB,
 )
 from rest_api.database.models.user import UserDB
-from rest_api.services.rotation_logic import PlaylistTrack, parse_playlist_items
+from rest_api.services.rotation_logic import PlaylistTrack, parse_playlist_items, playlist_image
 from rest_api.services.spotify.spotify_service import SpotifyService
 
 logger = logging.getLogger(__name__)
@@ -109,8 +109,10 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
     """Flush pending removals, then re-read the playlist if it changed. Returns True if re-read."""
     await flush_pending_removals(db, rotation, user)
 
-    meta = await SpotifyService.get_playlist(rotation.playlist_id, user, db, fields="snapshot_id")
+    meta = await SpotifyService.get_playlist(rotation.playlist_id, user, db, fields="snapshot_id,images")
     snapshot_id = meta.get("snapshot_id")
+    if "images" in meta:
+        rotation.image_url = playlist_image(meta)
     if not force and snapshot_id and snapshot_id == rotation.snapshot_id:
         rotation.last_synced_at = utcnow()
         db.commit()

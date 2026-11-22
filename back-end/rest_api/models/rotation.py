@@ -42,6 +42,7 @@ class RotationOut(BaseModel):
     playlist_id: str
     name: str
     description: str | None
+    image_url: str | None  # playlist cover
     interval_hours: int
     grace_period: bool
     created_at: datetime

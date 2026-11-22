@@ -25,7 +25,7 @@ from rest_api.services.sync_service import sync_rotation
 
 logger = logging.getLogger(__name__)
 
-PLAYLIST_META_FIELDS = "id,name,description,snapshot_id,collaborative,owner(id)"
+PLAYLIST_META_FIELDS = "id,name,description,snapshot_id,collaborative,owner(id),images"
 
 
 # ---------- reads / serialization ----------
@@ -108,6 +108,7 @@ def summarize(
         playlist_id=rotation.playlist_id,
         name=rotation.name,
         description=rotation.description,
+        image_url=rotation.image_url,
         interval_hours=rotation.interval_hours,
         grace_period=rotation.grace_period,
         created_at=rotation.created_at,
@@ -204,6 +205,7 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
         playlist_id=playlist_id,
         name=name[:100],
         description=description,
+        image_url=logic.playlist_image(playlist),
         interval_hours=data.interval_hours,
         grace_period=data.grace_period,
         created_at=utcnow(),

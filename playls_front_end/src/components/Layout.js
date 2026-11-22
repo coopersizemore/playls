@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link as RouterLink, Navigate } from 'react-router-dom';
-import { AppBar, Box, Button, Container, Toolbar, Typography } from '@mui/material';
+import { AppBar, Avatar, Box, Button, Container, Toolbar, Typography } from '@mui/material';
+import { QueueMusic } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 
 // App chrome for signed-in pages
@@ -34,6 +35,26 @@ export const Layout = ({ children, maxWidth = 'lg' }) => {
   </Box>
   );
 };
+
+// A rotation's playlist cover (falls back to an icon, e.g. for a new empty playlist)
+export const PlaylistCover = ({ rotation, size = 48 }) => (
+  <Avatar
+    variant="rounded"
+    src={rotation?.image_url || undefined}
+    alt={rotation ? `${rotation.name} cover` : ''}
+    sx={{ width: size, height: size, bgcolor: 'action.hover', color: 'primary.main' }}
+  >
+    <QueueMusic sx={{ fontSize: size * 0.55 }} />
+  </Avatar>
+);
+
+// Page title with the rotation's cover
+export const RotationHeader = ({ rotation, title, centered = false }) => (
+  <Box display="flex" alignItems="center" justifyContent={centered ? 'center' : 'flex-start'} gap={2} mb={1}>
+    <PlaylistCover rotation={rotation} size={56} />
+    <Typography variant="h4" component="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{title}</Typography>
+  </Box>
+);
 
 // Spotify's embedded player for one track
 export const SpotifyEmbed = ({ trackId, title }) => (

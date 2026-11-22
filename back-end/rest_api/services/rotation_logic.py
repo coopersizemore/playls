@@ -93,6 +93,11 @@ def _pick_image(album: Dict[str, Any]) -> Optional[str]:
     return sized[-1].get("url")
 
 
+def playlist_image(playlist: Dict[str, Any]) -> Optional[str]:
+    """Thumbnail URL from a playlist object's `images` (None for e.g. a new, empty playlist)."""
+    return _pick_image({"images": playlist.get("images") or []})
+
+
 def parse_playlist_items(entries: Iterable[Dict[str, Any]]) -> Dict[str, PlaylistTrack]:
     """Spotify playlist item entries -> {track_id: PlaylistTrack}.
 

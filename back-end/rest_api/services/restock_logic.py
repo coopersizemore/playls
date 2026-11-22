@@ -2,7 +2,7 @@
 
 Sources (see docs/DESIGN.md, "Restock"):
   bring_back  songs removed from this rotation; weight ramps from 10% to 100% over
-              ~90 days after removal, halved for every "Not now"
+              ~90 days after removal; each "Not now" halves it, fading over time
   picks       admin-curated songs shared by everyone
   suggested   scored from the user's listening (top tracks, liked, recently played)
               plus discoveries found by searching their top artists and albums
@@ -16,7 +16,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 BRING_BACK_FLOOR = 0.1  # weight right after removal
 BRING_BACK_RECOVERY_DAYS = 90  # days until full weight
-SKIP_FACTOR = 0.5  # each "Not now" halves the weight
+SKIP_FACTOR = 0.5  # a fresh "Not now" halves the weight...
+SKIP_HALF_LIFE_DAYS = 30  # ...and its effect halves every 30 days after that
 DECK_SIZE = 30
 DISCOVERY_SHARE = 1 / 3  # target share of "new to you" songs in the suggested deck
 
@@ -60,16 +61,29 @@ def track_meta(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     }
 
 
+# ---------- skip penalty ----------
+
+def skip_decay(skipped_at: datetime, now: datetime) -> float:
+    """How much one "Not now" still counts: 1.0 when fresh, halving every SKIP_HALF_LIFE_DAYS."""
+    days = max(0.0, (now - skipped_at).total_seconds() / 86400)
+    return 0.5 ** (days / SKIP_HALF_LIFE_DAYS)
+
+
+def skip_multiplier(effective_skips: float) -> float:
+    """Weight multiplier for a (fading) skip count: 1 skip just now -> 0.5, fully faded -> 1.0."""
+    return SKIP_FACTOR ** effective_skips
+
+
 # ---------- bring back ----------
 
-def bring_back_weight(removed_at: Optional[datetime], now: datetime, skips: int, keeps: int = 0) -> float:
-    """Low right after removal, full after ~90 days; halved per "Not now"; small boost per past keep."""
+def bring_back_weight(removed_at: Optional[datetime], now: datetime, skips: float, keeps: int = 0) -> float:
+    """Low right after removal, full after ~90 days; lowered by (fading) "Not now"s; small boost per past keep."""
     if removed_at is None:
         ramp = 1.0
     else:
         days = max(0.0, (now - removed_at).total_seconds() / 86400)
         ramp = BRING_BACK_FLOOR + (1 - BRING_BACK_FLOOR) * min(1.0, days / BRING_BACK_RECOVERY_DAYS)
-    return ramp * (SKIP_FACTOR ** skips) * (1 + 0.1 * min(keeps, 5))
+    return ramp * skip_multiplier(skips) * (1 + 0.1 * min(keeps, 5))
 
 
 def bring_back_reason(removed_at: Optional[datetime], now: datetime, keeps: int) -> str:
@@ -90,7 +104,7 @@ def bring_back_reason(removed_at: Optional[datetime], now: datetime, keeps: int)
 
 def score_suggestion(
     features: Dict[str, Any],
-    skips: int = 0,
+    skips: float = 0,
     in_other_rotation: bool = False,
     now: Optional[datetime] = None,
 ) -> Tuple[float, str]:
@@ -149,7 +163,7 @@ def score_suggestion(
     score = sum(p[0] for p in parts)
     # The single biggest contributor explains the suggestion best
     reason = max(parts, key=lambda p: p[0])[1]
-    score *= SKIP_FACTOR ** skips
+    score *= skip_multiplier(skips)
     if in_other_rotation:
         score *= 0.6
     return score, reason

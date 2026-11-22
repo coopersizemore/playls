@@ -124,6 +124,7 @@ class FakeSpotify:
         return {
             "id": playlist_id, "name": p["name"], "description": "", "collaborative": p["collaborative"],
             "owner": {"id": p["owner"]}, "snapshot_id": f"{playlist_id}-v{p['version']}",
+            "images": p.get("images", []),
         }
 
     async def get_all_playlist_items(self, playlist_id, user, db):

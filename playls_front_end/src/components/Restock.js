@@ -23,7 +23,7 @@ import {
 import { Add, Check, Close, MusicNote, Refresh, Search as SearchIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
-import { Layout, SpotifyEmbed } from './Layout';
+import { Layout, RotationHeader, SpotifyEmbed } from './Layout';
 
 const TABS = [
   { source: 'bring_back', label: 'Bring back', empty: 'Nothing to bring back yet. Songs you remove from this rotation show up here, weighted more strongly the longer they have been gone.' },
@@ -248,9 +248,7 @@ const Restock = () => {
 
   return (
     <Layout maxWidth="sm">
-      <Typography variant="h4" component="h1" gutterBottom>
-        Restock{rotation ? `: ${rotation.name}` : ''}
-      </Typography>
+      <RotationHeader rotation={rotation} title={`Restock${rotation ? `: ${rotation.name}` : ''}`} />
       <Typography color="text.secondary" mb={2}>
         {addedTotal > 0
           ? `Added ${addedTotal} song${addedTotal === 1 ? '' : 's'} this session.`

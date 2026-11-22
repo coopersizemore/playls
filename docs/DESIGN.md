@@ -11,8 +11,8 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 | Feature | Decision |
 |---|---|
 | Recommendations (by song, artist, genre or taste) | **Deferred.** They'll be built later on a system that doesn't depend on the Spotify API. The old Spotify recommendation code has been removed. |
-| Restock (replacing removed songs) | **Phase 2**, after recommendations are designed. Until then, users add songs in Spotify directly, and the next sync picks them up. |
-| Curated "PlayLS pick" | **Manual curation**, in Phase 2 alongside restock. |
+| Restock (adding songs) | **Built (2026-11-22)**: four sources. See "Restock" below. |
+| Curated "PlayLS pick" | **Built**: curated by admins (`ADMIN_SPOTIFY_IDS`) in-app and shared by all users. |
 | Skip detection, "most skipped" stats | **Scrapped.** The API has no skip data. |
 | Rotating playlists the user doesn't own | **Scrapped.** The API only returns contents for playlists the user owns or collaborates on. |
 | Social features / collaborative rotations | **Scrapped for now.** |
@@ -55,7 +55,43 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 - **Creating a rotation:** "from existing" wraps an owned playlist and asks whether to apply the grace period. "From scratch" creates an empty playlist with `POST /me/playlists` (still supported), and the user adds songs to it in Spotify until restock arrives in Phase 2.
 - **Removed songs** are recorded only in PlayLS history (`review_event` and the `removed` rows); there's no "rotated out" archive playlist in Spotify. In Phase 2, the user can bring them back through PlayLS.
 
-## Data model (Alembic revisions 0001–0002)
+## Restock (owner decisions, 2026-11-22)
+Restocking is open-ended, per rotation: there's a Restock page for each rotation, reached from its Home card or from the end of a review session that removed songs. It has four tabs. The first three are swipe decks of up to 30 songs (Add / Not now, with a player); Search is a list.
+- **Adding a song** writes it to the Spotify playlist right away (`POST /playlists/{id}/items`). It also upserts the `rotation_track` row as `active`, with `added_at = now`, so the song comes due one interval later. Spotify stays the source of truth, and the next sync reconciles anything else.
+- **Not now** (`restock_feedback.action = skip`) hides the song for the rest of the user's local day. Every skip permanently halves its weight in every source.
+- **Deck order** is a weighted random sample (Efraimidis–Spirakis), seeded per user, rotation, source and day. Heavier songs usually come first, but lighter ones still show up, and reloading the same day doesn't reshuffle.
+
+Sources:
+1. **Bring back:** songs removed from *this* rotation, whether removed by the user or externally.
+   - Weight is 0.1 right after removal and rises linearly to 1.0 at **90 days**.
+   - Each Not now multiplies it by 0.5, and each past keep adds 10% (up to +50%).
+2. **PlayLS picks:** active `curated_pick` rows (inside their optional start/end window), newest first.
+   - Songs the user has passed on sink to the back.
+   - Songs already in the rotation are hidden.
+3. **For you:** listening signals collected from Spotify into `suggestion_cache`, refreshed every 6 hours or on demand (about 15–20 calls):
+   - top tracks for all three windows
+   - top artists
+   - the last 50 plays
+   - the newest 200 Liked Songs, plus one random deeper page
+   - searches seeded by the top 5 artists and the 3 most-played albums ("discoveries")
+
+   Scoring (`restock_logic.score_suggestion`; the reason shown is the largest contributor):
+   - Top tracks: short-term ×3, medium-term ×2, long-term ×1, scaled by rank.
+   - Recent plays: +0.6 each, up to 3.
+   - Liked: +1, or +1.5 if liked in the last 60 days.
+   - By a top artist: up to +1.5.
+   - Discovery novelty: +1.2.
+   - Adjustments: ×0.5 per Not now, and ×0.6 if the song is already in another of the user's rotations.
+
+   Excluded: songs that are in, or were ever in, this rotation (those belong to Bring back). The deck blends known songs and discoveries about 2:1.
+4. **Search:** Spotify track search (10 per page, `offset` ≤ 1000), with songs already in the rotation flagged.
+
+Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-read`.
+- The scopes granted at login are stored in `users.granted_scopes`.
+- `/auth/me` returns `missing_scopes`, and the For you tab offers a Reconnect button. Accounts from before this change have to log in again.
+- Sources without a granted scope are skipped, and any one failing source is skipped rather than failing the whole deck.
+
+## Data model (Alembic revisions 0001–0004)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
   - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `interval_hours`, `grace_period`
@@ -64,11 +100,17 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
   - Keys: a surrogate `id`, unique on `(rotation_id, track_id)`. `track_id` is the provider's ID, and `uri` is stored for removal.
   - Track metadata: `title`, `artists`, `album`, `image_url`, `duration_ms`
   - Review state: `added_at` (from Spotify; NULL if unknown), `last_kept_at`, `status` (`active` | `pending_removal` | `removed`), `removed_at`, `removed_by` (`user` | `external`)
+- `curated_pick`: track metadata plus `note`, optional `starts_at`/`ends_at`, and `created_by`.
+- `restock_feedback`: `user_id`, `rotation_id`, `track_id`, `source` (`bring_back` | `picks` | `suggested` | `search`), `action` (`add` | `skip`), `created_at`.
+- `suggestion_cache`: one row per user, `{candidates: {track_id: {meta, features}}, missing_scopes}` as JSON, plus `created_at`.
+- `users.granted_scopes`: the space-separated OAuth scopes from the last login.
 - `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `skip` | `remove` | `undo`), `created_at`. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
 - Alembic manages the schema from here on (the one-time wipe was done 2026-11-07). All timestamps are naive UTC.
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 
 ## Decisions to revisit
+- Restock skips penalize permanently (×0.5 each). Consider decaying them if songs get buried for good.
+- Recently played only covers the last 50 plays. Saving snapshots (on each visit, or from a daily cron) would give a longer listening history.
 - Daily limit is per rotation, so several big rotations can still add up to several × N in one day.
 - Removing every duplicate copy of a track (above).
 - Whether to add any provider abstraction if Apple comes back into scope.

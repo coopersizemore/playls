@@ -54,6 +54,8 @@ def user(db):
         access_token="token",
         refresh_token="refresh",
         token_expires_at=utcnow() + timedelta(hours=1),
+        granted_scopes="playlist-read-private playlist-read-collaborative playlist-modify-private "
+                       "playlist-modify-public user-top-read user-read-recently-played user-library-read",
     )
     db.add(u)
     db.commit()
@@ -77,6 +79,17 @@ def spotify_item(track_id, added_days_ago=None, name=None, local=False, kind="tr
             "artists": [{"name": "Artist A"}, {"name": "Artist B"}],
             "album": {"name": "Album", "images": [{"url": "big", "width": 640}, {"url": "small", "width": 300}]},
         },
+    }
+
+
+def track_object(track_id, name=None, artists=(("Artist A", "art_a"),), album=("Album", "alb_1")):
+    """A full Spotify track object."""
+    return {
+        "id": track_id, "uri": f"spotify:track:{track_id}", "type": "track", "name": name or f"Song {track_id}",
+        "duration_ms": 200000, "artists": [{"name": n, "id": i} for n, i in artists],
+        "album": {"name": album[0], "id": album[1], "album_type": "album",
+                  "artists": [{"name": artists[0][0], "id": artists[0][1]}],
+                  "images": [{"url": "img", "width": 300}]},
     }
 
 
@@ -130,6 +143,48 @@ class FakeSpotify:
         self.add_playlist(new_id, [], name=name)
         return {"id": new_id, "name": name}
 
+    # ---- restock signals ----
+    catalog = {}  # track_id -> track object (for get_track / search)
+    top = {}  # (type, time_range) -> list of objects
+    recent = []  # track objects, most recent first
+    liked = []  # (track object, added_at iso)
+    search_results = {}  # query -> list of track objects
+
+    async def get_track(self, track_id, user, db):
+        self.calls.append(("get_track", track_id))
+        if track_id not in self.catalog:
+            raise SpotifyAPIError(404)
+        return self.catalog[track_id]
+
+    async def get_top_items(self, item_type, user, db, time_range="medium_term", limit=50):
+        self.calls.append(("top", item_type, time_range))
+        return {"items": self.top.get((item_type, time_range), [])[:limit]}
+
+    async def get_recently_played(self, user, db, limit=50):
+        self.calls.append(("recent",))
+        return {"items": [{"track": t, "played_at": "2026-11-01T00:00:00Z"} for t in self.recent[:limit]]}
+
+    async def get_saved_tracks(self, user, db, limit=50, offset=0):
+        self.calls.append(("liked", offset))
+        page = self.liked[offset:offset + limit]
+        return {"items": [{"track": t, "added_at": a} for t, a in page], "total": len(self.liked),
+                "next": "more" if offset + limit < len(self.liked) else None}
+
+    async def search(self, query, user, db, search_type="track", limit=10, offset=0):
+        self.calls.append(("search", query, offset))
+        items = self.search_results.get(query, [])
+        return {"tracks": {"items": items[offset:offset + limit], "next": "more" if offset + limit < len(items) else None}}
+
+    async def add_items_to_playlist(self, playlist_id, uris, user, db, position=None):
+        self.calls.append(("add", playlist_id, tuple(uris)))
+        p = self._get(playlist_id)
+        for uri in uris:
+            track_id = uri.split(":")[-1]
+            p["items"].append({"added_at": None, "is_local": False, "item": self.catalog.get(track_id) or
+                               track_object(track_id)})
+        p["version"] += 1
+        return f"{playlist_id}-v{p['version']}"
+
     async def get_user_playlists(self, user, db, limit=20, offset=0):
         items = [
             {"id": pid, "name": p["name"], "owner": {"id": p["owner"]}, "collaborative": p["collaborative"],
@@ -142,8 +197,10 @@ class FakeSpotify:
 @pytest.fixture
 def spotify(monkeypatch):
     fake = FakeSpotify()
+    fake.catalog, fake.top, fake.recent, fake.liked, fake.search_results = {}, {}, [], [], {}
     for name in ("get_playlist", "get_all_playlist_items", "remove_items_from_playlist",
-                 "create_playlist", "get_user_playlists"):
+                 "create_playlist", "get_user_playlists", "get_track", "get_top_items",
+                 "get_recently_played", "get_saved_tracks", "search", "add_items_to_playlist"):
         monkeypatch.setattr(SpotifyService, name, staticmethod(getattr(fake, name)))
     return fake
 

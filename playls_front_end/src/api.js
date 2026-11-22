@@ -31,6 +31,21 @@ export const api = {
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
   settings: () => data(axios.get(`${API_BASE}/user/me/settings`)),
   updateSettings: (body) => data(axios.put(`${API_BASE}/user/me/settings`, body)),
+  // Restock (source: bring_back | picks | suggested)
+  restockDeck: (id, source, { refresh = false } = {}) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/restock/deck/${source}`, { params: { refresh, ...tz() } })),
+  restockSearch: (id, q, offset = 0) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/restock/search`, { params: { q, offset } })),
+  restockAdd: (id, trackId, source) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/add`, { track_id: trackId, source })),
+  restockSkip: (id, trackId, source) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/skip`, { track_id: trackId, source })),
+  // Admin: curating PlayLS picks
+  picks: () => data(axios.get(`${API_BASE}/admin/picks`)),
+  createPick: (body) => data(axios.post(`${API_BASE}/admin/picks`, body)),
+  deletePick: (pickId) => data(axios.delete(`${API_BASE}/admin/picks/${pickId}`)),
+  searchSpotify: (q, offset = 0) =>
+    data(axios.get(`${API_BASE}/spotify/search`, { params: { q, offset, type: 'track' } })),
   deleteAccount: () => data(axios.delete(`${API_BASE}/user/me`)),
 };
 

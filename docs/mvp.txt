@@ -43,7 +43,7 @@ User can, at their will, go to this queue of songs and start swiping left and ri
 [A daily review limit (default 50 songs per rotation per day, most overdue first, or no limit) keeps a big backlog from arriving all at once, and there's an opt-in "review more" button. Actions are keep / skip / remove. Skip leaves the song in the playlist and it comes back the next day. Removals are saved per swipe and sent to Spotify in batches when the user leaves.]
 
 
-Recommend new songs based on user preferences or current playlist  [DEFERRED: will be a recommendation system that doesn't depend on the Spotify API; restock is PHASE 2]
+Recommend new songs based on user preferences or current playlist  [BUILT as Restock: Bring back / PlayLS picks / For you (scored from top tracks, Liked Songs, recently played, plus searches from top artists and albums) / Search. A fuller recommendation system is still backlog.]
 Options for adding new songs could include:
 Based on specific song
 Based on artist
@@ -51,7 +51,7 @@ Based on their taste
 Based on genre (might include user taste)
 From rotation history
 Songs they listen to frequently that aren’t in the rotation
-Curated PlayLS pick (daily/weekly song picked by app for users to expand their taste)  [manually curated, PHASE 2]
+Curated PlayLS pick (daily/weekly song picked by app for users to expand their taste)  [BUILT: admin-curated, with optional start/end dates]
 
 
 

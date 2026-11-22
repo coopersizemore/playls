@@ -41,10 +41,15 @@ The backend has 63 tests (SQLite plus a fake Spotify). The frontend builds clean
 - **Daily review limit:** up to N songs per rotation per day, most overdue first (default 50, or no limit; set in Settings). After a batch there's an opt-in "Review N more" button. Skipped songs now come back the next day. Migration `0003`.
 - **Home and Manage Rotations merged:** Home is now the single dashboard (create, edit and delete live in a card menu). The `/rotation` page is gone, and the dialogs are in `RotationDialogs.js`.
 
-## Phase 2: restock (after recommendations are designed)
-- Replacing removed songs through search (paginated, max 10 results per page), a "bring back" option fed by removal history, and the manually curated PlayLS pick.
-- A recommendation system that doesn't depend on the Spotify API (still to be designed).
+## Phase 2: restock (built 2026-11-22)
+- Restock page for each rotation, with four tabs: **Bring back**, **PlayLS picks**, **For you** (scored from your listening plus searches seeded by your top artists and albums) and **Search**. The first three are swipe decks with Add / Not now.
+- Admin page for curating picks (`/admin/picks`, for accounts in `ADMIN_SPOTIFY_IDS`). Migration `0004`.
+- **To do by hand:** set `ADMIN_SPOTIFY_IDS` locally and in Vercel, then log in again to grant the new Spotify scopes.
+
+## Next
 - Stats derived from review history.
+- A recommendation system that doesn't depend on the Spotify API ("For you" is the current stand-in).
+- Saving recently-played snapshots to build a longer listening history.
 
 ## Later / maybe
 - Undo for keeps; a rotation detail page that uses `GET /rotation/{id}/tracks`.

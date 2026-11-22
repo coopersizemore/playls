@@ -20,7 +20,7 @@ import {
   Toolbar,
   Typography,
 } from '@mui/material';
-import { Add, Delete, Edit, History, MoreVert, MusicNote, RotateLeft, SyncProblem } from '@mui/icons-material';
+import { Add, Delete, Edit, History, LibraryAdd, MoreVert, MusicNote, RotateLeft, SyncProblem } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
 import { Layout, relativeDays } from './Layout';
@@ -109,6 +109,9 @@ const RotationCard = ({ rotation, onEdit, onDelete }) => {
         <Button size="small" variant="contained" startIcon={<RotateLeft />} component={RouterLink}
           to={`/rotation/${rotation.id}/review`} disabled={due === 0}>
           {due > 0 && ready === 0 ? 'Review more' : 'Review'}
+        </Button>
+        <Button size="small" startIcon={<LibraryAdd />} component={RouterLink} to={`/rotation/${rotation.id}/restock`}>
+          Restock
         </Button>
         <Button size="small" startIcon={<History />} component={RouterLink} to={`/rotation/${rotation.id}/history`}>
           History

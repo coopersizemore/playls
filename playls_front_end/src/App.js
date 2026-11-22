@@ -7,6 +7,8 @@ import Login from './components/Login';
 import Review from './components/Review';
 import History from './components/History';
 import Settings from './components/Settings';
+import Restock from './components/Restock';
+import AdminPicks from './components/AdminPicks';
 import { RequireAuth } from './components/Layout';
 import { AuthProvider } from './contexts/AuthContext';
 
@@ -46,8 +48,9 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/rotation/:rotationId/review" element={authed(<Review />)} />
             <Route path="/rotation/:rotationId/history" element={authed(<History />)} />
+            <Route path="/rotation/:rotationId/restock" element={authed(<Restock />)} />
             <Route path="/settings" element={authed(<Settings />)} />
-            {/* Restock is Phase 2 (see docs/PROJECT_STATUS.md) */}
+            <Route path="/admin/picks" element={authed(<AdminPicks />)} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Router>

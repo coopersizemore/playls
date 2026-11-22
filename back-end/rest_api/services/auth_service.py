@@ -59,6 +59,41 @@ SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:3000/api/auth/callback")
 
+# Rotation loop (playlist read/write). /me returns id and display_name without scopes.
+ROTATION_SCOPES = [
+    "playlist-read-private",
+    "playlist-read-collaborative",
+    "playlist-modify-private",
+    "playlist-modify-public",
+]
+# Listening signals for restock suggestions (users who logged in before these were
+# added must reconnect; see missing_scopes on /api/auth/me)
+SUGGESTION_SCOPES = [
+    "user-top-read",
+    "user-read-recently-played",
+    "user-library-read",
+]
+REQUESTED_SCOPES = ROTATION_SCOPES + SUGGESTION_SCOPES
+
+
+def missing_scopes(user, wanted=None) -> list[str]:
+    """Scopes from `wanted` (default: all requested) the user hasn't granted.
+
+    Users who logged in before scopes were recorded (granted_scopes NULL) are assumed to
+    have only the rotation scopes.
+    """
+    wanted = REQUESTED_SCOPES if wanted is None else wanted
+    granted = set((user.granted_scopes or " ".join(ROTATION_SCOPES)).split())
+    return [s for s in wanted if s not in granted]
+
+
+ADMIN_SPOTIFY_IDS = {s.strip() for s in os.getenv("ADMIN_SPOTIFY_IDS", "").split(",") if s.strip()}
+
+
+def is_admin(user) -> bool:
+    return user.spotify_id in ADMIN_SPOTIFY_IDS
+
+
 class SpotifyOAuthService:
     """Service for handling Spotify OAuth authentication"""
     
@@ -67,13 +102,7 @@ class SpotifyOAuthService:
         """Generate Spotify OAuth authorization URL with state parameter"""
         state = secrets.token_urlsafe(32)
         
-        # Only what the rotation loop needs. /me returns id and display_name without scopes.
-        scopes = [
-            "playlist-read-private",
-            "playlist-read-collaborative",
-            "playlist-modify-private",
-            "playlist-modify-public",
-        ]
+        scopes = REQUESTED_SCOPES
         query = urlencode({
             "response_type": "code",
             "client_id": SPOTIFY_CLIENT_ID,
@@ -248,8 +277,17 @@ class AuthService:
             # Update refresh token if provided
             if "refresh_token" in token_data:
                 user.refresh_token = token_data["refresh_token"]
+            if token_data.get("scope"):
+                user.granted_scopes = token_data["scope"]
             
             db.commit()
             db.refresh(user)
         
         return user.access_token
+
+def require_admin(user: UserDB = Depends(AuthService.get_current_user_from_token)) -> UserDB:
+    """Dependency for admin-only routes (curating PlayLS picks)."""
+    if not is_admin(user):
+        # 404 rather than 403 so the admin surface isn't advertised
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return user

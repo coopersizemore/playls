@@ -14,7 +14,9 @@ from ..services.auth_service import (
     SpotifyOAuthService,
     AuthService,
     clear_session_cookie,
+    is_admin,
     is_https,
+    missing_scopes,
     set_session_cookie,
 )
 from ..services.db import user_service as us
@@ -82,6 +84,7 @@ async def spotify_callback(
         access_token = token_data["access_token"]
         refresh_token = token_data.get("refresh_token")
         expires_in = token_data.get("expires_in", 3600)
+        granted_scopes = token_data.get("scope") or None
 
         # Get user info from Spotify
         spotify_user_data = await SpotifyOAuthService.get_spotify_user_info(access_token)
@@ -98,6 +101,7 @@ async def spotify_callback(
                 existing_user.refresh_token = refresh_token
             existing_user.token_expires_at = token_expires_at
             existing_user.display_name = display_name
+            existing_user.granted_scopes = granted_scopes
             db.commit()
             db.refresh(existing_user)
             user = existing_user
@@ -110,6 +114,8 @@ async def spotify_callback(
                 token_expires_at=token_expires_at
             )
             user = us.create_user(db, new_user_data)
+            user.granted_scopes = granted_scopes
+            db.commit()
 
         # The app session lives in an httpOnly cookie, never in the URL
         jwt_token = AuthService.create_access_token(
@@ -136,7 +142,10 @@ async def get_current_user(
         "id": current_user.id,
         "spotify_id": current_user.spotify_id,
         "display_name": current_user.display_name,
-        "created_at": current_user.created_at
+        "created_at": current_user.created_at,
+        "is_admin": is_admin(current_user),
+        # Non-empty when the user should reconnect Spotify to enable newer features
+        "missing_scopes": missing_scopes(current_user),
     }
 
 @router.post("/logout")

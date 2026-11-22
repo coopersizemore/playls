@@ -1,5 +1,5 @@
 """User model. Rows hold Spotify tokens, so never return them from a route."""
-from sqlalchemy import CheckConstraint, Column, Integer, String, DateTime
+from sqlalchemy import CheckConstraint, Column, Integer, String, DateTime, Text
 from sqlalchemy.orm import relationship
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
@@ -30,6 +30,9 @@ class UserDB(Base):
     created_at = Column(DateTime, nullable=False, default=utcnow)
     # Max songs offered for review per rotation per day; NULL = no limit
     review_limit = Column(Integer, nullable=True, default=DEFAULT_REVIEW_LIMIT, server_default=str(DEFAULT_REVIEW_LIMIT))
+
+    # Space-separated OAuth scopes granted at the last login (to detect missing ones)
+    granted_scopes = Column(Text, nullable=True)
 
     rotations = relationship(
         "RotationDB", back_populates="owner", cascade="all, delete-orphan", passive_deletes=True

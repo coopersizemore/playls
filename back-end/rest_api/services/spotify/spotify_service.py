@@ -148,6 +148,37 @@ class SpotifyService:
             data["description"] = description
         return await SpotifyService.make_spotify_request("/me/playlists", user, db, method="POST", data=data)
 
+    # ---------- listening signals (restock) ----------
+
+    @staticmethod
+    async def get_track(track_id: str, user: UserDB, db: Session) -> Dict[str, Any]:
+        """One track (the batch GET /tracks endpoint was removed in Feb 2026)."""
+        return await SpotifyService.make_spotify_request(f"/tracks/{track_id}", user, db)
+
+    @staticmethod
+    async def get_top_items(
+        item_type: str, user: UserDB, db: Session, time_range: str = "medium_term", limit: int = 50
+    ) -> Dict[str, Any]:
+        """Top "tracks" or "artists". time_range: short_term (~4 weeks), medium_term (~6 months),
+        long_term (~1 year). Scope: user-top-read."""
+        return await SpotifyService.make_spotify_request(
+            f"/me/top/{item_type}", user, db, params={"time_range": time_range, "limit": min(limit, 50)}
+        )
+
+    @staticmethod
+    async def get_recently_played(user: UserDB, db: Session, limit: int = 50) -> Dict[str, Any]:
+        """Last (up to) 50 plays. Scope: user-read-recently-played."""
+        return await SpotifyService.make_spotify_request(
+            "/me/player/recently-played", user, db, params={"limit": min(limit, 50)}
+        )
+
+    @staticmethod
+    async def get_saved_tracks(user: UserDB, db: Session, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """Liked Songs, newest first. Scope: user-library-read."""
+        return await SpotifyService.make_spotify_request(
+            "/me/tracks", user, db, params={"limit": min(limit, 50), "offset": offset}
+        )
+
     @staticmethod
     async def search(
         query: str,

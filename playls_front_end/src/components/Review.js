@@ -199,6 +199,9 @@ const Review = () => {
                 Review {nextBatchSize} more
               </Button>
             )}
+            {counts.remove > 0 && (
+              <Button component={RouterLink} to={`/rotation/${rotationId}/restock`}>Restock</Button>
+            )}
             <Button component={RouterLink} to={`/rotation/${rotationId}/history`}>History</Button>
           </Box>
         </Box>

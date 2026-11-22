@@ -3,39 +3,37 @@
 The decisions behind this plan are in [DESIGN.md](DESIGN.md). Deployment steps are in [DEPLOYMENT_PLAN.md](DEPLOYMENT_PLAN.md).
 
 ## Current state (Nov 2026)
-- **Works:**
-  - Spotify OAuth with a session cookie, CSRF check and encrypted tokens
-  - Supabase Postgres, and the Vercel `api`/`web` config
-  - Rotation CRUD, with ownership checks
-  - Frontend login, plus a Rotation page that lists playlists
-- **Not built:**
-  - Playlist sync, the due queue, review actions (`/rotate`, `/songs` and `/song` are stubs)
-  - The Review, Restock and History pages, which are still on mock data
-- **Broken:**
-  - `spotify_service.py` and `Rotation.js` still use the pre-Feb-2026 API (`/tracks`, `POST /users/{id}/playlists`, and the `user-read-email` scope).
-  - "From existing" creates a new playlist instead of wrapping the one the user picked.
-  - `Home.js` has a `useState` destructuring bug.
+Phase 0 and Phase 1 are built. The core loop works end to end:
+- create a rotation (from an owned or collaborative playlist, or a new private playlist)
+- sync with Spotify
+- show due counts on Home
+- review songs (keep / skip / remove / undo)
+- send batched removals to Spotify
+- show History
 
-## Phase 0: setup
-1. ~~Smoke-test locally, push, log in on prod~~ Done 2026-11-07.
+The backend has 63 tests (SQLite plus a fake Spotify). The frontend builds cleanly.
 
-## Phase 1: core rotation loop
-2. **Schema.** Wipe the database (approved), add Alembic, and start from the target model in DESIGN.md (`rotation`, `rotation_track`, `review_event`, and `provider` columns).
-3. **Spotify layer.** Move to the post-Feb-2026 endpoints (`/items`, `item`, `POST /me/playlists`) and drop `user-read-email`. Delete the recommendation code (`get_recommendations`, `GET /spotify/recommendations`, and the frontend calls).
-4. **Rotation create.** "From existing" wraps the selected owned playlist, and "from scratch" creates one with `POST /me/playlists`. Enforce one rotation per playlist.
-5. **Sync service.** Page through the playlist items, short-circuit on `snapshot_id`, diff, and reactivate tracks that come back. Flush pending removals first. Songs that were already in the playlist when the rotation was created get the one-time grace period.
-6. **Due queue.** Add `GET /rotation/{id}/queue`, which syncs and then returns the tracks where `due_at <= now`. Add due counts per rotation for Home.
-7. **Review API.** Add per-swipe `POST /rotation/{id}/review` (keep, skip, remove or undo; writes to the database only) and `POST /rotation/{id}/flush` (batch Spotify removals with `snapshot_id`).
-8. **Frontend.**
-   - Fix the Home bug and show real rotations with due counts.
-   - Wire Review to the queue and the review API, with a `keepalive` flush on `pagehide`/`visibilitychange`.
-   - Show History from `review_event`.
-   - Hide Restock.
-9. **Tests.** Cover due-date math, sync diffing (new, gone, re-added and duplicates), review state transitions, and flush (with the Spotify client mocked).
-10. **Cleanup.**
-    - Remove dead code: `services/db/services.py`, `example_routes.py`, and the commented-out block in `app.py`.
-    - Remove the stale `AUTHENTICATION.md`/`auth_demo.py`.
-    - Bring the test expectations up to date with the current FastAPI version.
+**Not yet verified against real Spotify**, because the database was wiped for the new schema. Do a manual pass on prod after logging in again (see "Verify Phase 1" below).
+
+## Phase 0: setup (done 2026-11-07)
+1. ~~Smoke-test locally, push, log in on prod~~
+
+## Phase 1: core rotation loop (built 2026-11-07)
+2. ~~**Schema.**~~ Done: the database was wiped, Alembic added (`back-end/alembic/`, revision `0001`), and the tables are `users`, `rotation`, `rotation_track` and `review_event`, with RLS on.
+3. ~~**Spotify layer.**~~ Done: `/items` endpoints, `POST /me/playlists`, the four playlist scopes only, and the recommendation code deleted. DELETE requests now actually send their body, and a 401 forces a token refresh.
+4. ~~**Rotation create.**~~ Done: wraps owned or collaborative playlists, or creates a new one. One rotation per playlist (409).
+5. ~~**Sync service.**~~ Done: snapshot short-circuit, diff (new / gone / re-added), pending removals flushed first, and grace period applied.
+6. ~~**Due queue.**~~ Done: `GET /rotation/{id}/queue`, plus due counts on `GET /user/me/rotations`.
+7. ~~**Review API.**~~ Done: per-swipe `POST /rotation/{id}/review` and `POST /rotation/{id}/flush`.
+8. ~~**Frontend.**~~ Done: Home, Manage Rotations (create, edit interval, delete), Review (embedded Spotify player, keyboard shortcuts, undo, `keepalive` flush on leave), History and Settings (log out, delete account). Restock is removed until Phase 2.
+9. ~~**Tests.**~~ Done.
+10. ~~**Cleanup.**~~ Done: removed the dead code, the commented-out endpoints in `app.py`, `init_db.py` and the CRA boilerplate test.
+
+### Verify Phase 1 (manual, on prod or `vercel dev`)
+- Log in, then create a rotation from a real playlist. Its song count should match Spotify, and the due count should be 0 because of the grace period.
+- Create one with a 1-day interval on a scratch playlist. Change `created_at` in Supabase to an earlier date (or wait a day), then review: keep one song, remove one, skip one.
+- Leave the Review page. The removed song should disappear from the Spotify playlist.
+- Remove a song directly in Spotify, then reload Home. The song count should drop.
 
 ## Phase 2: restock (after recommendations are designed)
 - Replacing removed songs through search (paginated, max 10 results per page), a "bring back" option fed by removal history, and the manually curated PlayLS pick.
@@ -43,5 +41,6 @@ The decisions behind this plan are in [DESIGN.md](DESIGN.md). Deployment steps a
 - Stats derived from review history.
 
 ## Later / maybe
+- Undo for keeps; a rotation detail page that uses `GET /rotation/{id}/tracks`.
 - Apple Music (blocked: the Apple API can't remove tracks from library playlists).
 - Notifications, if a channel that makes sense turns up.

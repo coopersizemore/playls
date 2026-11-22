@@ -23,7 +23,7 @@ Tags: **[YOU]** means it needs your accounts, dashboards or secrets. **[CLAUDE]*
 ## Ongoing workflow
 - Develop locally with `vercel dev`. Every push to `main` deploys to production.
 - Local and prod write to the **same database**.
-- Schema: the Phase 1 schema change wipes the database once (approved; the existing data is test data). After that, every change goes through Alembic migrations. `init_db --reset` wipes prod.
+- Schema: managed by Alembic. From `back-end/`, run `.venv/Scripts/alembic upgrade head`. Migrations aren't run on deploy, so apply them yourself **before** pushing code that needs them. The database is shared, so a migration applies to prod immediately. `alembic downgrade base` wipes prod.
 - New env vars must be added in Vercel too, and they only take effect after a redeploy.
 - `TOKEN_ENCRYPTION_KEY` must stay identical locally and in prod. If it changes, the stored Spotify tokens can't be decrypted.
 - Custom domain (optional): add it in Vercel → Domains, add a matching Spotify redirect URI, and update `SPOTIFY_REDIRECT_URI`.

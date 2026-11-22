@@ -10,7 +10,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 ## Feature decisions
 | Feature | Decision |
 |---|---|
-| Recommendations (by song, artist, genre or taste) | **Deferred.** They'll be built later on a system that doesn't depend on the Spotify API. The existing Spotify recommendation code is to be removed. |
+| Recommendations (by song, artist, genre or taste) | **Deferred.** They'll be built later on a system that doesn't depend on the Spotify API. The old Spotify recommendation code has been removed. |
 | Restock (replacing removed songs) | **Phase 2**, after recommendations are designed. Until then, users add songs in Spotify directly, and the next sync picks them up. |
 | Curated "PlayLS pick" | **Manual curation**, in Phase 2 alongside restock. |
 | Skip detection, "most skipped" stats | **Scrapped.** The API has no skip data. |
@@ -35,7 +35,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
   - **Remove:** takes the song out of the Spotify playlist and marks it `removed` (`removed_by = user`).
 - **Batching removals:** the user can review any number of songs per session.
   - Each swipe is saved to the backend as soon as it happens, which only writes to the database, so a decision is never lost.
-  - Spotify removals are sent in batches of up to 100 URIs per DELETE, with `snapshot_id`. A batch is triggered when the user leaves the Review page or app (a `fetch` with `keepalive` on `pagehide`/`visibilitychange`; `sendBeacon` can't send the CSRF header). Pending removals are also flushed before every sync, so a flush that gets interrupted is retried next time.
+  - Spotify removals are sent in batches of up to 100 URIs per DELETE (`DELETE /playlists/{id}/items`; no `snapshot_id`, since removal by URI drops every copy anyway). A batch is triggered when the user leaves the Review page or app (a `fetch` with `keepalive` on `pagehide`/`visibilitychange`; `sendBeacon` can't send the CSRF header). Pending removals are also flushed before every sync, so a flush that gets interrupted is retried next time.
   - Until a removal reaches Spotify, sync treats that track as removed and doesn't reactivate it.
   - Undo is allowed while a removal is still pending.
 - **Duplicates:** removing by URI deletes **every copy** of a track from the playlist. The database keeps one row per `(rotation, track)`. *This decision should be revisited.*
@@ -43,17 +43,18 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 - **Creating a rotation:** "from existing" wraps an owned playlist. "From scratch" creates an empty playlist with `POST /me/playlists` (still supported), and the user adds songs to it in Spotify until restock arrives in Phase 2.
 - **Removed songs** are recorded only in PlayLS history (`review_event` and the `removed` rows); there's no "rotated out" archive playlist in Spotify. In Phase 2, the user can bring them back through PlayLS.
 
-## Data model (target)
-- `users`: unchanged, except it adds `provider` (default `'spotify'`). `email` is no longer populated.
+## Data model (built: Alembic revision 0001)
+- `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
   - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `interval_days`
   - `snapshot_id`, `last_synced_at`, `created_at`
 - `rotation_track`, which replaces `song`:
-  - Keys: a surrogate `id`, unique on `(rotation_id, track_id)`. `track_id` is the provider's ID.
+  - Keys: a surrogate `id`, unique on `(rotation_id, track_id)`. `track_id` is the provider's ID, and `uri` is stored for removal.
   - Track metadata: `title`, `artists`, `album`, `image_url`, `duration_ms`
   - Review state: `added_at` (from Spotify), `last_kept_at`, `status` (`active` | `pending_removal` | `removed`), `removed_at`, `removed_by` (`user` | `external`)
 - `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `skip` | `remove` | `undo`), `created_at`. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
-- Alembic is added together with this schema change, starting from the new schema. The database is wiped once for this, which the owner approved (it holds only test data).
+- Alembic manages the schema from here on (the one-time wipe was done 2026-11-07). All timestamps are naive UTC.
+- Sync only imports tracks; local files and podcast episodes in a playlist are ignored. If a playlist has a missing `added_at` (very old playlists), the rotation's creation time is used instead.
 
 ## Decisions to revisit
 - Removing every duplicate copy of a track (above).

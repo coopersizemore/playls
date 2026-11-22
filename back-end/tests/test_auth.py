@@ -2,16 +2,7 @@
 Tests for the authentication system
 """
 
-import os
-from cryptography.fernet import Fernet
-
-# Hermetic config: set before the app (and its load_dotenv calls) is imported.
-# The engine is lazy, so no database connection is made by these tests.
-os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-long-enough-0123456789")
-os.environ.setdefault("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
-os.environ.setdefault("SPOTIFY_CLIENT_ID", "test_client_id")
-
+# Env setup lives in conftest.py
 import pytest
 from fastapi.testclient import TestClient
 from rest_api.app import app
@@ -79,9 +70,7 @@ def test_logout_clears_session_cookie():
     assert f'{SESSION_COOKIE}=""' in response.headers["set-cookie"]
 
 @pytest.mark.parametrize("method,endpoint", [
-    ("get", "/api/spotify/profile"),
     ("get", "/api/spotify/playlists"),
-    ("get", "/api/spotify/recommendations"),
     ("get", "/api/spotify/search?q=test"),
     ("get", "/api/user/me/rotations"),
     ("delete", "/api/user/me"),
@@ -89,10 +78,15 @@ def test_logout_clears_session_cookie():
     ("post", "/api/rotation/"),
     ("put", "/api/rotation/1"),
     ("delete", "/api/rotation/1"),
-    ("get", "/api/rotation/1/songs"),
+    ("get", "/api/rotation/1/queue"),
+    ("get", "/api/rotation/1/tracks"),
+    ("post", "/api/rotation/1/review"),
+    ("post", "/api/rotation/1/flush"),
+    ("get", "/api/rotation/1/history"),
 ])
 def test_endpoints_require_auth(method, endpoint):
-    response = getattr(TestClient(app), method)(endpoint)
+    # CSRF header included so non-GETs reach the session check
+    response = getattr(TestClient(app, headers={"X-Requested-With": "XMLHttpRequest"}), method)(endpoint)
     assert response.status_code == 401, f"{method.upper()} {endpoint} should require auth"
 
 def test_user_listing_is_gone():
@@ -115,5 +109,19 @@ def test_spotify_tokens_are_encrypted_at_rest():
     assert col.process_result_value(stored, None) == "spotify-access-token"
     assert col.process_bind_param(None, None) is None
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+
+
+def test_login_requests_minimal_scopes_and_encodes_redirect():
+    from urllib.parse import parse_qs, urlparse
+    url = client.get("/api/auth/login").json()["auth_url"]
+    query = parse_qs(urlparse(url).query)
+    scopes = set(query["scope"][0].split())
+    assert "user-read-email" not in scopes
+    assert {"playlist-read-private", "playlist-modify-private"} <= scopes
+    assert query["redirect_uri"][0].endswith("/api/auth/callback")
+
+
+def test_session_with_non_numeric_sub_is_rejected():
+    token = AuthService.create_access_token({"sub": "not-a-number"})
+    c = TestClient(app, cookies={SESSION_COOKIE: token})
+    assert c.get("/api/auth/me").status_code == 401

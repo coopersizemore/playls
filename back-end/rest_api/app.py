@@ -47,7 +47,7 @@ async def root():
     return {"message": "PlayLS API is running"}
 
 
-from .views import admin, auth, restock, rotation, spotify, user  # noqa: E402
+from .views import admin, auth, cron, restock, rotation, spotify, user  # noqa: E402
 
 # Vercel forwards the full request path, so every route lives under /api
 API_PREFIX = "/api"
@@ -57,6 +57,7 @@ app.include_router(rotation.router, prefix=API_PREFIX)
 app.include_router(spotify.router, prefix=API_PREFIX)
 app.include_router(restock.router, prefix=API_PREFIX)
 app.include_router(admin.router, prefix=API_PREFIX)
+app.include_router(cron.router, prefix=API_PREFIX)
 
 if __name__ == "__main__":
     import uvicorn

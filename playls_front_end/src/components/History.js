@@ -23,6 +23,7 @@ const TABS = [
   { label: 'Removed', filter: (e) => e.action === 'remove' },
   { label: 'Kept', filter: (e) => e.action === 'keep' || e.action === 'super_keep' },
   { label: 'Skipped', filter: (e) => e.action === 'skip' },
+  { label: 'Rotated', filter: (e) => e.action === 'rotated_out' || e.action === 'auto_added', autoOnly: true },
 ];
 
 const ACTION_CHIP = {
@@ -31,6 +32,8 @@ const ACTION_CHIP = {
   remove: { label: 'Removed', color: 'error' },
   skip: { label: 'Skipped', color: 'default' },
   undo: { label: 'Undo', color: 'default' },
+  rotated_out: { label: 'Rotated out', color: 'info' },
+  auto_added: { label: 'Added', color: 'primary' },
 };
 
 // A rotation's review history with Add back / Undo removal actions.
@@ -109,7 +112,7 @@ export const HistoryList = ({ rotationId, onChanged }) => {
           onClick={() => undoRemoval(e.track)}>Undo removal</Button>
       );
     }
-    if (e.action === 'remove' && status === 'active') {
+    if ((e.action === 'remove' || e.action === 'rotated_out') && status === 'active') {
       return <Chip size="small" icon={<Check />} label="Back in rotation" />;
     }
     return null;
@@ -119,7 +122,7 @@ export const HistoryList = ({ rotationId, onChanged }) => {
     <Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <Box display="flex" gap={1} flexWrap="wrap" mb={1}>
-        {TABS.map((t, i) => (
+        {TABS.map((t, i) => (t.autoOnly && !(events || []).some(TABS[4].filter)) ? null : (
           <Chip key={t.label} label={t.label} onClick={() => setTab(i)}
             color={tab === i ? 'primary' : 'default'} variant={tab === i ? 'filled' : 'outlined'} />
         ))}
@@ -128,7 +131,7 @@ export const HistoryList = ({ rotationId, onChanged }) => {
       {events === null ? (
         <ListSkeleton count={6} />
       ) : shown.length === 0 ? (
-        <Typography color="text.secondary" py={2}>No reviews yet.</Typography>
+        <Typography color="text.secondary" py={2}>Nothing here yet.</Typography>
       ) : (
         <List>
           {shown.map((e) => {

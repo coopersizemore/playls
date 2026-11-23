@@ -26,7 +26,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { CreateNewFolder, LibraryMusic, MusicNote } from '@mui/icons-material';
+import { AutoMode, CreateNewFolder, LibraryMusic, MusicNote } from '@mui/icons-material';
 import { api, errorMessage } from '../api';
 import { ListSkeleton } from './Skeletons';
 
@@ -59,7 +59,7 @@ export const formatInterval = (hours) => {
 };
 
 // Calls onChange(hours) when the input is valid, onChange(null) while it isn't
-export const IntervalPicker = ({ value, onChange }) => {
+export const IntervalPicker = ({ value, onChange, label = 'Review each song every' }) => {
   const initial = splitHours(value || 24 * 30);
   const [amount, setAmount] = useState(String(initial.amount));
   const [unit, setUnit] = useState(initial.unit);
@@ -83,7 +83,7 @@ export const IntervalPicker = ({ value, onChange }) => {
 
   return (
     <Box sx={{ mt: 2 }}>
-      <Typography variant="subtitle2" gutterBottom>Review each song every</Typography>
+      <Typography variant="subtitle2" gutterBottom>{label}</Typography>
       <Stack direction="row" spacing={1} sx={{ mb: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
         {PRESETS.map((p) => (
           <Chip key={p.hours} label={p.label} onClick={() => pick(p.hours)}
@@ -129,6 +129,45 @@ export const GracePeriodSwitch = ({ checked, onChange }) => (
   </Box>
 );
 
+// ---------- auto rotation settings ----------
+
+export const TARGET_SIZES = [30, 50, 100, 200];
+export const ROTATE_PERCENTS = [10, 20, 30, 50];
+export const AUTO_DEFAULTS = { target: 50, percent: 20, intervalHours: 24 * 7 };
+
+export const describeAuto = (target, percent, hours) => {
+  const n = Math.max(1, Math.round((target * percent) / 100));
+  return `Every ${formatInterval(hours)}, the ${n} oldest of ${target} songs rotate out and are replaced.`;
+};
+
+const ChoiceChips = ({ title, options, value, onChange, format }) => (
+  <Box sx={{ mt: 2 }}>
+    <Typography variant="subtitle2" gutterBottom>{title}</Typography>
+    <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+      {options.map((o) => (
+        <Chip key={o} label={format(o)} onClick={() => onChange(o)}
+          color={value === o ? 'primary' : 'default'} variant={value === o ? 'filled' : 'outlined'} />
+      ))}
+    </Stack>
+  </Box>
+);
+
+export const AutoSettings = ({ target, percent, intervalHours, onTarget, onPercent, onInterval, pickerKey }) => (
+  <>
+    <ChoiceChips title="Keep the playlist at" options={TARGET_SIZES} value={target} onChange={onTarget}
+      format={(n) => `${n} songs`} />
+    <ChoiceChips title="Rotate out" options={ROTATE_PERCENTS} value={percent} onChange={onPercent}
+      format={(p) => `${p}%`} />
+    <IntervalPicker key={pickerKey} value={intervalHours} onChange={onInterval} label="Rotate every" />
+    {intervalHours !== null && (
+      <Typography variant="body2" color="text.secondary">
+        {describeAuto(target, percent, intervalHours)} Songs you keep stay longer, and a song that
+        rotated out can come back after at least 4 weeks.
+      </Typography>
+    )}
+  </>
+);
+
 // ---------- create ----------
 
 export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
@@ -139,6 +178,9 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
   const [description, setDescription] = useState('');
   const [intervalHours, setIntervalHours] = useState(24 * 30);
   const [grace, setGrace] = useState(true);
+  const [target, setTarget] = useState(AUTO_DEFAULTS.target);
+  const [percent, setPercent] = useState(AUTO_DEFAULTS.percent);
+  const [autoHours, setAutoHours] = useState(AUTO_DEFAULTS.intervalHours);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -146,6 +188,7 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
     if (!open) return;
     setMode('existing'); setPlaylistId(null); setName(''); setDescription('');
     setIntervalHours(24 * 30); setGrace(true); setError(''); setPlaylists(null);
+    setTarget(AUTO_DEFAULTS.target); setPercent(AUTO_DEFAULTS.percent); setAutoHours(AUTO_DEFAULTS.intervalHours);
     // Loaded on open so Home doesn't page through every playlist on each visit
     api.playlists()
       .then(setPlaylists)
@@ -153,7 +196,9 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
   }, [open]);
 
   const available = (playlists || []).filter((p) => p.rotatable && !p.rotation_id);
-  const canCreate = intervalHours !== null && (mode === 'existing' ? !!playlistId : name.trim() !== '');
+  const canCreate = mode === 'auto'
+    ? autoHours !== null && name.trim() !== ''
+    : intervalHours !== null && (mode === 'existing' ? !!playlistId : name.trim() !== '');
 
   const create = async () => {
     setSaving(true);
@@ -161,7 +206,10 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
     try {
       const body = mode === 'existing'
         ? { playlist_id: playlistId, interval_hours: intervalHours, grace_period: grace }
-        : { name: name.trim(), description: description.trim() || null, interval_hours: intervalHours };
+        : mode === 'auto'
+          ? { kind: 'auto', name: name.trim(), description: description.trim() || null,
+              target_size: target, rotate_percent: percent, interval_hours: autoHours }
+          : { name: name.trim(), description: description.trim() || null, interval_hours: intervalHours };
       await api.createRotation(body);
       onCreated();
     } catch (e) {
@@ -181,6 +229,8 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
             label={<Box display="flex" alignItems="center"><LibraryMusic sx={{ mr: 1 }} />Existing playlist</Box>} />
           <FormControlLabel value="scratch" control={<Radio />}
             label={<Box display="flex" alignItems="center"><CreateNewFolder sx={{ mr: 1 }} />New playlist</Box>} />
+          <FormControlLabel value="auto" control={<Radio />}
+            label={<Box display="flex" alignItems="center"><AutoMode sx={{ mr: 1 }} />Auto-restocking</Box>} />
         </RadioGroup>
 
         {mode === 'existing' ? (
@@ -205,7 +255,9 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
         ) : (
           <>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Creates a new private, empty Spotify playlist. Add songs to it in Spotify and PlayLS picks them up.
+              {mode === 'auto'
+                ? 'Creates a new private Spotify playlist and fills it with songs picked for you. PlayLS keeps it turning over on its own; reviewing is optional.'
+                : 'Creates a new private, empty Spotify playlist. Add songs to it in Spotify and PlayLS picks them up.'}
             </Typography>
             <TextField fullWidth label="Playlist name" value={name} onChange={(e) => setName(e.target.value)}
               inputProps={{ maxLength: 100 }} sx={{ mb: 2 }} required />
@@ -214,14 +266,19 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
           </>
         )}
 
-        <IntervalPicker value={intervalHours} onChange={setIntervalHours} />
+        {mode === 'auto' ? (
+          <AutoSettings target={target} percent={percent} intervalHours={autoHours}
+            onTarget={setTarget} onPercent={setPercent} onInterval={setAutoHours} pickerKey="auto" />
+        ) : (
+          <IntervalPicker key="manual" value={intervalHours} onChange={setIntervalHours} />
+        )}
         {/* A new playlist starts empty, so the grace period has nothing to apply to */}
         {mode === 'existing' && <GracePeriodSwitch checked={grace} onChange={setGrace} />}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={saving}>Cancel</Button>
         <Button variant="contained" onClick={create} disabled={saving || !canCreate}>
-          {saving ? 'Creating…' : 'Create Rotation'}
+          {saving ? (mode === 'auto' ? 'Filling playlist…' : 'Creating…') : 'Create Rotation'}
         </Button>
       </DialogActions>
     </Dialog>
@@ -234,18 +291,26 @@ export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
   const [name, setName] = useState('');
   const [intervalHours, setIntervalHours] = useState(null);
   const [grace, setGrace] = useState(true);
+  const [target, setTarget] = useState(AUTO_DEFAULTS.target);
+  const [percent, setPercent] = useState(AUTO_DEFAULTS.percent);
   const [error, setError] = useState('');
+  const isAuto = rotation?.kind === 'auto';
 
   useEffect(() => {
     if (rotation) {
       setName(rotation.name); setIntervalHours(rotation.interval_hours);
       setGrace(rotation.grace_period); setError('');
+      setTarget(rotation.target_size || AUTO_DEFAULTS.target);
+      setPercent(rotation.rotate_percent || AUTO_DEFAULTS.percent);
     }
   }, [rotation]);
 
   const save = async () => {
     try {
-      await api.updateRotation(rotation.id, { name: name.trim(), interval_hours: intervalHours, grace_period: grace });
+      const body = isAuto
+        ? { name: name.trim(), interval_hours: intervalHours, target_size: target, rotate_percent: percent }
+        : { name: name.trim(), interval_hours: intervalHours, grace_period: grace };
+      await api.updateRotation(rotation.id, body);
       onSaved();
     } catch (e) {
       setError(errorMessage(e, 'Failed to save changes.'));
@@ -260,12 +325,25 @@ export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
         <TextField fullWidth label="Name" value={name} onChange={(e) => setName(e.target.value)}
           inputProps={{ maxLength: 100 }} sx={{ mt: 1 }} />
         {/* key remounts the picker so it starts from this rotation's interval */}
-        {rotation && <IntervalPicker key={rotation.id} value={intervalHours} onChange={setIntervalHours} />}
-        <GracePeriodSwitch checked={grace} onChange={setGrace} />
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-          Changes apply right away to every song that hasn't been kept yet. Kept songs come up one
-          interval after you kept them.
-        </Typography>
+        {rotation && isAuto && (
+          <>
+            <AutoSettings target={target} percent={percent} intervalHours={intervalHours}
+              onTarget={setTarget} onPercent={setPercent} onInterval={setIntervalHours} pickerKey={rotation.id} />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+              A bigger target fills up right away; a smaller one trims the oldest songs at the next rotation.
+            </Typography>
+          </>
+        )}
+        {rotation && !isAuto && (
+          <>
+            <IntervalPicker key={rotation.id} value={intervalHours} onChange={setIntervalHours} />
+            <GracePeriodSwitch checked={grace} onChange={setGrace} />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+              Changes apply right away to every song that hasn't been kept yet. Kept songs come up one
+              interval after you kept them.
+            </Typography>
+          </>
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>

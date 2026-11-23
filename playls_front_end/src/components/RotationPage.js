@@ -19,6 +19,7 @@ import {
 } from '@mui/material';
 import {
   AddCircleOutline,
+  AutoMode,
   Autorenew,
   Delete,
   Edit,
@@ -74,8 +75,18 @@ const Tile = ({ icon, label, onClick, href, green = false, badge = 0, disabled =
   </Badge>
 );
 
-const DueLabel = ({ track }) => {
+const DueLabel = ({ track, auto }) => {
   if (track.status === 'pending_removal') return <Chip size="small" label="Removing" color="error" />;
+  if (auto) {
+    // Auto rotations: when the song is expected to rotate out
+    if (track.protected) return <Typography variant="caption" sx={{ whiteSpace: 'nowrap', ml: 1 }}>Kept</Typography>;
+    if (!track.due_at) return null;
+    return (
+      <Typography variant="caption" sx={{ whiteSpace: 'nowrap', ml: 1 }}>
+        Leaves {relativeDays(track.due_at)}
+      </Typography>
+    );
+  }
   if (!track.due_at) return null;
   const due = new Date(`${track.due_at}Z`) <= new Date();
   return (
@@ -85,7 +96,7 @@ const DueLabel = ({ track }) => {
   );
 };
 
-const SongRow = ({ track }) => (
+const SongRow = ({ track, auto }) => (
   <Box sx={{
     display: 'flex', alignItems: 'center', gap: 2, px: 1.5, py: 1.25, borderRadius: 999,
     bgcolor: track.status === 'pending_removal' ? 'action.disabledBackground' : GREEN,
@@ -105,7 +116,7 @@ const SongRow = ({ track }) => (
         {track.is_playable === false && ' · unavailable'}
       </Typography>
     </Box>
-    <Box pr={1.5}><DueLabel track={track} /></Box>
+    <Box pr={1.5}><DueLabel track={track} auto={auto} /></Box>
   </Box>
 );
 
@@ -163,6 +174,7 @@ const RotationPage = () => {
 
   const totalMs = (tracks || []).reduce((sum, t) => sum + (t.duration_ms || 0), 0);
   const due = rotation.due_count;
+  const isAuto = rotation.kind === 'auto';
 
   return (
     <Layout maxWidth="sm" back="/">
@@ -171,6 +183,10 @@ const RotationPage = () => {
         <Typography variant="h5" component="h1" textAlign="center" mt={3} sx={{ overflowWrap: 'anywhere' }}>
           {rotation.name}
         </Typography>
+        {isAuto && (
+          <Chip icon={<AutoMode />} size="small" sx={{ mt: 1 }}
+            label={`Auto-restocking · ${rotation.target_size} songs`} />
+        )}
       </Box>
 
       <Box display="flex" justifyContent="space-between" gap={1} mt={2.5} mb={3} px={0.5} flexWrap="wrap">
@@ -192,7 +208,7 @@ const RotationPage = () => {
         <Tile
           icon={<Avatar sx={{ bgcolor: 'placeholder.main', color: 'text.primary' }}><Autorenew /></Avatar>}
           label="Rotate"
-          badge={rotation.ready_today}
+          badge={isAuto ? 0 : rotation.ready_today}
           disabled={due === 0}
           onClick={() => navigate(`/rotation/${rotation.id}/review`)}
         />
@@ -203,16 +219,21 @@ const RotationPage = () => {
         <Tile icon={<SettingsIcon sx={{ fontSize: 34 }} />} label="Settings" onClick={(e) => setMenuAnchor(e.currentTarget)} />
       </Box>
       <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mb={2}>
-        {due === 0
-          ? (rotation.next_due_at ? `Next song due ${relativeDays(rotation.next_due_at)}` : 'Nothing due')
-          : `${due} due · every ${formatInterval(rotation.interval_hours)}`}
+        {isAuto
+          ? `${due} song${due === 1 ? '' : 's'} leaving ${relativeDays(rotation.next_rotation_at)} · ` +
+            `${rotation.rotate_percent}% every ${formatInterval(rotation.interval_hours)}` +
+            (rotation.active_count < rotation.target_size
+              ? ` · ${rotation.target_size - rotation.active_count} short of ${rotation.target_size}` : '')
+          : due === 0
+            ? (rotation.next_due_at ? `Next song due ${relativeDays(rotation.next_due_at)}` : 'Nothing due')
+            : `${due} due · every ${formatInterval(rotation.interval_hours)}`}
       </Typography>
 
       <Menu anchorEl={menuAnchor} open={!!menuAnchor} onClose={() => setMenuAnchor(null)}>
         {menuItem(<Edit fontSize="small" />, 'Edit rotation', () => setDialog('edit'))}
         {menuItem(<ViewList fontSize="small" />, 'Review all songs',
           () => navigate(`/rotation/${rotation.id}/review?all=1`), { disabled: rotation.active_count === 0 })}
-        {menuItem(<RestartAlt fontSize="small" />, 'Reset all songs to not due…', () => setDialog('reset'),
+        {!isAuto && menuItem(<RestartAlt fontSize="small" />, 'Reset all songs to not due…', () => setDialog('reset'),
           { disabled: rotation.active_count === 0 })}
         {menuItem(<PlaylistRemove fontSize="small" />, 'Remove unavailable songs…', () => setDialog('unplayable'),
           { disabled: rotation.active_count === 0 })}
@@ -244,7 +265,7 @@ const RotationPage = () => {
                 </Typography>
               ) : (
                 <Box display="flex" flexDirection="column" gap={1.5}>
-                  {shown.map((t) => <SongRow key={t.track_id} track={t} />)}
+                  {shown.map((t) => <SongRow key={t.track_id} track={t} auto={isAuto} />)}
                 </Box>
               )}
             </>

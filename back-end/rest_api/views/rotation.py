@@ -138,6 +138,8 @@ async def flush_removals(rotation_id: int, db: Session = Depends(get_db), user: 
     """Apply pending removals to the Spotify playlist (called when leaving Review)."""
     rotation = _get_owned_or_404(db, rotation_id, user)
     removed = await flush_pending_removals(db, rotation, user)
+    if removed and rotation.kind == "auto":
+        await rs.try_maintain(db, rotation, user)  # refill the slots that were just freed
     return FlushOut(removed=removed, pending=rs.summarize_one(db, rotation).pending_removal_count)
 
 

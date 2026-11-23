@@ -181,7 +181,7 @@ class FakeSpotify:
         p = self._get(playlist_id)
         for uri in uris:
             track_id = uri.split(":")[-1]
-            p["items"].append({"added_at": None, "is_local": False, "item": self.catalog.get(track_id) or
+            p["items"].append({"added_at": utcnow().isoformat() + "Z", "is_local": False, "item": self.catalog.get(track_id) or
                                track_object(track_id)})
         p["version"] += 1
         return f"{playlist_id}-v{p['version']}"

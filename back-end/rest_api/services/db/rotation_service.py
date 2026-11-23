@@ -7,8 +7,16 @@ import sqlalchemy.orm as orm
 from fastapi import HTTPException
 
 from rest_api.clock import utcnow
-from rest_api.database.models.review_event import KEEP, KEEP_ACTIONS, REMOVE, SKIP, SUPER_KEEP, UNDO, ReviewEventDB
-from rest_api.database.models.rotation import RotationDB
+from rest_api.database.models.review_event import (
+    KEEP_ACTIONS,
+    REMOVE,
+    SKIP,
+    SUPER_KEEP,
+    SYSTEM_ACTIONS,
+    UNDO,
+    ReviewEventDB,
+)
+from rest_api.database.models.rotation import AUTO, RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, RotationTrackDB
 from rest_api.database.models.user import UserDB
 from rest_api.models.rotation import (
@@ -19,6 +27,7 @@ from rest_api.models.rotation import (
     RotationUpdate,
     TrackOut,
 )
+from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import rotation_logic as logic
 from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService as ss
 from rest_api.services.sync_service import sync_rotation
@@ -70,7 +79,11 @@ def _todays_activity(db: orm.Session, rotation_ids: Iterable[int], since) -> dic
     rows = (
         db.query(RotationTrackDB.rotation_id, ReviewEventDB.rotation_track_id, ReviewEventDB.action)
         .join(RotationTrackDB, ReviewEventDB.rotation_track_id == RotationTrackDB.id)
-        .filter(RotationTrackDB.rotation_id.in_(ids), ReviewEventDB.created_at >= since)
+        .filter(
+            RotationTrackDB.rotation_id.in_(ids),
+            ReviewEventDB.created_at >= since,
+            ReviewEventDB.action.notin_(SYSTEM_ACTIONS),
+        )
     )
     for rotation_id, track_row_id, action in rows:
         day = activity[rotation_id]
@@ -82,13 +95,36 @@ def _todays_activity(db: orm.Session, rotation_ids: Iterable[int], since) -> dic
     return activity
 
 
+def due_dates(rotation: RotationDB, active: list[RotationTrackDB], now) -> dict[int, object]:
+    """When each active track comes due, by row id.
+
+    Manual rotations: the review due date. Auto rotations: when the song is projected to
+    rotate out (the next group is "due" for an optional review).
+    """
+    if rotation.kind == AUTO:
+        return auto.leaving_schedule(active, rotation, now)
+    return {t.id: logic.due_at(t, rotation) for t in active}
+
+
+def _due_now(rotation: RotationDB, active: list[RotationTrackDB], now) -> list[RotationTrackDB]:
+    """Every active track currently due, in queue order (auto: leaving at the next rotation)."""
+    if rotation.kind == AUTO:
+        return auto.leaving_next(active, rotation, now)
+    return logic.sort_queue([t for t in active if logic.is_due(t, rotation, now)], rotation)
+
+
+def _sorted_by_due(rotation: RotationDB, active: list[RotationTrackDB], now) -> list[RotationTrackDB]:
+    if rotation.kind == AUTO:
+        schedule = auto.leaving_schedule(active, rotation, now)
+        order = {t.id: i for i, t in enumerate(auto.rotate_out_order(active, rotation, now))}
+        return sorted(active, key=lambda t: (schedule[t.id], order[t.id]))
+    return logic.sort_queue(active, rotation)
+
+
 def _eligible_due(rotation: RotationDB, tracks: list[RotationTrackDB], day: DailyActivity, now) -> list:
     """Due active tracks that weren't skipped today, most overdue first."""
-    due = [
-        t for t in tracks
-        if t.status == ACTIVE and logic.is_due(t, rotation, now) and t.id not in day.skipped_track_ids
-    ]
-    return logic.sort_queue(due, rotation)
+    active = [t for t in tracks if t.status == ACTIVE]
+    return [t for t in _due_now(rotation, active, now) if t.id not in day.skipped_track_ids]
 
 
 def summarize(
@@ -101,8 +137,10 @@ def summarize(
     day = day or DailyActivity()
     limit = rotation.owner.review_limit
     active = [t for t in tracks if t.status == ACTIVE]
-    due_dates = [logic.due_at(t, rotation) for t in active]
-    upcoming = [d for d in due_dates if d > now]
+    is_auto = rotation.kind == AUTO
+    dates = list(due_dates(rotation, active, now).values())
+    due_count = len(_due_now(rotation, active, now)) if is_auto else sum(1 for d in dates if d <= now)
+    upcoming = [d for d in dates if d > now] if not is_auto else []
     eligible = len(_eligible_due(rotation, tracks, day, now))
     return RotationOut(
         id=rotation.id,
@@ -113,10 +151,15 @@ def summarize(
         image_url=rotation.image_url,
         interval_hours=rotation.interval_hours,
         grace_period=rotation.grace_period,
+        kind=rotation.kind,
+        target_size=rotation.target_size,
+        rotate_percent=rotation.rotate_percent,
+        last_rotated_at=rotation.last_rotated_at,
+        next_rotation_at=auto.next_rotation_at(rotation) if is_auto else None,
         created_at=rotation.created_at,
         last_synced_at=rotation.last_synced_at,
         active_count=len(active),
-        due_count=sum(1 for d in due_dates if d <= now),
+        due_count=due_count,
         pending_removal_count=sum(1 for t in tracks if t.status == PENDING_REMOVAL),
         next_due_at=min(upcoming) if upcoming else None,
         daily_limit=limit,
@@ -134,7 +177,13 @@ def summarize_one(
     return summarize(rotation, _live_tracks(db, [rotation.id])[rotation.id], sync_ok, day)
 
 
-def track_out(track: RotationTrackDB, rotation: RotationDB) -> TrackOut:
+_UNSET = object()
+
+
+def track_out(track: RotationTrackDB, rotation: RotationDB, due_at=_UNSET) -> TrackOut:
+    """`due_at` overrides the computed due date (auto rotations pass the leaving estimate)."""
+    if due_at is _UNSET:
+        due_at = logic.due_at(track, rotation) if rotation.kind != AUTO else None
     return TrackOut(
         track_id=track.track_id,
         uri=track.uri,
@@ -148,8 +197,14 @@ def track_out(track: RotationTrackDB, rotation: RotationDB) -> TrackOut:
         last_kept_at=track.last_kept_at,
         keep_multiplier=track.keep_multiplier or 1,
         status=track.status,
-        due_at=logic.due_at(track, rotation),
+        due_at=due_at if track.status == ACTIVE else None,
+        protected=rotation.kind == AUTO and track.status == ACTIVE and auto.is_protected(track, rotation),
     )
+
+
+def _tracks_out(tracks: list[RotationTrackDB], rotation: RotationDB, active: list[RotationTrackDB], now) -> list[TrackOut]:
+    dates = due_dates(rotation, active, now)
+    return [track_out(t, rotation, dates.get(t.id)) for t in tracks]
 
 
 # ---------- sync wrappers ----------
@@ -158,11 +213,26 @@ async def try_sync(db: orm.Session, rotation: RotationDB, user: UserDB, force: b
     """Sync, but don't fail the request if Spotify is unavailable. Returns sync_ok."""
     try:
         await sync_rotation(db, rotation, user, force=force)
-        return True
     except Exception:
         # Spotify errors, timeouts, or a concurrent sync inserting the same rows
         db.rollback()
         logger.warning("Sync failed for rotation %s", rotation.id, exc_info=True)
+        return False
+    if rotation.kind == AUTO:
+        await try_maintain(db, rotation, user)
+    return True
+
+
+async def try_maintain(db: orm.Session, rotation: RotationDB, user: UserDB) -> bool:
+    """Auto rotations: rotate out if due and restock to the target (best effort)."""
+    from rest_api.services.auto_restock_service import maintain  # that module imports this one
+
+    try:
+        await maintain(db, rotation, user)
+        return True
+    except Exception:
+        db.rollback()
+        logger.warning("Auto restock failed for rotation %s", rotation.id, exc_info=True)
         return False
 
 
@@ -180,7 +250,10 @@ async def list_rotation_summaries(
 # ---------- create / update / delete ----------
 
 async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) -> tuple[RotationDB, bool]:
-    """Wrap an owned/collaborative playlist, or create a new private one. Returns (rotation, sync_ok)."""
+    """Wrap an owned/collaborative playlist, or create a new private one. Returns (rotation, sync_ok).
+
+    Auto rotations always start from a new playlist; the initial sync's restock fills it.
+    """
     if data.playlist_id:
         if db.query(RotationDB).filter(
             RotationDB.owner_id == owner.id, RotationDB.playlist_id == data.playlist_id
@@ -212,6 +285,9 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
         image_url=logic.playlist_image(playlist),
         interval_hours=data.interval_hours,
         grace_period=data.grace_period,
+        kind=data.kind,
+        target_size=data.target_size if data.kind == AUTO else None,
+        rotate_percent=data.rotate_percent if data.kind == AUTO else None,
         created_at=utcnow(),
     )
     db.add(rotation)
@@ -223,8 +299,11 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
 
 
 def update_rotation(db: orm.Session, rotation: RotationDB, data: RotationUpdate) -> RotationDB:
-    for key, value in data.model_dump(exclude_unset=True).items():
-        if key in ("name", "interval_hours", "grace_period") and value is None:
+    changes = data.model_dump(exclude_unset=True)
+    if rotation.kind != AUTO and any(changes.get(k) is not None for k in ("target_size", "rotate_percent")):
+        raise HTTPException(status_code=400, detail="Only auto rotations have a target size")
+    for key, value in changes.items():
+        if key in ("name", "interval_hours", "grace_period", "target_size", "rotate_percent") and value is None:
             continue  # not nullable
         setattr(rotation, key, value)
     db.commit()
@@ -250,10 +329,10 @@ def all_songs_queue(db: orm.Session, rotation: RotationDB, tz_offset_minutes: in
     """Every active song, soonest due first (overdue ones first), ignoring the daily limit."""
     now = utcnow()
     day = _todays_activity(db, [rotation.id], logic.local_day_start(now, tz_offset_minutes))[rotation.id]
-    active = logic.sort_queue(_tracks(db, rotation, (ACTIVE,)), rotation)
+    active = _sorted_by_due(rotation, _tracks(db, rotation, (ACTIVE,)), now)
     return QueueOut(
-        tracks=[track_out(t, rotation) for t in active],
-        due_count=sum(1 for t in active if logic.is_due(t, rotation, now)),
+        tracks=_tracks_out(active, rotation, active, now),
+        due_count=len(_due_now(rotation, active, now)),
         daily_limit=None,
         reviewed_today=day.reviewed,
         remaining_after_batch=0,
@@ -266,6 +345,9 @@ def reset_due_dates(db: orm.Session, rotation: RotationDB) -> int:
 
     Not recorded as keeps (no review events), so it doesn't touch History or the daily limit.
     """
+    if rotation.kind == AUTO:
+        # Every song would be protected and the next rotation would swap nothing out
+        raise HTTPException(status_code=400, detail="Auto rotations don't have due dates to reset")
     now = utcnow()
     tracks = _tracks(db, rotation, (ACTIVE,))
     for track in tracks:
@@ -280,8 +362,8 @@ def unplayable_tracks(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:
         RotationTrackDB.rotation_id == rotation.id,
         RotationTrackDB.status == ACTIVE,
         RotationTrackDB.is_playable.is_(False),
-    ).order_by(RotationTrackDB.title)
-    return [track_out(t, rotation) for t in rows]
+    ).order_by(RotationTrackDB.title).all()
+    return _tracks_out(rows, rotation, _tracks(db, rotation, (ACTIVE,)), utcnow())
 
 
 def queue_unplayable_removals(db: orm.Session, rotation: RotationDB) -> int:
@@ -313,8 +395,8 @@ def due_queue(db: orm.Session, rotation: RotationDB, tz_offset_minutes: int = 0,
     eligible = _eligible_due(rotation, active, day, now)
     size = logic.todays_batch_size(limit, day.reviewed, len(eligible), more)
     return QueueOut(
-        tracks=[track_out(t, rotation) for t in eligible[:size]],
-        due_count=sum(1 for t in active if logic.is_due(t, rotation, now)),
+        tracks=_tracks_out(eligible[:size], rotation, active, now),
+        due_count=len(_due_now(rotation, active, now)),
         daily_limit=limit,
         reviewed_today=day.reviewed,
         remaining_after_batch=len(eligible) - size,
@@ -323,9 +405,10 @@ def due_queue(db: orm.Session, rotation: RotationDB, tz_offset_minutes: int = 0,
 
 
 def all_tracks(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:
-    tracks = logic.sort_queue(_tracks(db, rotation, (ACTIVE,)), rotation)
+    now = utcnow()
+    tracks = _sorted_by_due(rotation, _tracks(db, rotation, (ACTIVE,)), now)
     pending = _tracks(db, rotation, (PENDING_REMOVAL,))
-    return [track_out(t, rotation) for t in tracks + pending]
+    return _tracks_out(tracks + pending, rotation, tracks, now)
 
 
 def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: str) -> TrackOut:
@@ -355,7 +438,7 @@ def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: s
     db.add(event)
     db.commit()
     db.refresh(track)
-    return track_out(track, rotation)
+    return _one_out(db, rotation, track)
 
 
 def _undo_last_review(db: orm.Session, rotation: RotationDB, track: RotationTrackDB) -> TrackOut:
@@ -367,7 +450,10 @@ def _undo_last_review(db: orm.Session, rotation: RotationDB, track: RotationTrac
     """
     event = (
         db.query(ReviewEventDB)
-        .filter(ReviewEventDB.rotation_track_id == track.id, ReviewEventDB.action != UNDO)
+        .filter(
+            ReviewEventDB.rotation_track_id == track.id,
+            ReviewEventDB.action.notin_((UNDO,) + SYSTEM_ACTIONS),
+        )
         .order_by(ReviewEventDB.created_at.desc(), ReviewEventDB.id.desc())
         .first()
     )
@@ -388,7 +474,13 @@ def _undo_last_review(db: orm.Session, rotation: RotationDB, track: RotationTrac
     db.delete(event)
     db.commit()
     db.refresh(track)
-    return track_out(track, rotation)
+    return _one_out(db, rotation, track)
+
+
+def _one_out(db: orm.Session, rotation: RotationDB, track: RotationTrackDB) -> TrackOut:
+    if rotation.kind != AUTO:
+        return track_out(track, rotation)
+    return _tracks_out([track], rotation, _tracks(db, rotation, (ACTIVE,)), utcnow())[0]
 
 
 def history(db: orm.Session, rotation: RotationDB, limit: int = 100, offset: int = 0) -> list[HistoryEventOut]:
@@ -401,7 +493,10 @@ def history(db: orm.Session, rotation: RotationDB, limit: int = 100, offset: int
         .limit(limit)
         .all()
     )
+    dates = due_dates(rotation, _tracks(db, rotation, (ACTIVE,)), utcnow())
     return [
-        HistoryEventOut(action=event.action, created_at=event.created_at, track=track_out(track, rotation))
+        HistoryEventOut(
+            action=event.action, created_at=event.created_at, track=track_out(track, rotation, dates.get(track.id))
+        )
         for event, track in rows
     ]

@@ -18,6 +18,7 @@ Tags: **[YOU]** means it needs your accounts, dashboards or secrets. **[CLAUDE]*
 - [x] Prod login works at https://playls.vercel.app (2026-11-07) **[YOU]**
 
 ## Optional
+- **[YOU]** Set `CRON_SECRET` in Vercel (Production). Use a long random string, for example `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Then redeploy. Vercel Cron sends it to `/api/cron/auto-restock` daily at 10:00 UTC (`vercel.json` `crons`), which turns over auto rotations even when nobody opens the app. Without it the route is disabled.
 - **[YOU]** Add up to 4 more users in the Spotify dashboard (Settings → User Management).
 
 ## Ongoing workflow

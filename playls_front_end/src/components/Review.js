@@ -25,7 +25,7 @@ import {
 } from '@mui/icons-material';
 import { formatInterval } from './RotationDialogs';
 import { api, errorMessage, flushOnExit } from '../api';
-import { AlbumArt, Layout, SpotifyEmbed, daysSince } from './Layout';
+import { AlbumArt, Layout, SpotifyEmbed, daysSince, relativeDays } from './Layout';
 import ReviewSummary from './ReviewSummary';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
 import { ReviewSkeleton } from './Skeletons';
@@ -370,7 +370,11 @@ const Review = () => {
             <Typography mt={1}>{track.artists}</Typography>
             <Box display="flex" justifyContent="center" gap={1} mt={1} flexWrap="wrap">
               {track.is_playable === false && <Chip size="small" color="warning" label="Unavailable on Spotify" />}
-              {reviewAll && track.due_at && new Date(`${track.due_at}Z`) > new Date() && (
+              {rotation?.kind === 'auto' ? (
+                track.protected
+                  ? <Chip size="small" variant="outlined" label="Kept for the next rotation" />
+                  : track.due_at && <Chip size="small" variant="outlined" label={`Leaves ${relativeDays(track.due_at)}`} />
+              ) : reviewAll && track.due_at && new Date(`${track.due_at}Z`) > new Date() && (
                 <Chip size="small" variant="outlined" label="Not due yet" />
               )}
             </Box>
@@ -393,8 +397,10 @@ const Review = () => {
           </Box>
           {rotation && (
             <Typography variant="caption" color="text.secondary" display="block" textAlign="center">
-              Kept songs come back in {formatInterval(rotation.interval_hours)}, super kept in{' '}
-              {formatInterval(rotation.interval_hours * 3)}.
+              {rotation.kind === 'auto'
+                ? 'Kept songs stay through the next rotation; super kept songs age three times slower. Removed songs are replaced.'
+                : <>Kept songs come back in {formatInterval(rotation.interval_hours)}, super kept in{' '}
+                  {formatInterval(rotation.interval_hours * 3)}.</>}
             </Typography>
           )}
 

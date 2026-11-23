@@ -4,6 +4,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from rest_api.services.auto_rotation_logic import (
+    DEFAULT_INTERVAL_HOURS as AUTO_DEFAULT_INTERVAL_HOURS,
+    DEFAULT_ROTATE_PERCENT,
+    DEFAULT_TARGET_SIZE,
+)
+
 MAX_INTERVAL_HOURS = 365 * 24
 DEFAULT_INTERVAL_HOURS = 30 * 24
 
@@ -19,11 +25,27 @@ class RotationCreate(BaseModel):
     interval_hours: int = Field(DEFAULT_INTERVAL_HOURS, ge=1, le=MAX_INTERVAL_HOURS)
     # Off: songs already in the playlist are due from their own added_at (immediately if unknown)
     grace_period: bool = True
+    # "auto": a new playlist PlayLS keeps at target_size, swapping out rotate_percent of it
+    # every interval_hours (default weekly)
+    kind: Literal["manual", "auto"] = "manual"
+    target_size: Literal[30, 50, 100, 200] | None = None
+    rotate_percent: int | None = Field(None, ge=5, le=100)
 
     @model_validator(mode="after")
-    def _name_required_for_new_playlist(self):
+    def _check(self):
         if not self.playlist_id and not self.name:
             raise ValueError("name is required when creating a new playlist")
+        if self.kind == "auto":
+            if self.playlist_id:
+                raise ValueError("auto rotations always start from a new playlist")
+            if self.target_size is None:
+                self.target_size = DEFAULT_TARGET_SIZE
+            if self.rotate_percent is None:
+                self.rotate_percent = DEFAULT_ROTATE_PERCENT
+            if "interval_hours" not in self.model_fields_set:
+                self.interval_hours = AUTO_DEFAULT_INTERVAL_HOURS
+        elif self.target_size is not None or self.rotate_percent is not None:
+            raise ValueError("target_size and rotate_percent are only for auto rotations")
         return self
 
 
@@ -34,6 +56,8 @@ class RotationUpdate(BaseModel):
     description: str | None = Field(None, max_length=300)
     interval_hours: int | None = Field(None, ge=1, le=MAX_INTERVAL_HOURS)
     grace_period: bool | None = None
+    target_size: Literal[30, 50, 100, 200] | None = None  # auto rotations only
+    rotate_percent: int | None = Field(None, ge=5, le=100)
 
 
 class RotationOut(BaseModel):
@@ -45,6 +69,11 @@ class RotationOut(BaseModel):
     image_url: str | None  # playlist cover
     interval_hours: int
     grace_period: bool
+    kind: str = "manual"  # "auto": PlayLS rotates out and restocks on its own
+    target_size: int | None = None
+    rotate_percent: int | None = None
+    last_rotated_at: datetime | None = None
+    next_rotation_at: datetime | None = None  # auto only
     created_at: datetime
     last_synced_at: datetime | None
     active_count: int
@@ -72,7 +101,9 @@ class TrackOut(BaseModel):
     last_kept_at: datetime | None
     keep_multiplier: int = 1  # 3 after a super keep
     status: str
-    due_at: datetime | None  # None unless active
+    # None unless active. Auto rotations: when the song is expected to rotate out
+    due_at: datetime | None
+    protected: bool = False  # auto: kept since the last rotation, so it stays for the next one
 
 
 class QueueOut(BaseModel):

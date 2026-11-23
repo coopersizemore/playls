@@ -109,21 +109,61 @@ Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-
 - `/auth/me` returns `missing_scopes`, and the For you tab offers a Reconnect button. Accounts from before this change have to log in again.
 - Sources without a granted scope are skipped, and any one failing source is skipped rather than failing the whole deck.
 
-## Data model (Alembic revisions 0001–0008)
+## Auto rotations (owner decisions, 2026-11-23)
+A second kind of rotation (`rotation.kind = 'auto'`), created only from scratch (a new private playlist). PlayLS keeps the playlist at a target size and turns part of it over on a schedule.
+- **Settings:**
+  - Target size: 30, 50, 100 or 200.
+  - Rotate-out share: 10 / 20 / 30 / 50% in the UI (the API takes 5–100).
+  - How often: reuses `interval_hours`.
+  - Default: 50 songs, 20%, weekly. All three can be edited later.
+- **Creation:** the initial sync's restock fills the playlist to the target. If the For you pool is too small, it fills as far as it can and tops up later.
+- **Each rotation** (`next_rotation_at = (last_rotated_at or created_at) + interval`):
+  - Rotates out `round(target × percent)` songs (at least 1), plus any songs over the target, then restocks back up to the target.
+  - A missed rotation runs once, not once per missed period.
+  - The rotation is claimed with a conditional update on `last_rotated_at`, so concurrent requests or the cron can't run it twice. On a Spotify failure the claim is released and the next sync retries.
+- **Who leaves:**
+  - Unavailable songs first, then the oldest.
+  - Age counts from `added_at`, or from `last_kept_at` once kept. After a super keep the clock runs 3× slower.
+  - Songs kept since the last rotation are protected from the next one. A protected song pushes the next-oldest one out instead, so the percentage still holds.
+- **Reviewing is optional:**
+  - The review queue is the group leaving at the next rotation.
+  - Keep: protects the song.
+  - Remove: frees a slot, which is refilled right after the flush.
+  - Skip: works as usual.
+  - "Reset all to not due" isn't offered, since it would protect every song.
+  - Track `due_at` is the projected leave time: the next group at the next rotation, then one group per interval after.
+- **Restock mix** for N empty slots:
+  - Each slot has a 10% chance of being a live PlayLS pick.
+  - About 20% of slots are bring-back songs (weighted by the bring-back rules).
+  - The rest are For you (the same scorer and 2:1 known/discovery blend).
+  - A shortfall in one source spills into the others.
+  - Excluded: blocked songs, songs currently in the rotation, and songs removed from it in the last **4 weeks** (the return cooldown, which also applies to picks).
+- **When it runs:**
+  - After every successful sync of an auto rotation (`try_sync` → `try_maintain`), so it catches up whenever the app opens it.
+  - After a flush that removed songs.
+  - From a daily Vercel cron (`GET /api/cron/auto-restock`, `vercel.json` `crons`) that syncs and maintains every auto rotation, so the playlist changes even if the owner only listens in Spotify.
+  - The cron route requires `Authorization: Bearer $CRON_SECRET`, and returns 404 when `CRON_SECRET` is unset.
+- **History:**
+  - System events `rotated_out` and `auto_added` are written to `review_event`.
+  - They never count toward the daily limit and can't be undone.
+  - Rotated-out rows get `removed_by = 'rotation'`.
+
+## Data model (Alembic revisions 0001–0009)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
   - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
   - `snapshot_id`, `last_synced_at`, `created_at`
+  - Auto rotations (0009): `kind` (`manual` | `auto`), `target_size`, `rotate_percent`, `last_rotated_at`
 - `rotation_track`, which replaces `song`:
   - Keys: a surrogate `id`, unique on `(rotation_id, track_id)`. `track_id` is the provider's ID, and `uri` is stored for removal.
   - Track metadata: `title`, `artists`, `album`, `image_url`, `duration_ms`, `is_playable`
-  - Review state: `added_at` (from Spotify; NULL if unknown), `last_kept_at`, `keep_multiplier` (1, or 3 after a super keep), `status` (`active` | `pending_removal` | `removed`), `removed_at`, `removed_by` (`user` | `external`)
+  - Review state: `added_at` (from Spotify; NULL if unknown), `last_kept_at`, `keep_multiplier` (1, or 3 after a super keep), `status` (`active` | `pending_removal` | `removed`), `removed_at`, `removed_by` (`user` | `external` | `rotation`)
 - `restock_block`: `user_id`, `track_id` (unique together), display metadata, `created_at`.
 - `curated_pick`: track metadata plus `note`, optional `starts_at`/`ends_at`, and `created_by`.
 - `restock_feedback`: `user_id`, `rotation_id`, `track_id`, `source` (`bring_back` | `picks` | `suggested` | `search`), `action` (`add` | `skip`), `created_at`.
 - `suggestion_cache`: one row per user, `{candidates: {track_id: {meta, features}}, missing_scopes}` as JSON, plus `created_at`.
 - `users.granted_scopes`: the space-separated OAuth scopes from the last login.
-- `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `super_keep` | `skip` | `remove`; legacy `undo` rows only), `previous_last_kept_at` / `previous_keep_multiplier` (keeps only, for undo), `created_at`. An undone action's row is deleted. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
+- `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `super_keep` | `skip` | `remove`; system `rotated_out` | `auto_added`; legacy `undo` rows only), `previous_last_kept_at` / `previous_keep_multiplier` (keeps only, for undo), `created_at`. An undone action's row is deleted. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
 - Alembic manages the schema from here on (the one-time wipe was done 2026-11-07). All timestamps are naive UTC.
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 

@@ -6,20 +6,25 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
 
 ## Layout
 - `back-end/rest_api/` — FastAPI. Run from `back-end/` as `python -m rest_api.app` (port 8000). Package uses a mix of relative (`..`) and absolute (`rest_api.`) imports, so it only works from `back-end/` as the CWD.
-  - `views/` routers: `auth`, `user`, `rotation`, `spotify` (all mounted in `app.py`).
+  - `views/` routers: `auth`, `user`, `rotation`, `spotify`, `restock`, `admin`, `cron` (all mounted in `app.py`).
   - `services/auth_service.py` — Spotify OAuth + app session (JWT via python-jose, HS256, 7 days, in an httpOnly cookie). `get_current_user_from_token` is the auth dependency (cookie + CSRF check).
   - `services/spotify/spotify_service.py` — thin httpx wrapper over the post-Feb-2026 Spotify API. Raises `SpotifyAPIError` (an `HTTPException` carrying `upstream_status`); on a 401 it force-refreshes the token and retries once.
   - `services/rotation_logic.py` — pure rules: due-date math (interval in hours; optional per-rotation grace period; NULL `added_at` = unknown), parsing playlist items, queue order. No DB/network; unit-tested.
   - `services/sync_service.py` — `flush_pending_removals` and `sync_rotation` (snapshot short-circuit, diff against `rotation_track`). Skips the diff if items come back but none parse, so a response-shape change can't mark everything removed.
   - `services/db/rotation_service.py` — rotation CRUD, summaries/due counts, queue (daily limit via `_todays_activity` over `review_event`), `apply_review`, history. `try_sync` is the best-effort wrapper routes use (returns `sync_ok`).
   - `services/restock_logic.py` (pure: bring-back weights, suggestion scoring, weighted sampling, blending) and `services/restock_service.py` (the four sources, the suggestion cache, add / Not now, pick creation). Rules are in DESIGN.md, "Restock".
+  - **Auto rotations** (`rotation.kind = 'auto'`, DESIGN.md "Auto rotations"):
+    - `services/auto_rotation_logic.py` (pure): who leaves, the leaving schedule, the source mix, the 4-week return cooldown.
+    - `services/auto_restock_service.py`: `maintain` rotates out and restocks to `target_size`; `run_all` is the cron.
+    - `rotation_service.try_sync` runs `try_maintain` after every successful sync of an auto rotation.
+    - Due-related code branches on `kind` through `due_dates` / `_due_now` (for auto, "due" means leaving at the next rotation).
   - `database/models/*` — SQLAlchemy: `UserDB`, `RotationDB`, `RotationTrackDB`, `ReviewEventDB`, `CuratedPickDB`, `RestockFeedbackDB`, `SuggestionCacheDB`. `models/*` are the Pydantic schemas (`extra="forbid"` on request bodies).
   - `database/config.py` connects to **Supabase Postgres** via `DATABASE_URL` (psycopg 3, `NullPool`, `prepare_threshold=None` for the transaction pooler). The user table is `users` (`user` is reserved in Postgres).
   - `database/encryption.py` — `EncryptedText` (Fernet, `TOKEN_ENCRYPTION_KEY`) for the Spotify tokens.
   - `clock.py` — `utcnow()`. All timestamps are **naive UTC**; use it instead of `datetime.utcnow()`.
 - `back-end/alembic/` — migrations. Run `alembic upgrade head` from `back-end/` (with `.venv`). Local and prod share the DB, so a migration applies to prod. New tables must `ENABLE ROW LEVEL SECURITY` in their migration (no policies; this blocks Supabase's Data API). `alembic check` verifies models match migrations.
 - `playls_front_end/` — CRA (react-scripts 5), React 19, MUI 7 (`Grid` uses the `size` prop), react-router 7, axios. Pages in `src/components/`, mobile-first and styled after the owner's Figma wireframes (light theme in `src/theme.js`: IBM Plex Mono text, Roboto controls, green `#7ED34E`, loaded from Google Fonts in `public/index.html`):
-  - **Home**: rotation cards with only Rotate and Restock. Tapping a card opens the rotation. Creating a rotation happens here.
+  - **Home**: rotation cards with only Rotate (Review for auto rotations) and Restock. Tapping a card opens the rotation. Creating a rotation happens here.
   - **RotationPage** (`/rotation/:id`): cover, stats, tiles (Rotate with the due badge, Restock, Spotify link, Settings menu with edit / review all / reset / remove unavailable / delete), and Current songs / History tabs (`?tab=history`). `History.js` exports the embeddable `HistoryList`; its old route redirects to the tab.
   - **Review**: a `SwipeCard` (pointer events, no library; right = keep, left = remove, flies off in that direction, also triggered by buttons and keys) with album art, the days-since stat, and a compact Spotify embed.
   - **Restock**: the same swipe card for its decks.
@@ -34,7 +39,8 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
 - `GET /user/me/rotations` (syncs each rotation; `?sync=false` skips) → summaries with `due_count`, `ready_today`, `reviewed_today`, `daily_limit`, `active_count`, `pending_removal_count`, `next_due_at`, `sync_ok`.
 - `GET|PUT /user/me/settings` `{review_limit: int 1–1000 | null}` (null = no limit; default 50).
 - Daily-limit endpoints take `tz_offset` (JS `getTimezoneOffset()`, minutes) so "today" is the user's local day. The frontend sends it automatically from `api.js`.
-- `POST /rotation/` `{playlist_id?, name?, description?, interval_hours, grace_period}`: wraps an owned/collaborative playlist, or creates a private one via `POST /me/playlists` when `playlist_id` is omitted. Then runs the initial sync.
+- `POST /rotation/` `{playlist_id?, name?, description?, interval_hours, grace_period, kind?, target_size?, rotate_percent?}`: wraps an owned/collaborative playlist, or creates a private one via `POST /me/playlists` when `playlist_id` is omitted. Then runs the initial sync. `kind: "auto"` requires no `playlist_id`; it defaults to 50 songs, 20% and weekly, and the initial sync fills it.
+- `GET /cron/auto-restock` (Vercel Cron; `Authorization: Bearer $CRON_SECRET`, 404 when unset): syncs and maintains every auto rotation.
 - `GET|PUT|DELETE /rotation/{id}`, `GET /rotation/{id}/queue[?more=true | ?all=true]` (syncs, then today's batch: `{tracks, due_count, daily_limit, reviewed_today, remaining_after_batch, limit_reached}`), `/tracks`, `POST /rotation/{id}/review` `{track_id, action: keep|super_keep|skip|remove|undo}`, `POST /rotation/{id}/flush`, `GET /rotation/{id}/history`, `POST /rotation/{id}/reset-due`, `GET /rotation/{id}/unplayable` (force-syncs), `POST /rotation/{id}/remove-unplayable`.
 - `GET /spotify/playlists` (flattened, with `rotatable`/`rotation_id`), `GET /spotify/search` (limit ≤ 10).
 - Restock, under `/rotation/{id}/restock/`: `GET deck/{bring_back|picks|suggested}[?refresh=true]` → `{source, items, missing_scopes}`; `GET search?q=&offset=`; `POST add`, `POST skip` and `POST block` ("stop suggesting") with `{track_id, source}`. Blocks are listed and undone via `GET /user/me/blocked-songs` and `DELETE /user/me/blocked-songs/{track_id}`.
@@ -48,7 +54,7 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
 - Local dev: `vercel dev` (single origin on :3000, the preferred option), or `npm start` plus `python -m rest_api.app`. The second option relies on the CRA `proxy` in `package.json` and needs `FRONTEND_URL` and an `SPOTIFY_REDIRECT_URI` on :8000 (see `env.example`).
 - Env vars (see `back-end/env.example`):
   - Required: `DATABASE_URL`, `SECRET_KEY` (32+ chars; published placeholders are rejected), `TOKEN_ENCRYPTION_KEY` (must match everywhere sharing the DB). The app refuses to start without these. Also `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_REDIRECT_URI` (must end in `/api/auth/callback` and match the Spotify dashboard).
-  - Optional: `ADMIN_SPOTIFY_IDS` (comma-separated Spotify user IDs that can curate picks), `FRONTEND_URL` (empty means same origin, so the post-login redirect is the relative `/`), `ENABLE_API_DOCS` (Swagger at `/api/docs`, off by default), `SQL_ECHO`.
+  - Optional: `ADMIN_SPOTIFY_IDS` (comma-separated Spotify user IDs that can curate picks), `CRON_SECRET` (enables the daily auto-rotation cron), `FRONTEND_URL` (empty means same origin, so the post-login redirect is the relative `/`), `ENABLE_API_DOCS` (Swagger at `/api/docs`, off by default), `SQL_ECHO`.
 
 ## Security model (keep it this way)
 - Every `/api/user/*`, `/api/rotation/*` and `/api/spotify/*` route requires the session cookie (`playls_session`, httpOnly, SameSite=Lax, path `/api`). There's no Bearer-header auth. Non-GET requests also need an `X-Requested-With` header (CSRF), which `src/api.js` sets on axios globally and on the `keepalive` flush. Rotations are fetched with `rotation_service.get_owned_rotation`, and other users' rotations return 404.
@@ -88,7 +94,7 @@ Spotify's recommendation endpoints are gone. "For you" (restock) is the interim 
 Personal/demo scope: one Supabase project, one Spotify app, Vercel production on a `*.vercel.app` URL, and local dev with `vercel dev` (local and prod share the database). See [DEPLOYMENT_PLAN.md](docs/DEPLOYMENT_PLAN.md).
 
 ## Testing
-`cd back-end && .venv/Scripts/python -m pytest tests`. `tests/conftest.py` sets dummy env vars before importing the app and provides an in-memory SQLite `db`, a `FakeSpotify` (monkeypatched onto `SpotifyService`), and an authenticated `client`. So tests need no Supabase, `.env` or network. Files: `test_auth.py` (security), `test_rotation_logic.py` and `test_restock_logic.py` (pure rules), `test_rotation_flow.py` and `test_restock_flow.py` (end to end through the API). There are no frontend tests; verify the frontend with `npx react-scripts build` (from `playls_front_end/`).
+`cd back-end && .venv/Scripts/python -m pytest tests`. `tests/conftest.py` sets dummy env vars before importing the app and provides an in-memory SQLite `db`, a `FakeSpotify` (monkeypatched onto `SpotifyService`), and an authenticated `client`. So tests need no Supabase, `.env` or network. Files: `test_auth.py` (security), `test_rotation_logic.py` and `test_restock_logic.py` (pure rules), `test_rotation_flow.py` and `test_restock_flow.py` (end to end through the API), `test_auto_rotation.py` (auto rotation rules and flow, including the cron). There are no frontend tests; verify the frontend with `npx react-scripts build` (from `playls_front_end/`).
 
 ## Working notes
 - `back-end/.env` holds real secrets. Never print or commit it.

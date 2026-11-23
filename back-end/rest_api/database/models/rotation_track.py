@@ -10,6 +10,8 @@ STATUSES = (ACTIVE, PENDING_REMOVAL, REMOVED)
 
 REMOVED_BY_USER = "user"
 REMOVED_BY_EXTERNAL = "external"  # disappeared from the playlist outside PlayLS
+REMOVED_BY_ROTATION = "rotation"  # rotated out on schedule by an auto rotation
+REMOVED_BY = (REMOVED_BY_USER, REMOVED_BY_EXTERNAL, REMOVED_BY_ROTATION)
 
 
 class RotationTrackDB(Base):
@@ -19,7 +21,7 @@ class RotationTrackDB(Base):
         UniqueConstraint("rotation_id", "track_id", name="uq_rotation_track"),
         CheckConstraint(f"status IN {STATUSES}", name="ck_rotation_track_status"),
         CheckConstraint(
-            f"removed_by IS NULL OR removed_by IN ('{REMOVED_BY_USER}', '{REMOVED_BY_EXTERNAL}')",
+            f"removed_by IS NULL OR removed_by IN {REMOVED_BY}",
             name="ck_rotation_track_removed_by",
         ),
         Index("ix_rotation_track_rotation_status", "rotation_id", "status"),

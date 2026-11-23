@@ -46,6 +46,11 @@ The backend has 63 tests (SQLite plus a fake Spotify). The frontend builds clean
 - Admin page for curating picks (`/admin/picks`, for accounts in `ADMIN_SPOTIFY_IDS`). Migration `0004`.
 - **To do by hand:** set `ADMIN_SPOTIFY_IDS` locally and in Vercel, then log in again to grant the new Spotify scopes.
 
+## Auto rotations (built 2026-11-23)
+- A new rotation kind, created from scratch, that keeps its playlist at a target size (30/50/100/200) and rotates a share of it out on a schedule (default: 50 songs, 20%, weekly). It restocks from For you, occasional PlayLS picks, and songs that rotated out 4+ weeks ago. Rules are in DESIGN.md, "Auto rotations". Migration `0009` (applied).
+- Runs whenever the app syncs the rotation, and from a daily Vercel cron.
+- **To do by hand:** set `CRON_SECRET` in Vercel (Production), then redeploy. Without it the cron route stays disabled, and auto rotations only turn over when you open the app.
+
 ## Next
 - Stats derived from review history.
 - A recommendation system that doesn't depend on the Spotify API ("For you" is the current stand-in).

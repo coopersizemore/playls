@@ -51,20 +51,25 @@ const RotationCard = ({ rotation }) => {
             <Box minWidth={0}>
               <Typography variant="h6" noWrap>{rotation.name}</Typography>
               <Typography variant="body2" color="text.secondary">
-                {rotation.active_count} songs · every {formatInterval(rotation.interval_hours)}
+                {rotation.kind === 'auto'
+                  ? `Auto · ${rotation.active_count}/${rotation.target_size} songs · ${rotation.rotate_percent}% every ${formatInterval(rotation.interval_hours)}`
+                  : `${rotation.active_count} songs · every ${formatInterval(rotation.interval_hours)}`}
               </Typography>
             </Box>
           </Box>
           <Typography>
-            {due === 0
+            {rotation.kind === 'auto'
+              ? `${due} song${due === 1 ? '' : 's'} rotating out ${relativeDays(rotation.next_rotation_at)}`
+              : due === 0
               ? 'Nothing due right now'
               : ready > 0
                 ? `${ready} song${ready === 1 ? '' : 's'} ready to review today`
                 : 'Done for today'}
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            {due === 0 && rotation.next_due_at && `Next song due ${relativeDays(rotation.next_due_at)}`}
-            {due > ready && `${due} due in total${rotation.daily_limit ? ` · up to ${rotation.daily_limit} a day` : ''}`}
+            {rotation.kind === 'auto' && 'Reviewing is optional'}
+            {rotation.kind !== 'auto' && due === 0 && rotation.next_due_at && `Next song due ${relativeDays(rotation.next_due_at)}`}
+            {rotation.kind !== 'auto' && due > ready && `${due} due in total${rotation.daily_limit ? ` · up to ${rotation.daily_limit} a day` : ''}`}
           </Typography>
           {!rotation.sync_ok && (
             <Box display="flex" alignItems="center" mt={1} color="warning.main">
@@ -75,10 +80,10 @@ const RotationCard = ({ rotation }) => {
         </CardContent>
       </ButtonBase>
       <CardActions sx={{ px: 2, pb: 2, gap: 1 }}>
-        <Badge badgeContent={ready} color="error" max={999}>
+        <Badge badgeContent={rotation.kind === 'auto' ? 0 : ready} color="error" max={999}>
           <Button variant="contained" startIcon={<Autorenew />} component={RouterLink}
             to={`/rotation/${rotation.id}/review`} disabled={due === 0}>
-            {due > 0 && ready === 0 ? 'Rotate more' : 'Rotate'}
+            {rotation.kind === 'auto' ? 'Review' : due > 0 && ready === 0 ? 'Rotate more' : 'Rotate'}
           </Button>
         </Badge>
         <Button variant="outlined" color="inherit" startIcon={<AddCircleOutline />} component={RouterLink}
@@ -112,7 +117,7 @@ const Home = () => {
 
   if (!user) return <Landing login={login} />;
 
-  const totalReady = (rotations || []).reduce((sum, r) => sum + r.ready_today, 0);
+  const totalReady = (rotations || []).reduce((sum, r) => sum + (r.kind === 'auto' ? 0 : r.ready_today), 0);
 
   return (
     <Layout>

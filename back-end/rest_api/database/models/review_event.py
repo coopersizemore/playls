@@ -9,7 +9,12 @@ SUPER_KEEP = "super_keep"  # comes due at SUPER_KEEP_MULTIPLIER x the interval
 SKIP = "skip"
 REMOVE = "remove"
 UNDO = "undo"
-ACTIONS = (KEEP, SUPER_KEEP, SKIP, REMOVE, UNDO)
+# Recorded by auto rotations (not user decisions: they never count toward the daily limit
+# and can't be undone)
+ROTATED_OUT = "rotated_out"
+AUTO_ADDED = "auto_added"
+SYSTEM_ACTIONS = (ROTATED_OUT, AUTO_ADDED)
+ACTIONS = (KEEP, SUPER_KEEP, SKIP, REMOVE, UNDO, ROTATED_OUT, AUTO_ADDED)
 KEEP_ACTIONS = (KEEP, SUPER_KEEP)
 
 

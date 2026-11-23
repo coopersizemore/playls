@@ -8,7 +8,6 @@ import {
   Card,
   CardContent,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -28,6 +27,7 @@ import { Delete, Edit, MusicNote, Search as SearchIcon } from '@mui/icons-materi
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
 import { Layout } from './Layout';
+import { ListSkeleton } from './Skeletons';
 
 // Dates are whole local days. The API's window is [starts_at, ends_at), so a pick that
 // "ends Nov 30" is sent as ending at local midnight starting Dec 1.
@@ -178,7 +178,7 @@ const AdminPicks = () => {
   };
 
   return (
-    <Layout maxWidth="md">
+    <Layout maxWidth="md" back="/">
       <Typography variant="h4" component="h1" gutterBottom>Curate PlayLS picks</Typography>
       <Typography color="text.secondary" paragraph>
         Picks show up for every user under Restock → PlayLS picks while they're active.
@@ -240,7 +240,7 @@ const AdminPicks = () => {
 
       <Typography variant="h6" gutterBottom>Current picks</Typography>
       {picks === null ? (
-        <Box textAlign="center" mt={3}><CircularProgress /></Box>
+        <ListSkeleton count={4} />
       ) : picks.length === 0 ? (
         <Typography color="text.secondary">No picks yet.</Typography>
       ) : (

@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -29,6 +28,7 @@ import {
 } from '@mui/material';
 import { CreateNewFolder, LibraryMusic, MusicNote } from '@mui/icons-material';
 import { api, errorMessage } from '../api';
+import { ListSkeleton } from './Skeletons';
 
 // ---------- interval (stored in hours) ----------
 
@@ -185,7 +185,7 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
 
         {mode === 'existing' ? (
           playlists === null ? (
-            <Box textAlign="center" my={3}><CircularProgress size={28} /></Box>
+            <ListSkeleton count={5} dense />
           ) : available.length === 0 ? (
             <Typography color="text.secondary">
               No playlists available. You can rotate playlists you own or collaborate on that don't already have a rotation.
@@ -393,8 +393,8 @@ export const RemoveUnplayableDialog = ({ rotation, onClose, onDone }) => {
           </Alert>
         ) : tracks === null ? (
           <Box textAlign="center" my={3}>
-            <CircularProgress size={28} />
-            <Typography color="text.secondary" variant="body2" mt={1}>Checking every song with Spotify…</Typography>
+            <Typography color="text.secondary" variant="body2" mb={1}>Checking every song with Spotify…</Typography>
+            <ListSkeleton count={3} dense />
           </Box>
         ) : tracks.length === 0 ? (
           <Typography>Every song in “{rotation?.name}” is playable. Nothing to remove.</Typography>

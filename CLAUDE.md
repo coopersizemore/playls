@@ -18,7 +18,16 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
   - `database/encryption.py` — `EncryptedText` (Fernet, `TOKEN_ENCRYPTION_KEY`) for the Spotify tokens.
   - `clock.py` — `utcnow()`. All timestamps are **naive UTC**; use it instead of `datetime.utcnow()`.
 - `back-end/alembic/` — migrations. Run `alembic upgrade head` from `back-end/` (with `.venv`). Local and prod share the DB, so a migration applies to prod. New tables must `ENABLE ROW LEVEL SECURITY` in their migration (no policies; this blocks Supabase's Data API). `alembic check` verifies models match migrations.
-- `playls_front_end/` — CRA (react-scripts 5), React 19, MUI 7 (`Grid` uses the `size` prop), react-router 7, axios. Pages in `src/components/`: Home is the single dashboard (rotation cards plus create/edit/delete dialogs from `RotationDialogs.js`, which also holds `IntervalPicker`/`formatInterval`); then Review, Restock (deck tabs plus Search), History, Settings and AdminPicks. Shared chrome, `RequireAuth` and date helpers in `Layout.js`; API calls in `src/api.js` (`api.*`, `flushOnExit`, `errorMessage`). Auth state in `src/contexts/AuthContext.js` (asks `GET /api/auth/me` on load; it never sees a token).
+- `playls_front_end/` — CRA (react-scripts 5), React 19, MUI 7 (`Grid` uses the `size` prop), react-router 7, axios. Pages in `src/components/`, mobile-first and styled after the owner's Figma wireframes (light theme in `src/theme.js`: IBM Plex Mono text, Roboto controls, green `#7ED34E`, loaded from Google Fonts in `public/index.html`):
+  - **Home**: rotation cards with only Rotate and Restock. Tapping a card opens the rotation. Creating a rotation happens here.
+  - **RotationPage** (`/rotation/:id`): cover, stats, tiles (Rotate with the due badge, Settings menu with edit / review all / reset / remove unavailable / delete, Spotify link, Restock), and Current songs / History tabs (`?tab=history`). `History.js` exports the embeddable `HistoryList`; its old route redirects to the tab.
+  - **Review**: a `SwipeCard` (pointer events, no library; right = keep, left = remove, flies off in that direction, also triggered by buttons and keys) with album art, the days-since stat, and a compact Spotify embed.
+  - **Restock**: the same swipe card for its decks.
+  - **Settings** and **AdminPicks**.
+  - **Light / dark mode**: `src/colorMode.js` (`ColorModeProvider`, `useColorMode`). The preference (light / dark / system) is kept in localStorage. Toggle it from the ☰ menu or Settings → Appearance. Use theme tokens (`placeholder.main`, `surface.main`, `background.*`, `text.*`), never hex colors, except `ON_GREEN` text on green surfaces.
+  - **Loading states** use shaped skeletons from `Skeletons.js`, not spinners.
+  - `RotationDialogs.js` holds the create / edit / reset / remove-unavailable / delete dialogs plus `IntervalPicker` and `formatInterval`.
+  - Shared chrome, `RequireAuth` and date helpers in `Layout.js`; API calls in `src/api.js` (`api.*`, `flushOnExit`, `errorMessage`). Auth state in `src/contexts/AuthContext.js` (asks `GET /api/auth/me` on load; it never sees a token).
 - Root `start-*.bat`/`.sh` launch the dev servers.
 
 ## API (all under /api)

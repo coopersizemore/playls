@@ -5,10 +5,7 @@ import {
   Avatar,
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
-  CircularProgress,
   IconButton,
   InputAdornment,
   List,
@@ -24,7 +21,9 @@ import {
 import { Add, Block, Check, Close, MusicNote, Refresh, Search as SearchIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
-import { Layout, RotationHeader, SpotifyEmbed } from './Layout';
+import { AlbumArt, Layout, RotationHeader, SpotifyEmbed } from './Layout';
+import SwipeCard, { EXIT_MS } from './SwipeCard';
+import { ListSkeleton, SongCardSkeleton } from './Skeletons';
 
 const TABS = [
   { source: 'bring_back', label: 'Bring back', empty: 'Nothing to bring back yet. Songs you remove from this rotation show up here, weighted more strongly the longer they have been gone.' },
@@ -42,6 +41,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   const [added, setAdded] = useState(0);
   const [error, setError] = useState('');
   const [blocked, setBlocked] = useState(null); // { track, index } for the Undo toast
+  const [exit, setExit] = useState(null); // card animation: right = add, left = not now / block
 
   const load = useCallback(async (refresh = false) => {
     setDeck(null);
@@ -64,6 +64,8 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
     if (!current || busy) return;
     setBusy(true);
     setError('');
+    setExit(action === 'add' ? 'right' : 'left');
+    const animation = new Promise((r) => setTimeout(r, EXIT_MS));
     try {
       if (action === 'add') {
         await api.restockAdd(rotationId, current.track_id, source);
@@ -77,11 +79,13 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
         await api.restockSkip(rotationId, current.track_id, source);
         setBlocked(null);
       }
+      await animation;
       setIndex((i) => i + 1);
     } catch (e) {
       if (e?.response?.status === 409) setIndex((i) => i + 1); // already in the rotation
       else setError(errorMessage(e, "Couldn't save that. Please try again."));
     } finally {
+      setExit(null);
       setBusy(false);
     }
   }, [current, busy, index, rotationId, source, onAdded]);
@@ -108,7 +112,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
     return () => window.removeEventListener('keydown', onKey);
   }, [act]);
 
-  if (deck === null) return <Box textAlign="center" mt={6}><CircularProgress /></Box>;
+  if (deck === null) return <SongCardSkeleton stat={false} />;
 
   return (
     <Box>
@@ -137,15 +141,18 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
           <Typography color="text.secondary" textAlign="center" mb={1}>
             {index + 1} of {items.length}{added ? ` · added ${added}` : ''}
           </Typography>
-          <Card sx={{ mb: 3 }}>
-            <SpotifyEmbed trackId={current.track_id} title={current.title} />
-            <CardContent>
-              <Typography variant="h5" component="h2" gutterBottom>{current.title}</Typography>
-              <Typography color="text.secondary" gutterBottom>{current.artists}</Typography>
-              {current.album && <Typography variant="body2" color="text.secondary">{current.album}</Typography>}
-              {current.reason && <Chip size="small" label={current.reason} sx={{ mt: 2 }} />}
-            </CardContent>
-          </Card>
+          <Box sx={{ px: { xs: 3, sm: 7 } }}>
+            <SwipeCard key={current.track_id} exit={exit} disabled={busy}
+              onSwipe={(dir) => act(dir === 'right' ? 'add' : 'skip')}>
+              <AlbumArt src={current.image_url} alt={current.album || current.title} />
+            </SwipeCard>
+          </Box>
+          <Box textAlign="center" mt={2.5} mb={2}>
+            <Typography variant="h5" component="h2" sx={{ overflowWrap: 'anywhere' }}>{current.title}</Typography>
+            <Typography mt={0.5}>{current.artists}</Typography>
+            {current.reason && <Chip size="small" label={current.reason} sx={{ mt: 1.5 }} />}
+          </Box>
+          <Box mb={2.5}><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></Box>
           <Box display="flex" justifyContent="center" gap={2}>
             <Button variant="outlined" size="large" startIcon={<Close />} onClick={() => act('skip')}
               disabled={busy} sx={{ minWidth: 140 }}>Not now</Button>
@@ -161,7 +168,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
             </Box>
           )}
           <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={2}>
-            Keyboard: ← not now · → add. Adding puts the song in your Spotify playlist right away.
+            Swipe or drag: left = not now, right = add (or ← / → keys). Adding puts the song in your Spotify playlist right away.
           </Typography>
         </>
       )}
@@ -262,7 +269,7 @@ const SearchView = ({ rotationId, onAdded }) => {
           );
         })}
       </List>
-      {loading && <Box textAlign="center" my={2}><CircularProgress size={28} /></Box>}
+      {loading && <ListSkeleton count={results.length ? 3 : 6} />}
       {nextOffset !== null && !loading && results.length > 0 && (
         <Box textAlign="center" mt={1}>
           <Button onClick={() => run(submitted, nextOffset)}>Load more</Button>
@@ -286,7 +293,7 @@ const Restock = () => {
   const current = TABS[tab];
 
   return (
-    <Layout maxWidth="sm">
+    <Layout maxWidth="sm" back={`/rotation/${rotationId}`}>
       <RotationHeader rotation={rotation} title={`Restock${rotation ? `: ${rotation.name}` : ''}`} />
       <Typography color="text.secondary" mb={2}>
         {addedTotal > 0

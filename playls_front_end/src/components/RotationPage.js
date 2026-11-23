@@ -1,0 +1,269 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import {
+  Alert,
+  Avatar,
+  Badge,
+  Box,
+  ButtonBase,
+  Chip,
+  Divider,
+  InputAdornment,
+  ListItemIcon,
+  Menu,
+  MenuItem,
+  Tab,
+  Tabs,
+  TextField,
+  Typography,
+} from '@mui/material';
+import {
+  AddCircleOutline,
+  Autorenew,
+  Delete,
+  Edit,
+  MusicNote,
+  PlaylistRemove,
+  RestartAlt,
+  Search,
+  Settings as SettingsIcon,
+  Star,
+  SyncProblem,
+  ViewList,
+} from '@mui/icons-material';
+import { api, errorMessage } from '../api';
+import { GREEN, ON_GREEN } from '../theme';
+import { HistoryList } from './History';
+import { Layout, PlaylistCover, formatDuration, relativeDays } from './Layout';
+import {
+  DeleteRotationDialog,
+  EditRotationDialog,
+  RemoveUnplayableDialog,
+  ResetDueDialog,
+  formatInterval,
+} from './RotationDialogs';
+import { RotationPageSkeleton, SongRowsSkeleton } from './Skeletons';
+
+// Spotify's mark, simplified (MUI has no brand icons)
+const SpotifyMark = () => (
+  <Box component="svg" viewBox="0 0 24 24" sx={{ width: 34, height: 34 }} aria-hidden>
+    <circle cx="12" cy="12" r="12" fill="#191414" />
+    <path d="M6.5 9.4c3.7-1.1 8-.8 11.2 1M7.2 12.4c3-.8 6.4-.5 9 .9M7.8 15.2c2.4-.6 5-.4 7 .7"
+      stroke={GREEN} strokeWidth="1.6" strokeLinecap="round" fill="none" />
+  </Box>
+);
+
+// The white (or green) action tiles from the wireframes
+const Tile = ({ icon, label, onClick, href, green = false, badge = 0, disabled = false }) => (
+  <Badge badgeContent={badge} color="error" max={999} overlap="rectangular"
+    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} sx={{ width: '100%' }}>
+    <ButtonBase
+      onClick={onClick}
+      disabled={disabled}
+      {...(href ? { component: 'a', href, target: '_blank', rel: 'noopener noreferrer' } : {})}
+      sx={{
+        width: '100%', height: 72, px: 2.5, gap: 2, justifyContent: 'flex-start', borderRadius: 2,
+        bgcolor: green ? GREEN : 'background.paper', color: green ? ON_GREEN : 'text.primary',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+        opacity: disabled ? 0.5 : 1, transition: 'transform 120ms', '&:active': { transform: 'scale(0.98)' },
+      }}
+    >
+      {icon}
+      <Typography sx={{ fontFamily: '"Roboto", sans-serif', fontSize: '1.15rem', fontWeight: 500 }}>{label}</Typography>
+    </ButtonBase>
+  </Badge>
+);
+
+const DueLabel = ({ track }) => {
+  if (track.status === 'pending_removal') return <Chip size="small" label="Removing" color="error" />;
+  if (!track.due_at) return null;
+  const due = new Date(`${track.due_at}Z`) <= new Date();
+  return (
+    <Typography variant="caption" sx={{ fontWeight: due ? 700 : 400, whiteSpace: 'nowrap', ml: 1 }}>
+      {due ? 'Due' : relativeDays(track.due_at)}
+    </Typography>
+  );
+};
+
+const SongRow = ({ track }) => (
+  <Box sx={{
+    display: 'flex', alignItems: 'center', gap: 2, px: 1.5, py: 1.25, borderRadius: 999,
+    bgcolor: track.status === 'pending_removal' ? 'action.disabledBackground' : GREEN,
+    color: track.status === 'pending_removal' ? 'text.primary' : ON_GREEN,
+  }}>
+    <Avatar variant="rounded" src={track.image_url || undefined}
+      sx={{ width: 52, height: 52, borderRadius: 2.5, bgcolor: 'placeholder.main', color: 'text.secondary' }}>
+      <MusicNote />
+    </Avatar>
+    <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+      <Typography noWrap sx={{ fontWeight: 500 }}>
+        {track.keep_multiplier > 1 && <Star sx={{ fontSize: 14, mr: 0.5, verticalAlign: '-2px' }} />}
+        {track.title}
+      </Typography>
+      <Typography noWrap variant="body2" sx={{ opacity: 0.75 }}>
+        {track.artists}
+        {track.is_playable === false && ' · unavailable'}
+      </Typography>
+    </Box>
+    <Box pr={1.5}><DueLabel track={track} /></Box>
+  </Box>
+);
+
+// A rotation, opened like a Spotify playlist: cover, stats, actions, songs and history
+const RotationPage = () => {
+  const { rotationId } = useParams();
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'history' ? 1 : 0;
+  const [rotation, setRotation] = useState(null);
+  const [tracks, setTracks] = useState(null);
+  const [lastReviewed, setLastReviewed] = useState(undefined);
+  const [filter, setFilter] = useState('');
+  const [error, setError] = useState('');
+  const [menuAnchor, setMenuAnchor] = useState(null);
+  const [dialog, setDialog] = useState(null); // 'edit' | 'reset' | 'unplayable' | 'delete'
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const summary = await api.rotation(rotationId); // syncs with Spotify first
+      setRotation(summary);
+      const [songs, history] = await Promise.all([api.tracks(rotationId), api.history(rotationId)]);
+      setTracks(songs);
+      setLastReviewed(history[0]?.created_at || null);
+    } catch (e) {
+      if (e?.response?.status === 404) navigate('/', { replace: true });
+      setError(errorMessage(e, 'Failed to load this rotation.'));
+      setTracks((t) => t || []);
+    }
+  }, [rotationId, navigate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return tracks || [];
+    return (tracks || []).filter((t) => `${t.title} ${t.artists || ''} ${t.album || ''}`.toLowerCase().includes(q));
+  }, [tracks, filter]);
+
+  const closeDialog = (changed) => { setDialog(null); if (changed) load(); };
+  const menuItem = (icon, label, onClick, props = {}) => (
+    <MenuItem onClick={() => { setMenuAnchor(null); onClick(); }} {...props}>
+      <ListItemIcon>{icon}</ListItemIcon>{label}
+    </MenuItem>
+  );
+
+  if (!rotation) {
+    return (
+      <Layout maxWidth="sm" back="/">
+        {error ? <Alert severity="error">{error}</Alert> : <RotationPageSkeleton />}
+      </Layout>
+    );
+  }
+
+  const totalMs = (tracks || []).reduce((sum, t) => sum + (t.duration_ms || 0), 0);
+  const due = rotation.due_count;
+
+  return (
+    <Layout maxWidth="sm" back="/">
+      <Box display="flex" flexDirection="column" alignItems="center">
+        <PlaylistCover rotation={rotation} size={220} radius={3} shadow />
+        <Typography variant="h5" component="h1" textAlign="center" mt={3} sx={{ overflowWrap: 'anywhere' }}>
+          {rotation.name}
+        </Typography>
+      </Box>
+
+      <Box display="flex" justifyContent="space-between" gap={1} mt={2.5} mb={3} px={0.5} flexWrap="wrap">
+        <Typography variant="body2">{rotation.active_count} songs</Typography>
+        <Typography variant="body2">
+          {lastReviewed === undefined ? '' : lastReviewed ? `Last reviewed ${relativeDays(lastReviewed)}` : 'Not reviewed yet'}
+        </Typography>
+        <Typography variant="body2">{tracks ? formatDuration(totalMs) : ''}</Typography>
+      </Box>
+
+      {!rotation.sync_ok && (
+        <Alert severity="warning" icon={<SyncProblem />} sx={{ mb: 2 }}>
+          Couldn't reach Spotify, so this may be out of date.
+        </Alert>
+      )}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2.5} mb={1}>
+        <Tile
+          icon={<Avatar sx={{ bgcolor: 'placeholder.main', color: 'text.primary' }}><Autorenew /></Avatar>}
+          label="Rotate"
+          badge={rotation.ready_today}
+          disabled={due === 0}
+          onClick={() => navigate(`/rotation/${rotation.id}/review`)}
+        />
+        <Tile icon={<SettingsIcon sx={{ fontSize: 34 }} />} label="Settings" onClick={(e) => setMenuAnchor(e.currentTarget)} />
+        <Tile icon={<SpotifyMark />} label="Spotify" green
+          href={`https://open.spotify.com/playlist/${encodeURIComponent(rotation.playlist_id)}`} />
+        <Tile icon={<AddCircleOutline sx={{ fontSize: 34 }} />} label="Restock"
+          onClick={() => navigate(`/rotation/${rotation.id}/restock`)} />
+      </Box>
+      <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mb={2}>
+        {due === 0
+          ? (rotation.next_due_at ? `Next song due ${relativeDays(rotation.next_due_at)}` : 'Nothing due')
+          : `${due} due · every ${formatInterval(rotation.interval_hours)}`}
+      </Typography>
+
+      <Menu anchorEl={menuAnchor} open={!!menuAnchor} onClose={() => setMenuAnchor(null)}>
+        {menuItem(<Edit fontSize="small" />, 'Edit rotation', () => setDialog('edit'))}
+        {menuItem(<ViewList fontSize="small" />, 'Review all songs',
+          () => navigate(`/rotation/${rotation.id}/review?all=1`), { disabled: rotation.active_count === 0 })}
+        {menuItem(<RestartAlt fontSize="small" />, 'Reset all songs to not due…', () => setDialog('reset'),
+          { disabled: rotation.active_count === 0 })}
+        {menuItem(<PlaylistRemove fontSize="small" />, 'Remove unavailable songs…', () => setDialog('unplayable'),
+          { disabled: rotation.active_count === 0 })}
+        <Divider />
+        {menuItem(<Delete fontSize="small" color="error" />, 'Delete rotation', () => setDialog('delete'),
+          { sx: { color: 'error.main' } })}
+      </Menu>
+
+      <Box sx={{ bgcolor: 'surface.main', borderRadius: 4, p: { xs: 1.5, sm: 2.5 }, boxShadow: 'inset 0 0 0 1px rgba(127,127,127,0.12)' }}>
+        <Tabs value={tab} onChange={(_, v) => setParams(v === 1 ? { tab: 'history' } : {}, { replace: true })}
+          variant="fullWidth" sx={{ mb: 2 }}>
+          <Tab label="Current songs" />
+          <Tab label="History" />
+        </Tabs>
+
+        {tab === 0 ? (
+          tracks === null ? (
+            <SongRowsSkeleton />
+          ) : (
+            <>
+              {tracks.length > 8 && (
+                <TextField fullWidth size="small" placeholder="Filter songs" value={filter}
+                  onChange={(e) => setFilter(e.target.value)} sx={{ mb: 2 }}
+                  InputProps={{ startAdornment: <InputAdornment position="start"><Search /></InputAdornment> }} />
+              )}
+              {shown.length === 0 ? (
+                <Typography color="text.secondary" textAlign="center" py={3}>
+                  {tracks.length === 0 ? 'No songs yet. Add some in Spotify or with Restock.' : 'No songs match.'}
+                </Typography>
+              ) : (
+                <Box display="flex" flexDirection="column" gap={1.5}>
+                  {shown.map((t) => <SongRow key={t.track_id} track={t} />)}
+                </Box>
+              )}
+            </>
+          )
+        ) : (
+          <HistoryList rotationId={rotation.id} onChanged={load} />
+        )}
+      </Box>
+
+      <EditRotationDialog rotation={dialog === 'edit' ? rotation : null} onClose={() => closeDialog(false)}
+        onSaved={() => closeDialog(true)} />
+      <ResetDueDialog rotation={dialog === 'reset' ? rotation : null} onClose={() => closeDialog(false)}
+        onDone={() => closeDialog(true)} />
+      <RemoveUnplayableDialog rotation={dialog === 'unplayable' ? rotation : null} onClose={() => closeDialog(false)}
+        onDone={() => closeDialog(true)} />
+      <DeleteRotationDialog rotation={dialog === 'delete' ? rotation : null} onClose={() => closeDialog(false)}
+        onDeleted={() => navigate('/', { replace: true })} />
+    </Layout>
+  );
+};
+
+export default RotationPage;

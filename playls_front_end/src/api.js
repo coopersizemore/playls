@@ -29,6 +29,7 @@ export const api = {
   // Re-reads the whole playlist, then lists songs Spotify reports as unavailable
   unplayable: (id) => data(axios.get(`${API_BASE}/rotation/${id}/unplayable`)),
   removeUnplayable: (id) => data(axios.post(`${API_BASE}/rotation/${id}/remove-unplayable`)),
+  tracks: (id) => data(axios.get(`${API_BASE}/rotation/${id}/tracks`)),
   review: (id, trackId, action) =>
     data(axios.post(`${API_BASE}/rotation/${id}/review`, { track_id: trackId, action })),
   flush: (id) => data(axios.post(`${API_BASE}/rotation/${id}/flush`)),

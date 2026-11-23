@@ -18,14 +18,38 @@ import {
   ListItemAvatar,
   ListItemText,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import { MusicNote } from '@mui/icons-material';
+import { DarkMode, LightMode, MusicNote, SettingsBrightness } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { useColorMode } from '../colorMode';
 import { api, errorMessage } from '../api';
 import { Layout } from './Layout';
+import { ListSkeleton } from './Skeletons';
 
 const DEFAULT_LIMIT = 50;
+
+const AppearanceCard = () => {
+  const { preference, setPreference } = useColorMode();
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h6" gutterBottom>Appearance</Typography>
+        <ToggleButtonGroup exclusive value={preference} onChange={(_, v) => v && setPreference(v)}
+          aria-label="Color mode" sx={{ flexWrap: 'wrap' }}>
+          <ToggleButton value="light"><LightMode fontSize="small" sx={{ mr: 1 }} />Light</ToggleButton>
+          <ToggleButton value="dark"><DarkMode fontSize="small" sx={{ mr: 1 }} />Dark</ToggleButton>
+          <ToggleButton value="system"><SettingsBrightness fontSize="small" sx={{ mr: 1 }} />System</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography variant="body2" color="text.secondary" mt={1.5}>
+          System follows your device's setting. Saved in this browser.
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+};
 
 // Songs offered for review per rotation per day (null = no limit)
 const ReviewLimitCard = () => {
@@ -122,6 +146,7 @@ const BlockedSongsCard = () => {
           These never come up in Restock. They stay in your rotation history, and you can still add them by search.
         </Typography>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {songs === null && <ListSkeleton count={2} dense />}
         {songs && songs.length === 0 && <Typography color="text.secondary">None.</Typography>}
         {songs && songs.length > 0 && (
           <List dense sx={{ maxHeight: 320, overflow: 'auto' }}>
@@ -164,10 +189,11 @@ const Settings = () => {
   };
 
   return (
-    <Layout maxWidth="sm">
+    <Layout maxWidth="sm" back="/">
       <Typography variant="h4" component="h1" gutterBottom>Settings</Typography>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
+      <AppearanceCard />
       <ReviewLimitCard />
       <BlockedSongsCard />
 

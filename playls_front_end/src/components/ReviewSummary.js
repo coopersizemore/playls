@@ -106,11 +106,11 @@ const ReviewSummary = ({ rotationId, rotation, log, flushed }) => {
       )}
 
       <Box display="flex" justifyContent="center" gap={2} mt={3} flexWrap="wrap">
-        <Button variant="contained" component={RouterLink} to="/">Back to home</Button>
+        <Button variant="contained" component={RouterLink} to={`/rotation/${rotationId}`}>Back to rotation</Button>
         {removed.length > 0 && (
           <Button variant="outlined" component={RouterLink} to={`/rotation/${rotationId}/restock`}>Restock</Button>
         )}
-        <Button component={RouterLink} to={`/rotation/${rotationId}/history`}>History</Button>
+        <Button component={RouterLink} to={`/rotation/${rotationId}?tab=history`}>History</Button>
       </Box>
     </Box>
   );

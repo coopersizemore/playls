@@ -1,24 +1,22 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import {
   Alert,
   Avatar,
   Box,
   Button,
   Chip,
-  CircularProgress,
   List,
   ListItem,
   ListItemAvatar,
   ListItemText,
   Snackbar,
-  Tab,
-  Tabs,
   Typography,
 } from '@mui/material';
 import { Check, MusicNote, Replay, Undo } from '@mui/icons-material';
 import { api, errorMessage } from '../api';
-import { Layout, RotationHeader, formatDate } from './Layout';
+import { formatDate } from './Layout';
+import { ListSkeleton } from './Skeletons';
 
 const TABS = [
   { label: 'All', filter: () => true },
@@ -35,9 +33,9 @@ const ACTION_CHIP = {
   undo: { label: 'Undo', color: 'default' },
 };
 
-const History = () => {
-  const { rotationId } = useParams();
-  const [rotation, setRotation] = useState(null);
+// A rotation's review history with Add back / Undo removal actions.
+// Embedded in the rotation page's History tab. `onChanged` lets the page refresh its counts.
+export const HistoryList = ({ rotationId, onChanged }) => {
   const [events, setEvents] = useState(null);
   const [tab, setTab] = useState(0);
   const [error, setError] = useState('');
@@ -47,8 +45,8 @@ const History = () => {
   const [toast, setToast] = useState('');
 
   const load = useCallback(() => {
-    Promise.all([api.rotation(rotationId, { sync: false }), api.history(rotationId)])
-      .then(([summary, history]) => { setRotation(summary); setEvents(history); setStatusOverride({}); })
+    api.history(rotationId)
+      .then((history) => { setEvents(history); setStatusOverride({}); })
       .catch((e) => { setError(errorMessage(e, 'Failed to load history.')); setEvents([]); });
   }, [rotationId]);
 
@@ -64,6 +62,7 @@ const History = () => {
       await api.restockAdd(rotationId, track.track_id, 'bring_back');
       setStatusOverride((s) => ({ ...s, [track.track_id]: 'active' }));
       setToast(`Added “${track.title}” back to the playlist`);
+      onChanged?.();
     } catch (e) {
       if (e?.response?.status === 409) setStatusOverride((s) => ({ ...s, [track.track_id]: 'active' }));
       else setError(errorMessage(e, "Couldn't add that song back."));
@@ -80,6 +79,7 @@ const History = () => {
       await api.review(rotationId, track.track_id, 'undo');
       setStatusOverride((s) => ({ ...s, [track.track_id]: 'active' }));
       setToast(`Kept “${track.title}” in the playlist`);
+      onChanged?.();
     } catch (e) {
       // Most likely the removal reached Spotify in the meantime: reload to offer "Add back"
       setError(errorMessage(e, "Couldn't undo that removal."));
@@ -116,17 +116,19 @@ const History = () => {
   };
 
   return (
-    <Layout maxWidth="md">
-      <RotationHeader rotation={rotation} title={rotation ? `${rotation.name}: History` : 'History'} />
+    <Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
-        {TABS.map((t) => <Tab key={t.label} label={t.label} />)}
-      </Tabs>
+      <Box display="flex" gap={1} flexWrap="wrap" mb={1}>
+        {TABS.map((t, i) => (
+          <Chip key={t.label} label={t.label} onClick={() => setTab(i)}
+            color={tab === i ? 'primary' : 'default'} variant={tab === i ? 'filled' : 'outlined'} />
+        ))}
+      </Box>
 
       {events === null ? (
-        <Box textAlign="center" mt={6}><CircularProgress /></Box>
+        <ListSkeleton count={6} />
       ) : shown.length === 0 ? (
-        <Typography color="text.secondary">No reviews yet.</Typography>
+        <Typography color="text.secondary" py={2}>No reviews yet.</Typography>
       ) : (
         <List>
           {shown.map((e) => {
@@ -153,8 +155,14 @@ const History = () => {
       )}
 
       <Snackbar open={!!toast} autoHideDuration={4000} onClose={() => setToast('')} message={toast} />
-    </Layout>
+    </Box>
   );
+};
+
+// Old /rotation/:id/history links open the rotation page's History tab
+const History = () => {
+  const { rotationId } = useParams();
+  return <Navigate to={`/rotation/${rotationId}?tab=history`} replace />;
 };
 
 export default History;

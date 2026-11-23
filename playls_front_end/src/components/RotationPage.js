@@ -196,11 +196,11 @@ const RotationPage = () => {
           disabled={due === 0}
           onClick={() => navigate(`/rotation/${rotation.id}/review`)}
         />
-        <Tile icon={<SettingsIcon sx={{ fontSize: 34 }} />} label="Settings" onClick={(e) => setMenuAnchor(e.currentTarget)} />
-        <Tile icon={<SpotifyMark />} label="Spotify" green
-          href={`https://open.spotify.com/playlist/${encodeURIComponent(rotation.playlist_id)}`} />
         <Tile icon={<AddCircleOutline sx={{ fontSize: 34 }} />} label="Restock"
           onClick={() => navigate(`/rotation/${rotation.id}/restock`)} />
+        <Tile icon={<SpotifyMark />} label="Spotify" green
+          href={`https://open.spotify.com/playlist/${encodeURIComponent(rotation.playlist_id)}`} />
+        <Tile icon={<SettingsIcon sx={{ fontSize: 34 }} />} label="Settings" onClick={(e) => setMenuAnchor(e.currentTarget)} />
       </Box>
       <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mb={2}>
         {due === 0

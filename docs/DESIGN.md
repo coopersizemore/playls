@@ -131,6 +131,12 @@ Sources:
    Excluded: songs that are in, or were ever in, this rotation (those belong to Bring back). The deck blends known songs and discoveries about 2:1.
 4. **Search:** Spotify track search (10 per page, `offset` ≤ 1000), with songs already in the rotation flagged.
 
+**"Same song" matching** (all decks, the add check, auto restocks, and the "in another rotation" adjustment): a candidate matches a rotation row by track ID, **or** by `restock_logic.song_key` (title and first artist, ignoring case and spacing). Track IDs alone miss two cases:
+- **Relinked songs:** rows keep the playlist's original ID (`linked_from`), while top tracks, search and the library return the playable ID.
+- **Other releases:** the same song as a single, the album cut, or a deluxe edition.
+
+Adding a different track ID of a song that's already in the rotation returns 409. Versions with a different title (for example "- Live" or "- Remix") count as different songs.
+
 Suggestions need `user-top-read`, `user-read-recently-played` and `user-library-read`.
 - The scopes granted at login are stored in `users.granted_scopes`.
 - `/auth/me` returns `missing_scopes`, and the For you tab offers a Reconnect button. Accounts from before this change have to log in again.

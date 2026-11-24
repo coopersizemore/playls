@@ -281,3 +281,12 @@ def test_library_writes_use_query_uris_in_batches_of_40(db, user, monkeypatch):
     assert [(m, e) for m, e, _, _ in sent] == [("DELETE", "/me/library")] * 3 + [("PUT", "/me/library")]
     assert [len(p["uris"].split(",")) for _, _, p, _ in sent] == [40, 40, 5, 2]
     assert all(d is None for *_, d in sent)
+
+
+def test_for_you_skips_songs_already_liked(client, spotify, db, user):
+    rid = make_liked_rotation(client, spotify, db, user)["id"]
+    spotify.top[("tracks", "short_term")] = [track_object("l1"), track_object("fresh")]
+    r = client.get(f"/api/rotation/{rid}/restock/deck/suggested")
+    got = [c["track_id"] for c in r.json()["items"]]
+    assert "fresh" in got
+    assert not any(t.startswith("l") for t in got)  # every liked song is in the rotation

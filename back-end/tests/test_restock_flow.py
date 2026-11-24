@@ -6,7 +6,7 @@ import pytest
 from rest_api.clock import utcnow
 from rest_api.database.models import CuratedPickDB, RestockFeedbackDB, RotationTrackDB
 
-from helpers import new_rotation_id, restock_action, review, spotify_item, track_object
+from helpers import count_calls, new_rotation_id, restock_action, review, spotify_item, track_object
 
 
 def remove(client, rid, track_id):
@@ -387,3 +387,50 @@ def test_cannot_undo_an_add_after_reviewing_the_song(client, spotify, db):
     review(client, rid, "n1", "keep")
     assert undo(client, rid, "n1", "search").status_code == 409
     assert "n1" in playlist_ids(spotify)
+
+
+# ---------- the same song under another track id ----------
+
+def relinked_item(original_id, playable_id, name):
+    """A playlist entry Spotify relinked: the playlist holds original_id, shown as playable_id."""
+    item = spotify_item(playable_id, 5, name=name)
+    item["item"]["linked_from"] = {"id": original_id, "uri": f"spotify:track:{original_id}"}
+    return item
+
+
+def test_suggestions_skip_relinked_copies_of_rotation_songs(client, spotify, db):
+    # The rotation row is keyed on the playlist's original id; top tracks return the playable one
+    rid = new_rotation_id(client, spotify, [relinked_item("orig", "play", "Hit Song"), spotify_item("x", 5)])
+    spotify.top[("tracks", "short_term")] = [
+        track_object("play", name="Hit Song"),
+        track_object("album_cut", name="hit  song"),  # same song from another release
+        track_object("other", name="Different Song"),
+    ]
+    got = ids(deck(client, rid, "suggested"))
+    assert "play" not in got and "album_cut" not in got
+    assert "other" in got
+
+
+def test_search_marks_another_copy_as_in_rotation(client, spotify, db):
+    rid = new_rotation_id(client, spotify, [spotify_item("a", 5, name="Hit Song")])
+    spotify.search_results["hit"] = [track_object("a2", name="Hit Song"), track_object("b", name="Else")]
+    r = client.get(f"/api/rotation/{rid}/restock/search", params={"q": "hit"})
+    flags = {c["track_id"]: c["in_rotation"] for c in r.json()["items"]}
+    assert flags == {"a2": True, "b": False}
+
+
+def test_adding_another_copy_of_a_rotation_song_is_refused(client, spotify, db):
+    rid = new_rotation_id(client, spotify, [spotify_item("a", 5, name="Hit Song")])
+    spotify.catalog["a2"] = track_object("a2", name="Hit Song")
+    assert restock_action(client, rid, "add", "a2", "search").status_code == 409
+    assert count_calls(spotify, "add") == 0
+
+
+def test_a_removed_copy_can_still_be_suggested_as_bring_back_only(client, spotify, db):
+    # Removed songs belong to Bring back, so For you leaves every copy of them out
+    rid = new_rotation_id(client, spotify, [spotify_item("a", 5, name="Hit Song"), spotify_item("x", 5)])
+    remove(client, rid, "a")
+    client.post(f"/api/rotation/{rid}/flush")
+    spotify.top[("tracks", "short_term")] = [track_object("a2", name="Hit Song")]
+    assert "a2" not in ids(deck(client, rid, "suggested"))
+    assert ids(deck(client, rid, "bring_back")) == ["a"]

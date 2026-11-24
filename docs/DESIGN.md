@@ -245,10 +245,44 @@ Tweakable behavior, kept out of the way: each area of Settings shows what it did
   - `PUT /rotation/{id}` takes the override fields (null clears one; the auto-only ones return 400 on manual rotations).
   - `RotationOut` carries the effective `super_keep_multiplier`, `skip_hold_days` and `review_order`, plus the raw `overrides`.
 
+## Demo mode (2026-11-24)
+A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spotify's Development Mode allowlist is capped at 5 people, so this is how PlayLS is shown to more.
+- **Accounts:**
+  - A demo account is a `users` row with `provider = 'demo'` (`DEMO` in `database/models/user.py`). There's no new table.
+  - `POST /api/demo/start` creates and seeds one (`services/demo/demo_service.py`):
+    - a weekly manual "Daily Mix" with about 15 songs due, some history, 4 removed songs (for Bring back) and 2 unplayable ones;
+    - a weekly auto rotation of 30 songs.
+  - At most `DEMO_MAX_ACTIVE` (env, default 100) accounts exist at once; past that, start returns 503.
+  - Accounts are deleted 24 hours after creation (real time), by `purge_expired`, which runs on every start and in the daily cron. "End demo" deletes one right away.
+- **No Spotify:**
+  - `SpotifyService`'s public methods route demo users to `DemoSpotify` (`services/demo/demo_spotify.py`), which makes no network calls.
+  - `make_spotify_request` and `ensure_valid_spotify_token` raise for demo users, so nothing new can reach Spotify by accident.
+  - A demo playlist's contents are the rotation's own active and pending rows, and its snapshot is constant. Syncs short-circuit, and writes are no-ops that the services follow with their usual row updates.
+  - Before a rotation has rows, a sample playlist reads as its catalog tracks (the initial import).
+- **Catalog:**
+  - `services/demo/catalog.json` holds real tracks, so album art and Spotify's public preview embeds work. It has 3+ sample playlists and the "For you" signals.
+  - It's built once from the owner's account with `scripts/build_demo_catalog.py` and committed. Without it, start returns 503.
+  - Search matches over the catalog only.
+- **Sessions:**
+  - Demo requests carry `X-PlayLS-Demo: 1`. They're authenticated by the `playls_demo_session` cookie, a JWT with a `demo` claim.
+  - Each cookie only signs in its own kind of account, so a real session and a demo can be open side by side.
+  - The frontend serves every page again under `/demo/*` through a React Router `basename` (`src/demo.js`).
+- **Skip ahead a day:**
+  - It adds 24 hours to `users.demo_clock_offset_hours` (0015), up to 60 days.
+  - The auth dependency puts the offset on the request context, and `clock.utcnow()` adds it, so due dates, the daily limit, sync leases and auto rotations all move together.
+  - `real_utcnow()` (demo expiry, health rows) ignores it. The cron skips demo accounts, so it never mixes clocks.
+- **Cut from the demo:**
+  - Spotify login and reconnect prompts.
+  - Liked Songs rotations (400).
+  - The "open in Spotify" tile.
+  - Usage analytics (consent is preset to false and can't be turned on).
+  - Admin pages (a demo account is never an admin) and Delete account (replaced by End demo).
+  - Demo accounts are left out of `/admin/stats`. Their requests still produce health rows, which have no user.
+
 ## Data model (Alembic revisions 0001–0012)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
-  - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
+  - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name` (mirrors the Spotify playlist name: every sync copies it from Spotify, and a rename in PlayLS renames the Spotify playlist first, which only the owner can do; Liked Songs keeps its PlayLS name), `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
   - `snapshot_id`, `last_synced_at`, `created_at`
   - Auto rotations (0009): `kind` (`manual` | `auto`), `target_size`, `rotate_percent`, `last_rotated_at`
 - `rotation_track`, which replaces `song`:

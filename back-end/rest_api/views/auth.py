@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..clock import utcnow
 from ..database.config import get_db
-from ..database.models.user import UserDB
+from ..database.models.user import DEMO, UserDB
 from ..models.user import User
 from ..services.auth_service import (
     AuthService,
@@ -21,6 +21,7 @@ from ..services.auth_service import (
     set_session_cookie,
 )
 from ..services.db import user_service as us
+from ..services.demo import demo_service
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,10 @@ async def get_current_user(
         "missing_scopes": missing_scopes(current_user),
         # Usage analytics opt-in: None until asked (the app shows a one-time prompt)
         "analytics_consent": current_user.analytics_consent,
+        # Public demo account (no Spotify connection), deleted at demo_expires_at
+        "is_demo": current_user.provider == DEMO,
+        "demo_expires_at": demo_service.expires_at(current_user) if current_user.provider == DEMO else None,
+        "demo_days_ahead": (current_user.demo_clock_offset_hours or 0) // 24,
     }
 
 @router.post("/logout")

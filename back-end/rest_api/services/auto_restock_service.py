@@ -26,7 +26,7 @@ from rest_api.database.models.rotation_track import (
     REMOVED_BY_ROTATION,
     RotationTrackDB,
 )
-from rest_api.database.models.user import UserDB
+from rest_api.database.models.user import DEMO, UserDB
 from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import health, restock_logic
 from rest_api.services import preferences as prefs
@@ -255,7 +255,13 @@ async def run_all(db: orm.Session) -> dict[str, int]:
     from rest_api.services.db.rotation_service import try_sync
 
     stats = Counter()
-    ids = [rid for (rid,) in db.query(RotationDB.id).filter(RotationDB.kind == AUTO).order_by(RotationDB.id)]
+    # Demo accounts' auto rotations maintain on their own syncs (and run on a skipped-ahead clock)
+    ids = [
+        rid for (rid,) in db.query(RotationDB.id)
+        .join(UserDB, RotationDB.owner_id == UserDB.id)
+        .filter(RotationDB.kind == AUTO, UserDB.provider != DEMO)
+        .order_by(RotationDB.id)
+    ]
     for rotation_id in ids:
         rotation = db.get(RotationDB, rotation_id)
         if rotation is None:

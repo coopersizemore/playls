@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from ..database.config import get_db
-from ..database.models.user import UserDB
+from ..database.models.user import DEMO, UserDB
 from ..models.restock import BlockedSongOut
 from ..models.rotation import RotationOut
 from ..models.user import SettingsOut, SettingsUpdate
@@ -49,6 +49,8 @@ async def update_settings(
     """Change only the settings sent. review_limit: 1-1000, or null for no limit.
     analytics_consent: true / false (false also deletes recorded usage data; null is ignored).
     For the others, null puts the setting back to its default."""
+    if current_user.provider == DEMO and data.analytics_consent:
+        raise HTTPException(status_code=400, detail="The demo doesn't record usage data")
     for name in data.model_fields_set - {"analytics_consent"}:
         setattr(current_user, name, getattr(data, name))
     db.commit()

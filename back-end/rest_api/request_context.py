@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from rest_api.clock import utcnow
+from rest_api.clock import real_utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,8 @@ class RequestContext:
     _connect_started: float | None = None
     # When the client was last shown (UTC, naive); None if the client didn't say
     visible_since: datetime | None = None
+    # Demo accounts only: hours added to clock.utcnow() for this request (set by the auth dependency)
+    clock_offset_hours: int = 0
     # Health counters for this request (services/health.py), e.g. {"sync.full_read": 1}
     counters: dict = field(default_factory=dict)
     _client: httpx.AsyncClient | None = None
@@ -89,7 +91,8 @@ def _visible_since(headers) -> datetime | None:
                 return None
             # Negative or absurd values are ignored rather than trusted
             if 0 <= ms <= 365 * 24 * 3600 * 1000:
-                return utcnow() - timedelta(milliseconds=ms)
+                # Real time: it's read before the user (and any demo clock offset) is known
+                return real_utcnow() - timedelta(milliseconds=ms)
             return None
     return None
 

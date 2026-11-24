@@ -8,9 +8,10 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
+from .. import request_context
 from ..clock import utcnow
 from ..database.config import get_db
-from ..database.models.user import UserDB
+from ..database.models.user import DEMO, UserDB
 
 # JWT Configuration
 # No fallback: a known default key would let anyone forge tokens for any user.
@@ -54,6 +55,34 @@ def set_session_cookie(response: Response, token: str, request: Request) -> None
 def clear_session_cookie(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE, path=SESSION_COOKIE_PATH)
 
+
+# Demo mode (services/demo): its own cookie, read only on requests that carry DEMO_HEADER
+# (the frontend sends it on every request from /demo). A cookie from one mode never
+# authenticates the other, so a real session and a demo can be open side by side.
+DEMO_SESSION_COOKIE = "playls_demo_session"
+DEMO_HEADER = "X-PlayLS-Demo"
+DEMO_SESSION_HOURS = 24
+
+
+def is_demo_request(request: Request) -> bool:
+    return request.headers.get(DEMO_HEADER) == "1"
+
+
+def set_demo_cookie(response: Response, token: str, request: Request) -> None:
+    response.set_cookie(
+        DEMO_SESSION_COOKIE,
+        token,
+        max_age=DEMO_SESSION_HOURS * 3600,
+        path=SESSION_COOKIE_PATH,
+        httponly=True,
+        secure=is_https(request),
+        samesite="lax",
+    )
+
+
+def clear_demo_cookie(response: Response) -> None:
+    response.delete_cookie(DEMO_SESSION_COOKIE, path=SESSION_COOKIE_PATH)
+
 # Spotify OAuth Configuration
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
@@ -86,8 +115,10 @@ def missing_scopes(user, wanted=None) -> list[str]:
     """Scopes from `wanted` (default: CORE_SCOPES) the user hasn't granted.
 
     Users who logged in before scopes were recorded (granted_scopes NULL) are assumed to
-    have only the rotation scopes.
+    have only the rotation scopes. Demo accounts have every scope (their Spotify is fake).
     """
+    if getattr(user, "provider", None) == DEMO:
+        return []
     wanted = CORE_SCOPES if wanted is None else wanted
     granted = set((user.granted_scopes or " ".join(ROTATION_SCOPES)).split())
     return [s for s in wanted if s not in granted]
@@ -97,7 +128,7 @@ ADMIN_SPOTIFY_IDS = {s.strip() for s in os.getenv("ADMIN_SPOTIFY_IDS", "").split
 
 
 def is_admin(user) -> bool:
-    return user.spotify_id in ADMIN_SPOTIFY_IDS
+    return user.provider != DEMO and user.spotify_id in ADMIN_SPOTIFY_IDS
 
 
 class SpotifyOAuthService:
@@ -224,8 +255,9 @@ class AuthService:
         request: Request,
         db: Session = Depends(get_db)
     ) -> UserDB:
-        """Get current authenticated user from the session cookie"""
-        token = request.cookies.get(SESSION_COOKIE)
+        """Get current authenticated user from the session cookie (the demo cookie on demo requests)"""
+        demo = is_demo_request(request)
+        token = request.cookies.get(DEMO_SESSION_COOKIE if demo else SESSION_COOKIE)
         if not token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -252,12 +284,27 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
             )
+        # Each mode's cookie only signs in that mode's accounts
+        if demo != (user.provider == DEMO) or demo != bool(payload.get("demo")):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+            )
+        if demo:
+            # "Skip ahead": the rest of this request runs on the account's clock. This mutates
+            # the shared request context (a ContextVar set here, in a threadpool, wouldn't
+            # reach the endpoint).
+            ctx = request_context.current()
+            if ctx is not None:
+                ctx.clock_offset_hours = user.demo_clock_offset_hours or 0
 
         return user
 
     @staticmethod
     async def ensure_valid_spotify_token(user: UserDB, db: Session, force_refresh: bool = False) -> str:
         """Return a valid Spotify access token, refreshing it if expired (or if force_refresh)"""
+        if getattr(user, "provider", None) == DEMO:
+            raise RuntimeError("Demo accounts have no Spotify token")
         if not user.access_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

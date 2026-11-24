@@ -148,3 +148,39 @@ def make_due(db, rid, days=8):
     if rotation.last_rotated_at:
         rotation.last_rotated_at -= timedelta(days=days)
     db.commit()
+
+
+# ---------- demo mode ----------
+
+DEMO_HEADERS = {"X-Requested-With": "XMLHttpRequest", "X-PlayLS-Demo": "1"}
+
+
+def demo_catalog(n=90):
+    """A small synthetic demo catalog: 3 sample playlists (40, 30, 10 songs) plus signals."""
+    tracks = [
+        track_object(f"d{i:03}", name=f"Demo Song {i}", artists=((f"Band {i % 12}", f"band{i % 12}"),),
+                     album=(f"Record {i % 20}", f"rec{i % 20}"))
+        for i in range(n)
+    ]
+    ids = [t["id"] for t in tracks]
+    return {
+        "tracks": tracks,
+        "playlists": [
+            {"id": "demo-sample-1", "name": "Daily Mix", "description": "Sample", "track_ids": ids[:40]},
+            {"id": "demo-sample-2", "name": "Road Trip", "description": "", "track_ids": ids[40:70]},
+            {"id": "demo-sample-3", "name": "Late Night", "description": "", "track_ids": ids[70:80]},
+        ],
+        "signals": {
+            "top_tracks": {"short_term": ids[60:75], "medium_term": ids[70:85], "long_term": ids[80:90]},
+            "top_artists": [{"id": f"band{i}", "name": f"Band {i}"} for i in range(5)],
+            "recent": ids[75:90],
+            "liked": ids[50:90],
+        },
+    }
+
+
+def start_demo(client):
+    """Start a demo on a TestClient (which keeps the demo cookie); returns the response JSON."""
+    r = client.post("/api/demo/start", headers=DEMO_HEADERS)
+    assert r.status_code == 200, r.text
+    return r.json()

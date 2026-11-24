@@ -3,6 +3,8 @@
 Errors are logged server-side and surface to clients as generic 502/429s.
 """
 import asyncio
+import functools
+import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -14,7 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ... import request_context
-from ...database.models.user import UserDB
+from ...database.models.user import DEMO, UserDB
 from .. import health
 from ..auth_service import AuthService
 
@@ -158,6 +160,9 @@ class SpotifyService:
         params: dict | None = None,
     ) -> dict[str, Any]:
         """Authenticated request; refreshes the Spotify token when expired or rejected once."""
+        if getattr(user, "provider", None) == DEMO:
+            # Fail closed: every method a demo account uses is routed to DemoSpotify below
+            raise RuntimeError(f"Demo account reached the Spotify API ({method} {endpoint})")
         method = method.upper()
         url = f"{API_BASE}{endpoint}"
         access_token = await AuthService.ensure_valid_spotify_token(user, db)
@@ -336,6 +341,13 @@ class SpotifyService:
         data: dict[str, Any] = {"name": name, "public": public, "description": description or ""}
         return await SpotifyService.make_spotify_request("/me/playlists", user, db, method="POST", data=data)
 
+    @staticmethod
+    async def rename_playlist(playlist_id: str, name: str, user: UserDB, db: Session) -> None:
+        """PUT /playlists/{id} (only the playlist's owner may change its details)."""
+        await SpotifyService.make_spotify_request(
+            f"/playlists/{playlist_id}", user, db, method="PUT", data={"name": name}
+        )
+
     # ---------- listening signals (restock) ----------
 
     @staticmethod
@@ -378,3 +390,33 @@ class SpotifyService:
     ) -> dict[str, Any]:
         params = {"q": query, "type": search_type, "limit": min(limit, SEARCH_LIMIT_MAX), "offset": offset}
         return await SpotifyService.make_spotify_request("/search", user, db, params=params)
+
+
+# ---------- demo accounts ----------
+# Every public method takes a `user`. For a demo account (provider = 'demo') the call goes to
+# DemoSpotify's method of the same name instead, so the demo never touches the network.
+from ..demo.demo_spotify import DemoSpotify  # noqa: E402
+
+_DEMO_ROUTED = (
+    "get_user_playlists", "get_playlist", "get_playlist_items_page", "get_all_playlist_items",
+    "get_saved_tracks_page", "get_all_saved_tracks", "save_to_library", "remove_from_library",
+    "add_items_to_playlist", "remove_items_from_playlist", "create_playlist", "rename_playlist", "get_track",
+    "get_top_items", "get_recently_played", "get_saved_tracks", "search",
+)
+
+
+def _route_demo(name: str, fn):
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        user = signature.bind_partial(*args, **kwargs).arguments.get("user")
+        if getattr(user, "provider", None) == DEMO:
+            return await getattr(DemoSpotify, name)(*args, **kwargs)
+        return await fn(*args, **kwargs)
+
+    return staticmethod(wrapper)
+
+
+for _name in _DEMO_ROUTED:
+    setattr(SpotifyService, _name, _route_demo(_name, SpotifyService.__dict__[_name].__func__))

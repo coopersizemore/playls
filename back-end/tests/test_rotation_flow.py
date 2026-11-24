@@ -24,6 +24,37 @@ def test_collaborative_playlist_is_allowed(client, spotify):
     make_rotation(client, spotify, [], playlist_id="collab", owner="someone-else", collaborative=True)
 
 
+def test_sync_picks_up_spotify_playlist_rename(client, spotify):
+    rid = make_rotation(client, spotify, [spotify_item("a", 5)])["id"]
+    spotify.playlists["p1"]["name"] = "Renamed in Spotify"  # details-only change
+    assert client.get(f"/api/rotation/{rid}").json()["name"] == "Renamed in Spotify"
+    # An empty name from Spotify never blanks the rotation's
+    spotify.playlists["p1"]["name"] = ""
+    assert client.get(f"/api/rotation/{rid}").json()["name"] == "Renamed in Spotify"
+
+
+def test_rename_in_playls_renames_spotify_playlist(client, spotify):
+    rid = make_rotation(client, spotify, [spotify_item("a", 5)])["id"]
+    r = client.put(f"/api/rotation/{rid}", json={"name": "  New name  "})
+    assert r.status_code == 200 and r.json()["name"] == "New name"
+    assert spotify.playlists["p1"]["name"] == "New name"
+    assert client.get(f"/api/rotation/{rid}").json()["name"] == "New name"  # sync keeps it
+
+    def renames():
+        return len([c for c in spotify.calls if c[0] == "rename"])
+
+    before = renames()
+    client.put(f"/api/rotation/{rid}", json={"name": "New name", "interval_hours": 48})
+    assert renames() == before  # unchanged name: no Spotify call
+
+
+def test_collaborator_cannot_rename(client, spotify):
+    rid = make_rotation(client, spotify, [], playlist_id="collab", owner="someone-else", collaborative=True)["id"]
+    r = client.put(f"/api/rotation/{rid}", json={"name": "Mine now"})
+    assert r.status_code == 403
+    assert client.get(f"/api/rotation/{rid}").json()["name"] == "Mix"
+
+
 def test_one_rotation_per_playlist(client, spotify):
     make_rotation(client, spotify, [])
     assert client.post("/api/rotation/", json={"playlist_id": "p1"}).status_code == 409

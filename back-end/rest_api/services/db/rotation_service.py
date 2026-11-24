@@ -20,7 +20,7 @@ from rest_api.database.models.review_event import (
 )
 from rest_api.database.models.rotation import AUTO, LIKED_SONGS, RotationDB, is_liked
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, RotationTrackDB
-from rest_api.database.models.user import UserDB
+from rest_api.database.models.user import DEMO, UserDB
 from rest_api.models.rotation import (
     HistoryEventOut,
     QueueOut,
@@ -326,6 +326,8 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
     Auto rotations always start from a new playlist; the initial sync's restock fills it.
     Liked Songs rotations wrap the user's saved tracks (one per user).
     """
+    if data.liked_songs and owner.provider == DEMO:
+        raise HTTPException(status_code=400, detail="Liked Songs rotations aren't available in the demo")
     if data.liked_songs:
         name, description, playlist_id, playlist = await _check_liked_songs(db, data, owner)
     elif data.playlist_id:
@@ -376,12 +378,27 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
 _NOT_NULLABLE = ("name", "interval_hours", "grace_period", "target_size", "rotate_percent")
 
 
-def update_rotation(db: orm.Session, rotation: RotationDB, data: RotationUpdate) -> RotationDB:
+async def update_rotation(
+    db: orm.Session, rotation: RotationDB, data: RotationUpdate, user: UserDB
+) -> RotationDB:
     changes = data.model_dump(exclude_unset=True)
     if rotation.kind != AUTO and any(changes.get(k) is not None for k in ("target_size", "rotate_percent")):
         raise HTTPException(status_code=400, detail="Only auto rotations have a target size")
     if rotation.kind != AUTO and any(changes.get(k) is not None for k in prefs.AUTO):
         raise HTTPException(status_code=400, detail="Only auto rotations have restock settings")
+    if changes.get("name") is not None:
+        changes["name"] = changes["name"].strip()[:100] or rotation.name
+    new_name = changes.get("name")
+    if new_name is not None and new_name != rotation.name and not is_liked(rotation):
+        # Sync copies the Spotify name back, so rename the playlist there first
+        try:
+            await ss.rename_playlist(rotation.playlist_id, new_name, user, db)
+        except SpotifyAPIError as e:
+            if e.upstream_status == 403:
+                raise HTTPException(
+                    status_code=403, detail="Only the playlist's owner can rename it in Spotify"
+                ) from e
+            raise
     for key, value in changes.items():
         if key in _NOT_NULLABLE and value is None:
             continue

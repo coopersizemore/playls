@@ -4,8 +4,8 @@
 At the end of each /api request, RequestContextMiddleware calls `record_request`. That writes
 one `health_event` row when the request is worth keeping:
 - always: errors (5xx), Spotify-style 429s, slow requests, and any request with counters;
-- otherwise: a random SAMPLE_RATE share, flagged `sampled` (latency percentiles use only these,
-  so they stay unbiased).
+- otherwise: a random SAMPLE_RATE share of non-4xx requests, flagged `sampled` (latency
+  percentiles use only these, so they stay unbiased).
 No user is stored. Recording is best-effort: it never raises, and it runs off the event loop.
 """
 import json
@@ -47,7 +47,9 @@ def route_template(scope) -> str:
 
 def should_record(status: int, duration_ms: float, counters: dict, rand: float) -> tuple[bool, bool]:
     """(record it, it's part of the random sample)."""
-    sampled = rand < SAMPLE_RATE
+    # Other 4xx (401s, 404s from scanners, ...) aren't sampled, so anonymous traffic can't
+    # grow the table; the dashboard reads only 5xx, 429 and latency
+    sampled = rand < SAMPLE_RATE and not (400 <= status < 500 and status != 429)
     always = status >= 500 or status == 429 or duration_ms >= SLOW_MS or bool(counters)
     return always or sampled, sampled
 

@@ -49,6 +49,14 @@ def _existing(request: Request, db: Session) -> UserDB | None:
     return user
 
 
+def _client_ip(request: Request) -> str:
+    """The caller's IP. Vercel sets x-real-ip and overwrites x-forwarded-for, so clients
+    can't spoof them there (off Vercel they're only trusted for local dev)."""
+    ip = request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for", "").split(",")[0]
+    ip = ip.strip() or (request.client.host if request.client else "")
+    return ip[:64] or "unknown"
+
+
 def _state(user: UserDB) -> dict:
     return {
         "expires_at": demo_service.expires_at(user),
@@ -61,7 +69,7 @@ async def start_demo(request: Request, db: Session = Depends(get_db)):
     """Start a demo (or resume the one this browser already has) and set the demo cookie."""
     if not request.headers.get(CSRF_HEADER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing CSRF header")
-    user = _existing(request, db) or demo_service.start(db)
+    user = _existing(request, db) or demo_service.start(db, demo_service.client_hash(_client_ip(request)))
     remaining = demo_service.expires_at(user) - real_utcnow()
     token = AuthService.create_access_token(data={"sub": str(user.id), "demo": True}, expires_delta=remaining)
     response = JSONResponse(jsonable_encoder(_state(user)))

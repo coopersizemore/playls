@@ -54,6 +54,8 @@ class UserDB(Base):
 
     # Demo accounts only (0015): hours their requests run ahead of real time ("Skip ahead")
     demo_clock_offset_hours = Column(Integer, nullable=True)
+    # Demo accounts only (0016): keyed hash of the IP that started it, for the per-IP cap
+    demo_client_hash = Column(String(64), nullable=True)
 
     # Space-separated OAuth scopes granted at the last login (to detect missing ones)
     granted_scopes = Column(Text, nullable=True)

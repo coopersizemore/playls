@@ -31,6 +31,7 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
     - `services/analytics_service.py`: pure aggregation for `GET /admin/stats`.
     - Tables: `analytics_event` (per user, cascade-deleted) and `health_event` (no user).
     - Tests disable health writes with an autouse fixture; use the `health_db` fixture to test them.
+    - 4xx responses other than 429 are never sampled (only kept when they carry counters), so anonymous traffic can't grow `health_event`.
   - `database/models/*` — SQLAlchemy: `UserDB`, `RotationDB`, `RotationTrackDB`, `ReviewEventDB`, `CuratedPickDB`, `RestockFeedbackDB`, `SuggestionCacheDB`. `models/*` are the Pydantic schemas (`extra="forbid"` on request bodies).
   - `database/config.py` connects to **Supabase Postgres** via `DATABASE_URL` (psycopg 3, `NullPool`, `prepare_threshold=None` for the transaction pooler). The user table is `users` (`user` is reserved in Postgres).
   - `database/encryption.py` — `EncryptedText` (Fernet, `TOKEN_ENCRYPTION_KEY`) for the Spotify tokens.
@@ -80,7 +81,7 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
 - Local dev: `vercel dev` (single origin on :3000, the preferred option), or `npm start` plus `python -m rest_api.app`. The second option relies on the CRA `proxy` in `package.json` and needs `FRONTEND_URL` and an `SPOTIFY_REDIRECT_URI` on :8000 (see `env.example`).
 - Env vars (see `back-end/env.example`):
   - Required: `DATABASE_URL`, `SECRET_KEY` (32+ chars; published placeholders are rejected), `TOKEN_ENCRYPTION_KEY` (must match everywhere sharing the DB). The app refuses to start without these. Also `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_REDIRECT_URI` (must end in `/api/auth/callback` and match the Spotify dashboard).
-  - Optional: `DEMO_MAX_ACTIVE` (default 100), `ADMIN_SPOTIFY_IDS` (comma-separated Spotify user IDs that can curate picks), `CRON_SECRET` (enables the daily auto-rotation cron), `FRONTEND_URL` (empty means same origin, so the post-login redirect is the relative `/`), `ENABLE_API_DOCS` (Swagger at `/api/docs`, off by default), `SQL_ECHO`.
+  - Optional: `DEMO_MAX_ACTIVE` (default 100), `DEMO_MAX_PER_CLIENT` (live demos per IP, default 3), `ADMIN_SPOTIFY_IDS` (comma-separated Spotify user IDs that can curate picks), `CRON_SECRET` (enables the daily auto-rotation cron), `FRONTEND_URL` (empty means same origin, so the post-login redirect is the relative `/`), `ENABLE_API_DOCS` (Swagger at `/api/docs`, off by default), `SQL_ECHO`.
 
 ## Security model (keep it this way)
 - Every `/api/user/*`, `/api/rotation/*` and `/api/spotify/*` route requires the session cookie (`playls_session`, httpOnly, SameSite=Lax, path `/api`). There's no Bearer-header auth. Non-GET requests also need an `X-Requested-With` header (CSRF), which `src/api.js` sets on axios globally and on the `keepalive` flush. Routes fetch rotations with `rotation_service.get_owned_or_404`, so other users' rotations return 404.

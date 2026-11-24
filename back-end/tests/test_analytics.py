@@ -149,6 +149,11 @@ def test_health_sampling_rules():
     assert health.should_record(502, 50, {}, rand=0.9) == (True, False)  # errors always
     assert health.should_record(200, 5000, {}, rand=0.9) == (True, False)  # slow always
     assert health.should_record(200, 50, {"sync.failed": 1}, rand=0.9) == (True, False)
+    # Other 4xx aren't sampled (anonymous traffic can't grow the table)
+    assert health.should_record(401, 50, {}, rand=0.1) == (False, False)
+    assert health.should_record(404, 50, {}, rand=0.1) == (False, False)
+    assert health.should_record(429, 50, {}, rand=0.9) == (True, False)
+    assert health.should_record(409, 50, {"sync.attempt": 1}, rand=0.1) == (True, False)  # counters still kept
     assert health.route_template({"path": "/api/rotation/12/queue"}) == "/api/rotation/{id}/queue"
 
 

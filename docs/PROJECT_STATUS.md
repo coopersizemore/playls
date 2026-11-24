@@ -59,6 +59,7 @@ The backend has 63 tests (SQLite plus a fake Spotify). The frontend builds clean
 - PlayLS's own playlist writes (flush, restock add, auto rotate-out and fill) store the snapshot Spotify returns, so the next sync short-circuits instead of re-reading the playlist.
 - Spotify 429s are retried when the requested pause is short. Otherwise, and for quota errors, the client gets the error with `Retry-After`.
 - Details are in DESIGN.md, "Sync shortcuts and guards".
+- Tradeoffs and Spotify edge cases to watch are in [SYNC_RISKS.md](SYNC_RISKS.md), with a suggested fix order.
 - **Next:** read the `Server-Timing` numbers on prod before doing more. In particular, check `dbconnect`: NullPool opens a new connection after every commit.
 
 ## Sync races (found and fixed 2026-11-24)

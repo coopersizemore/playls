@@ -1,6 +1,6 @@
 # PlayLS
 
-Spotify "lazy susan": a rotation wraps a playlist the user owns, and songs come due for keep/skip/remove review every N days. Product spec: [mvp.txt](docs/mvp.txt), annotated with what's deferred or scrapped. **Owner decisions and semantics (source of truth, due-date math, batched removals, data model): [DESIGN.md](docs/DESIGN.md).** Phased build plan: [PROJECT_STATUS.md](docs/PROJECT_STATUS.md). The owner knows the product well, so don't explain it back; focus on the code.
+Spotify "lazy susan": a rotation wraps a playlist the user owns, and songs come due for keep/skip/remove review every N days. Product spec: [mvp.txt](docs/mvp.txt), annotated with what's deferred or scrapped. **Owner decisions and semantics (source of truth, due-date math, batched removals, data model): [DESIGN.md](docs/DESIGN.md).** Phased build plan: [PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Known Spotify ↔ PlayLS edge cases and latency tradeoffs: [SYNC_RISKS.md](docs/SYNC_RISKS.md) (read it before changing sync). The owner knows the product well, so don't explain it back; focus on the code.
 
 Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled (Supabase + Vercel + Spotify OAuth), so build within it. Scope is Spotify only, personal use (at most 5 users). Apple Music is a maybe-later, so keep track IDs provider-neutral and keep the `provider` columns, but build no abstraction layer.
 
@@ -34,6 +34,7 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
   - **Review**: a `SwipeCard` (pointer events, no library; right = keep, left = remove, flies off in that direction, also triggered by buttons and keys) with album art, the days-since stat, and a compact Spotify embed.
   - **Restock**: the same swipe card for its decks.
   - **Settings** and **AdminPicks**.
+  - **Help** (`Help.js`): a 5-step guide opened from the **?** in the top bar. Home also opens it automatically for an account with no rotations that hasn't seen it in this browser (localStorage `playls.helpSeen.<userId>`).
   - **Light / dark mode**: `src/colorMode.js` (`ColorModeProvider`, `useColorMode`). The preference (light / dark / system) is kept in localStorage. Toggle it from the ☰ menu or Settings → Appearance. Use theme tokens (`placeholder.main`, `surface.main`, `background.*`, `text.*`), never hex colors, except `ON_GREEN` text on green surfaces.
   - **Loading states** use shaped skeletons from `Skeletons.js`, not spinners.
   - `RotationDialogs.js` holds the create / edit / reset / remove-unavailable / delete dialogs plus `IntervalPicker` and `formatInterval`.

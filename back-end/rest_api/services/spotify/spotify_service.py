@@ -341,6 +341,13 @@ class SpotifyService:
         data: dict[str, Any] = {"name": name, "public": public, "description": description or ""}
         return await SpotifyService.make_spotify_request("/me/playlists", user, db, method="POST", data=data)
 
+    @staticmethod
+    async def rename_playlist(playlist_id: str, name: str, user: UserDB, db: Session) -> None:
+        """PUT /playlists/{id} (only the playlist's owner may change its details)."""
+        await SpotifyService.make_spotify_request(
+            f"/playlists/{playlist_id}", user, db, method="PUT", data={"name": name}
+        )
+
     # ---------- listening signals (restock) ----------
 
     @staticmethod

@@ -57,7 +57,7 @@ async def get_rotation(
 async def update_rotation(
     rotation_id: int, data: RotationUpdate, db: Session = Depends(get_db), user: UserDB = current_user_dep
 ):
-    rotation = rs.update_rotation(db, rs.get_owned_or_404(db, rotation_id, user), data)
+    rotation = await rs.update_rotation(db, rs.get_owned_or_404(db, rotation_id, user), data, user)
     return rs.summarize_one(db, rotation)
 
 

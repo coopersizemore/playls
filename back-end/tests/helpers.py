@@ -52,6 +52,27 @@ def make_rotation(client, spotify, items, interval_days=30, playlist_id="p1", gr
     return r.json()
 
 
+def liked_entry(track_id, added_days_ago=10):
+    """A Liked Songs entry for FakeSpotify.liked: (track object, added_at)."""
+    return track_object(track_id), (utcnow() - timedelta(days=added_days_ago)).isoformat() + "Z"
+
+
+def grant_library_write(db, user):
+    user.granted_scopes = (user.granted_scopes or "") + " user-library-modify"
+    db.commit()
+
+
+def make_liked_rotation(client, spotify, db, user, n=5, interval_days=30, grace=True):
+    """A Liked Songs rotation over n liked songs l0..l{n-1} (l0 newest)."""
+    grant_library_write(db, user)
+    spotify.liked[:] = [liked_entry(f"l{i}", added_days_ago=10 + i) for i in range(n)]
+    r = client.post("/api/rotation/", json={
+        "liked_songs": True, "interval_hours": interval_days * 24, "grace_period": grace,
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
 def new_rotation_id(client, spotify, items, playlist_id="p1"):
     """A manual rotation with the API's defaults (30 days, grace period on); returns its id."""
     return make_rotation(client, spotify, items, playlist_id=playlist_id)["id"]

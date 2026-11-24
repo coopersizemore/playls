@@ -5,6 +5,7 @@ Errors are logged server-side and surface to clients as generic 502/429s.
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 API_BASE = "https://api.spotify.com/v1"
 PLAYLIST_ITEMS_PAGE_SIZE = 50  # max for GET /playlists/{id}/items
 PLAYLIST_MUTATION_BATCH = 100  # max URIs per add/remove request
+LIBRARY_MUTATION_BATCH = 40  # max URIs per PUT/DELETE /me/library
 SEARCH_LIMIT_MAX = 10
 # Playlist pages fetched at once after the first; kept low for the shared rate limit
 PLAYLIST_PAGE_CONCURRENCY = 4
@@ -100,6 +102,49 @@ def _rate_limit_wait(response: httpx.Response, waited: float) -> float | None:
 def _chunks(values: list[str], size: int):
     for i in range(0, len(values), size):
         yield values[i:i + size]
+
+
+async def _read_all_pages(
+    fetch_page: Callable[[int], Awaitable[dict[str, Any]]], first: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Every item of a paged list (a playlist or Liked Songs), given its first page. The
+    first page gives the total, then the rest are fetched a few at a time. (The first call
+    also refreshes the token if needed, so the concurrent ones don't race to refresh it.)"""
+    items: list[dict[str, Any]] = list(first.get("items") or [])
+    total = first.get("total")
+    if not first.get("next") or not items:
+        return items
+    if not isinstance(total, int):
+        # No total to plan with: fall back to reading page by page
+        offset = len(items)
+        while True:
+            page = await fetch_page(offset)
+            batch = page.get("items") or []
+            items.extend(batch)
+            offset += len(batch)
+            if not page.get("next") or not batch:
+                return items
+
+    limit = asyncio.Semaphore(PLAYLIST_PAGE_CONCURRENCY)
+
+    async def fetch(offset: int) -> list[dict[str, Any]]:
+        async with limit:
+            page = await fetch_page(offset)
+            return page.get("items") or []
+
+    tasks = [asyncio.ensure_future(fetch(o)) for o in range(len(items), total, PLAYLIST_ITEMS_PAGE_SIZE)]
+    try:
+        pages = await asyncio.gather(*tasks)
+    except BaseException:
+        # One page failed: stop the others (the request's client closes soon) and
+        # surface the original error, e.g. SpotifyAPIError
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    for batch in pages:
+        items.extend(batch)
+    return items
 
 
 class SpotifyService:
@@ -201,42 +246,54 @@ class SpotifyService:
         Pages are read by offset from the live playlist, so a change mid-read can skip or repeat
         an item; sync_service re-checks the snapshot afterwards for that reason.
         """
-        first = await SpotifyService.get_playlist_items_page(playlist_id, user, db, offset=0)
-        items: list[dict[str, Any]] = list(first.get("items") or [])
+        async def page(offset: int) -> dict[str, Any]:
+            return await SpotifyService.get_playlist_items_page(playlist_id, user, db, offset=offset)
+
+        return await _read_all_pages(page, await page(0))
+
+    # ---------- Liked Songs (the user's library) ----------
+
+    @staticmethod
+    async def get_saved_tracks_page(
+        user: UserDB, db: Session, offset: int = 0, limit: int = PLAYLIST_ITEMS_PAGE_SIZE
+    ) -> dict[str, Any]:
+        """One page of Liked Songs, newest first, with is_playable (market=from_token).
+        Scope: user-library-read. The library has no snapshot_id."""
+        return await SpotifyService.make_spotify_request(
+            "/me/tracks", user, db, params={"limit": min(limit, 50), "offset": offset, "market": "from_token"}
+        )
+
+    @staticmethod
+    async def get_all_saved_tracks(
+        user: UserDB, db: Session, first: dict[str, Any] | None = None
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        """Every Liked Songs entry, newest first, and the first page's total. `first` reuses an
+        already-read first page. Like playlists, pages are offsets into a live list."""
+        async def page(offset: int) -> dict[str, Any]:
+            return await SpotifyService.get_saved_tracks_page(user, db, offset=offset)
+
+        if first is None:
+            first = await page(0)
         total = first.get("total")
-        if not first.get("next") or not items:
-            return items
-        if not isinstance(total, int):
-            # No total to plan with: fall back to reading page by page
-            offset = len(items)
-            while True:
-                page = await SpotifyService.get_playlist_items_page(playlist_id, user, db, offset=offset)
-                batch = page.get("items") or []
-                items.extend(batch)
-                offset += len(batch)
-                if not page.get("next") or not batch:
-                    return items
+        return await _read_all_pages(page, first), total if isinstance(total, int) else None
 
-        limit = asyncio.Semaphore(PLAYLIST_PAGE_CONCURRENCY)
+    @staticmethod
+    async def save_to_library(uris: list[str], user: UserDB, db: Session) -> None:
+        """Like tracks (PUT /me/library, at most 40 URIs per request; idempotent).
+        Scope: user-library-modify."""
+        for batch in _chunks(uris, LIBRARY_MUTATION_BATCH):
+            await SpotifyService.make_spotify_request(
+                "/me/library", user, db, method="PUT", params={"uris": ",".join(batch)}
+            )
 
-        async def fetch(offset: int) -> list[dict[str, Any]]:
-            async with limit:
-                page = await SpotifyService.get_playlist_items_page(playlist_id, user, db, offset=offset)
-                return page.get("items") or []
-
-        tasks = [asyncio.ensure_future(fetch(o)) for o in range(len(items), total, PLAYLIST_ITEMS_PAGE_SIZE)]
-        try:
-            pages = await asyncio.gather(*tasks)
-        except BaseException:
-            # One page failed: stop the others (the request's client closes soon) and
-            # surface the original error, e.g. SpotifyAPIError
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
-        for batch in pages:
-            items.extend(batch)
-        return items
+    @staticmethod
+    async def remove_from_library(uris: list[str], user: UserDB, db: Session) -> None:
+        """Unlike tracks (DELETE /me/library, at most 40 URIs per request; idempotent).
+        Scope: user-library-modify."""
+        for batch in _chunks(uris, LIBRARY_MUTATION_BATCH):
+            await SpotifyService.make_spotify_request(
+                "/me/library", user, db, method="DELETE", params={"uris": ",".join(batch)}
+            )
 
     @staticmethod
     async def add_items_to_playlist(

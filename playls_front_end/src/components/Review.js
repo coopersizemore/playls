@@ -410,7 +410,10 @@ const Review = () => {
           <SpotifyEmbed trackId={track.track_id} title={track.title} compact />
 
           <Box display="flex" justifyContent="space-between" alignItems="flex-end" mt={3}>
-            <Hint side="left" label={touch ? 'Swipe Left\nto Remove' : 'Remove\n(← key)'}
+            <Hint side="left"
+              label={rotation?.is_liked
+                ? (touch ? 'Swipe Left\nto Unlike' : 'Unlike\n(← key)')
+                : (touch ? 'Swipe Left\nto Remove' : 'Remove\n(← key)')}
               onClick={() => decide('remove')} disabled={busy || locked} active={current?.action === 'remove'} />
             <Button variant={current?.action === 'super_keep' ? 'contained' : 'outlined'} color="warning"
               startIcon={current?.action === 'super_keep' ? <Check /> : <Star />} onClick={() => decide('super_keep')}
@@ -426,7 +429,8 @@ const Review = () => {
               {rotation.kind === 'auto'
                 ? `Kept songs stay through the next rotation; super kept songs age ${timesWord(rotation.super_keep_multiplier)} slower. Removed songs are replaced.`
                 : <>Kept songs come back in {formatInterval(rotation.interval_hours)}, super kept in{' '}
-                  {formatInterval(rotation.interval_hours * rotation.super_keep_multiplier)}.</>}
+                  {formatInterval(rotation.interval_hours * rotation.super_keep_multiplier)}.
+                  {rotation.is_liked && ' Removing a song unlikes it in Spotify when you finish.'}</>}
             </Typography>
           )}
 

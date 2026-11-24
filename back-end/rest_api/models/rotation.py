@@ -32,9 +32,17 @@ class RotationCreate(BaseModel):
     kind: Literal["manual", "auto"] = "manual"
     target_size: Literal[30, 50, 100, 200] | None = None
     rotate_percent: int | None = Field(None, ge=5, le=100)
+    # Wrap the user's Liked Songs instead of a playlist: removing a song unlikes it
+    liked_songs: bool = False
 
     @model_validator(mode="after")
     def _check(self):
+        if self.liked_songs:
+            if self.playlist_id:
+                raise ValueError("liked_songs and playlist_id can't both be set")
+            if self.kind != "manual":
+                raise ValueError("a Liked Songs rotation can't be an auto rotation")
+            return self
         if not self.playlist_id and not self.name:
             raise ValueError("name is required when creating a new playlist")
         if self.kind == "auto":
@@ -92,6 +100,7 @@ class RotationOut(BaseModel):
     interval_hours: int
     grace_period: bool
     kind: str = "manual"  # "auto": PlayLS rotates out and restocks on its own
+    is_liked: bool = False  # wraps the user's Liked Songs: removing a song unlikes it
     target_size: int | None = None
     rotate_percent: int | None = None
     last_rotated_at: datetime | None = None

@@ -225,7 +225,7 @@ const Home = () => {
       )}
 
       <HelpDialog open={help} onClose={() => setHelp(false)} userId={user.id} />
-      <CreateRotationDialog open={creating} onClose={() => setCreating(false)}
+      <CreateRotationDialog open={creating} onClose={() => setCreating(false)} rotations={rotations || []}
         onCreated={() => { setCreating(false); fetchRotations(); }} />
     </Layout>
   );

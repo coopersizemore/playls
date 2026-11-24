@@ -18,7 +18,7 @@ from rest_api.database.models.review_event import (
     UNDO,
     ReviewEventDB,
 )
-from rest_api.database.models.rotation import AUTO, RotationDB
+from rest_api.database.models.rotation import AUTO, LIKED_SONGS, RotationDB, is_liked
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, RotationTrackDB
 from rest_api.database.models.user import UserDB
 from rest_api.models.rotation import (
@@ -33,6 +33,7 @@ from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import health
 from rest_api.services import preferences as prefs
 from rest_api.services import rotation_logic as logic
+from rest_api.services.auth_service import LIBRARY_WRITE_SCOPES, missing_scopes
 from rest_api.services.spotify.spotify_service import SpotifyAPIError
 from rest_api.services.spotify.spotify_service import SpotifyService as ss
 from rest_api.services.sync_service import sync_claim, sync_rotation
@@ -179,6 +180,7 @@ def summarize(
         interval_hours=rotation.interval_hours,
         grace_period=rotation.grace_period,
         kind=rotation.kind,
+        is_liked=is_liked(rotation),
         target_size=rotation.target_size,
         rotate_percent=rotation.rotate_percent,
         last_rotated_at=rotation.last_rotated_at,
@@ -295,12 +297,38 @@ async def list_rotation_summaries(
 
 # ---------- create / update / delete ----------
 
+# Larger libraries are refused: every full sync reads all of them (50 per request), on a
+# quota shared across the developer account
+MAX_LIKED_SONGS = 5000
+
+
+async def _check_liked_songs(db: orm.Session, data: RotationCreate, owner: UserDB):
+    if missing_scopes(owner, LIBRARY_WRITE_SCOPES):
+        raise HTTPException(
+            status_code=403,
+            detail="Reconnect Spotify to let PlayLS manage your Liked Songs",
+        )
+    if db.query(RotationDB).filter(RotationDB.owner_id == owner.id, RotationDB.playlist_id == LIKED_SONGS).first():
+        raise HTTPException(status_code=409, detail="Your Liked Songs already have a rotation")
+    first = await ss.get_saved_tracks_page(owner, db, offset=0)
+    total = first.get("total")
+    if isinstance(total, int) and total > MAX_LIKED_SONGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Liked Songs rotations support up to {MAX_LIKED_SONGS:,} songs (you have {total:,})",
+        )
+    return data.name or "Liked Songs", data.description, LIKED_SONGS, {}
+
+
 async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) -> tuple[RotationDB, bool]:
     """Wrap an owned/collaborative playlist, or create a new private one. Returns (rotation, sync_ok).
 
     Auto rotations always start from a new playlist; the initial sync's restock fills it.
+    Liked Songs rotations wrap the user's saved tracks (one per user).
     """
-    if data.playlist_id:
+    if data.liked_songs:
+        name, description, playlist_id, playlist = await _check_liked_songs(db, data, owner)
+    elif data.playlist_id:
         if db.query(RotationDB).filter(
             RotationDB.owner_id == owner.id, RotationDB.playlist_id == data.playlist_id
         ).first():

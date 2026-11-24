@@ -40,7 +40,7 @@ from rest_api.services.db.rotation_service import track_out
 from rest_api.services.rotation_logic import local_day_start
 from rest_api.services.spotify.spotify_service import SpotifyAPIError
 from rest_api.services.spotify.spotify_service import SpotifyService as ss
-from rest_api.services.sync_service import write_adopting_snapshot
+from rest_api.services.sync_service import source_add, source_remove, write_adopting_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -433,9 +433,8 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
         raise HTTPException(status_code=409, detail="That song is already in this rotation")
     meta = await _resolve_meta(db, user, track_id, row)
 
-    await write_adopting_snapshot(
-        db, rotation, user, lambda: ss.add_items_to_playlist(rotation.playlist_id, [meta["uri"]], user, db)
-    )
+    # A playlist add, or a like for a Liked Songs rotation
+    await write_adopting_snapshot(db, rotation, user, lambda: source_add(db, rotation, user, [meta["uri"]]))
 
     now = utcnow()
     if row is None:
@@ -509,9 +508,7 @@ async def undo_last(db: orm.Session, rotation: RotationDB, user: UserDB, track_i
             status_code=409, detail="That song has changed since it was added. Remove it from Review instead."
         )
     state = json.loads(feedback.previous_state)
-    await write_adopting_snapshot(
-        db, rotation, user, lambda: ss.remove_items_from_playlist(rotation.playlist_id, [row.uri], user, db)
-    )
+    await write_adopting_snapshot(db, rotation, user, lambda: source_remove(db, rotation, user, [row.uri]))
     if state.get("created"):
         db.delete(row)
     else:

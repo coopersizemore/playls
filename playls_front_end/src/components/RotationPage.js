@@ -246,6 +246,9 @@ const RotationPage = () => {
           <Chip icon={<AutoMode />} size="small" sx={{ mt: 1 }}
             label={`Auto-restocking · ${rotation.target_size} songs`} />
         )}
+        {rotation.is_liked && (
+          <Chip size="small" sx={{ mt: 1 }} label="Liked Songs · removing a song unlikes it" />
+        )}
       </Box>
 
       <Box display="flex" justifyContent="space-between" gap={1} mt={2.5} mb={3} px={0.5} flexWrap="wrap">
@@ -274,7 +277,9 @@ const RotationPage = () => {
         <Tile icon={<AddCircleOutline sx={{ fontSize: 34 }} />} label="Restock"
           onClick={() => navigate(`/rotation/${rotation.id}/restock`)} />
         <Tile icon={<SpotifyMark />} label="Spotify" green
-          href={`https://open.spotify.com/playlist/${encodeURIComponent(rotation.playlist_id)}`} />
+          href={rotation.is_liked
+            ? 'https://open.spotify.com/collection/tracks'
+            : `https://open.spotify.com/playlist/${encodeURIComponent(rotation.playlist_id)}`} />
         <Tile icon={<SettingsIcon sx={{ fontSize: 34 }} />} label="Settings" onClick={(e) => setMenuAnchor(e.currentTarget)} />
       </Box>
       <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mb={2}>
@@ -294,7 +299,8 @@ const RotationPage = () => {
           () => navigate(`/rotation/${rotation.id}/review?all=1`), { disabled: rotation.active_count === 0 })}
         {!isAuto && menuItem(<RestartAlt fontSize="small" />, 'Reset all songs to not due…', () => setDialog('reset'),
           { disabled: rotation.active_count === 0 })}
-        {menuItem(<PlaylistRemove fontSize="small" />, 'Remove unavailable songs…', () => setDialog('unplayable'),
+        {menuItem(<PlaylistRemove fontSize="small" />,
+          rotation.is_liked ? 'Unlike unavailable songs…' : 'Remove unavailable songs…', () => setDialog('unplayable'),
           { disabled: rotation.active_count === 0 })}
         <Divider />
         {menuItem(<Delete fontSize="small" color="error" />, 'Delete rotation', () => setDialog('delete'),

@@ -10,7 +10,7 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
   - `services/auth_service.py` — Spotify OAuth + app session (JWT via python-jose, HS256, 7 days, in an httpOnly cookie). `get_current_user_from_token` is the auth dependency (cookie + CSRF check).
   - `services/spotify/spotify_service.py` — thin httpx wrapper over the post-Feb-2026 Spotify API. Raises `SpotifyAPIError` (an `HTTPException` carrying `upstream_status`); on a 401 it force-refreshes the token and retries once.
   - `services/rotation_logic.py` — pure rules: due-date math (interval in hours; optional per-rotation grace period; NULL `added_at` = unknown), parsing playlist items, queue order. No DB/network; unit-tested.
-  - `services/sync_service.py` — `flush_pending_removals` and `sync_rotation` (snapshot short-circuit, diff against `rotation_track`). Skips the diff if items come back but none parse, so a response-shape change can't mark everything removed.
+  - `services/sync_service.py` — `flush_pending_removals` and `sync_rotation` (snapshot short-circuit, diff against `rotation_track`). Skips the diff if items come back but none parse, so a response-shape change can't mark everything removed. Re-checks the snapshot after a full read; if it changed mid-read, applies additions only. Manual rotations reuse a sync from the last 2 minutes if it happened after the app was last shown (`recently_synced`); see DESIGN.md, "Sync shortcuts and guards".
   - `services/db/rotation_service.py` — rotation CRUD, summaries/due counts, queue (daily limit via `_todays_activity` over `review_event`), `apply_review`, history. `try_sync` is the best-effort wrapper routes use (returns `sync_ok`).
   - `services/restock_logic.py` (pure: bring-back weights, suggestion scoring, weighted sampling, blending) and `services/restock_service.py` (the four sources, the suggestion cache, add / Not now, pick creation). Rules are in DESIGN.md, "Restock".
   - **Auto rotations** (`rotation.kind = 'auto'`, DESIGN.md "Auto rotations"):
@@ -21,10 +21,15 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
   - `database/models/*` — SQLAlchemy: `UserDB`, `RotationDB`, `RotationTrackDB`, `ReviewEventDB`, `CuratedPickDB`, `RestockFeedbackDB`, `SuggestionCacheDB`. `models/*` are the Pydantic schemas (`extra="forbid"` on request bodies).
   - `database/config.py` connects to **Supabase Postgres** via `DATABASE_URL` (psycopg 3, `NullPool`, `prepare_threshold=None` for the transaction pooler). The user table is `users` (`user` is reserved in Postgres).
   - `database/encryption.py` — `EncryptedText` (Fernet, `TOKEN_ENCRYPTION_KEY`) for the Spotify tokens.
+  - `request_context.py` — per-request state set by `RequestContextMiddleware`:
+    - the `Server-Timing` header (total, Spotify and DB time, plus DB connections); requests over 1.5 s are logged with the breakdown;
+    - one shared httpx client for every Spotify call in a request (connection reuse);
+    - a lock so concurrent 401s refresh the token once;
+    - `visible_since`, from the frontend's `X-Visible-For` header (ms since the app was last shown).
   - `clock.py` — `utcnow()`. All timestamps are **naive UTC**; use it instead of `datetime.utcnow()`.
 - `back-end/alembic/` — migrations. Run `alembic upgrade head` from `back-end/` (with `.venv`). Local and prod share the DB, so a migration applies to prod. New tables must `ENABLE ROW LEVEL SECURITY` in their migration (no policies; this blocks Supabase's Data API). `alembic check` verifies models match migrations.
 - `playls_front_end/` — CRA (react-scripts 5), React 19, MUI 7 (`Grid` uses the `size` prop), react-router 7, axios. Pages in `src/components/`, mobile-first and styled after the owner's Figma wireframes (light theme in `src/theme.js`: IBM Plex Mono text, Roboto controls, green `#7ED34E`, loaded from Google Fonts in `public/index.html`):
-  - **Home**: rotation cards with only Rotate (Review for auto rotations) and Restock. Tapping a card opens the rotation. Creating a rotation happens here.
+  - **Home**: rotation cards with only Rotate (Review for auto rotations) and Restock. Tapping a card opens the rotation. Creating a rotation happens here. It renders stored data (`?sync=false`), then syncs each rotation with its own `GET /rotation/{id}` in parallel ("Checking Spotify…"). Auto cards stay locked until their sync finishes.
   - **RotationPage** (`/rotation/:id`): cover, stats, tiles (Rotate with the due badge, Restock, Spotify link, Settings menu with edit / review all / reset / remove unavailable / delete), and Current songs / History tabs (`?tab=history`). `History.js` exports the embeddable `HistoryList`; its old route redirects to the tab.
   - **Review**: a `SwipeCard` (pointer events, no library; right = keep, left = remove, flies off in that direction, also triggered by buttons and keys) with album art, the days-since stat, and a compact Spotify embed.
   - **Restock**: the same swipe card for its decks.
@@ -94,7 +99,7 @@ Spotify's recommendation endpoints are gone. "For you" (restock) is the interim 
 Personal/demo scope: one Supabase project, one Spotify app, Vercel production on a `*.vercel.app` URL, and local dev with `vercel dev` (local and prod share the database). See [DEPLOYMENT_PLAN.md](docs/DEPLOYMENT_PLAN.md).
 
 ## Testing
-`cd back-end && .venv/Scripts/python -m pytest tests`. `tests/conftest.py` sets dummy env vars before importing the app and provides an in-memory SQLite `db`, a `FakeSpotify` (monkeypatched onto `SpotifyService`), and an authenticated `client`. So tests need no Supabase, `.env` or network. Files: `test_auth.py` (security), `test_rotation_logic.py` and `test_restock_logic.py` (pure rules), `test_rotation_flow.py` and `test_restock_flow.py` (end to end through the API), `test_auto_rotation.py` (auto rotation rules and flow, including the cron). There are no frontend tests; verify the frontend with `npx react-scripts build` (from `playls_front_end/`).
+`cd back-end && .venv/Scripts/python -m pytest tests`. `tests/conftest.py` sets dummy env vars before importing the app and provides an in-memory SQLite `db`, a `FakeSpotify` (monkeypatched onto `SpotifyService`), and an authenticated `client`. So tests need no Supabase, `.env` or network. Files: `test_auth.py` (security), `test_rotation_logic.py` and `test_restock_logic.py` (pure rules), `test_rotation_flow.py` and `test_restock_flow.py` (end to end through the API), `test_auto_rotation.py` (auto rotation rules and flow, including the cron), `test_latency.py` (Server-Timing, concurrent pages, the refresh guard, the mid-read snapshot check, recent-sync reuse). There are no frontend tests; verify the frontend with `npx react-scripts build` (from `playls_front_end/`).
 
 ## Working notes
 - `back-end/.env` holds real secrets. Never print or commit it.

@@ -354,9 +354,9 @@ def test_day_boundary_follows_client_timezone(client, spotify, db):
     db.commit()
     now = utcnow()
     # Pick an offset whose local midnight was 1 hour ago -> the event was "yesterday"
-    offset_yesterday = -((now.hour * 60 + now.minute) - 60)
+    offset_yesterday = (now.hour * 60 + now.minute) - 60
     # ...and one whose local midnight was 5 hours ago -> the event was "today"
-    offset_today = -((now.hour * 60 + now.minute) - 300)
+    offset_today = (now.hour * 60 + now.minute) - 300
     clamp = lambda m: max(-840, min(840, m))
     if clamp(offset_yesterday) == offset_yesterday:
         q = client.get(f"/api/rotation/{rid}/queue", params={"tz_offset": offset_yesterday}).json()

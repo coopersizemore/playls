@@ -7,6 +7,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from rest_api.request_context import RequestContextMiddleware
+
 # Load environment variables
 load_dotenv()
 
@@ -32,7 +34,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Server-Timing"],
 )
+# Outermost: times the whole request and owns the per-request Spotify client
+app.add_middleware(RequestContextMiddleware)
 
 
 @app.exception_handler(httpx.HTTPError)

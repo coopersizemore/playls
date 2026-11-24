@@ -29,6 +29,11 @@ engine = create_engine(
     connect_args={"prepare_threshold": None},
 )
 
+# Per-request query / connection timing for the Server-Timing header
+from rest_api.request_context import install_db_timing  # noqa: E402
+
+install_db_timing(engine)
+
 # Create SessionLocal class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

@@ -25,6 +25,15 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
   - A track that's new in Spotify gets a row, anchored on Spotify's `added_at`.
   - A track that's gone from Spotify is marked `removed` (`removed_by = external`).
   - A track that comes back after a removal is reactivated with the new `added_at`, and its review anchor is reset.
+- **Sync shortcuts and guards (2026-11-24, for latency):**
+  - **Recent syncs are reused (manual rotations only).** A manual rotation isn't checked against Spotify again if both hold:
+    - its last sync was under 2 minutes ago (`FRESH_SYNC_SECONDS`);
+    - that sync happened after the app was last shown (the frontend's `X-Visible-For` header).
+    - Returning to PlayLS, for example from editing the playlist in Spotify, always re-checks.
+    - Pending removals are still flushed.
+    - Requests without the header (the cron) and auto rotations always sync.
+  - **A full read is double-checked.** Pages are read by offset from the live playlist, a few at a time. Afterwards the snapshot is fetched again. If it changed during the read, only new songs and metadata are applied: nothing is marked removed or reactivated, and the old snapshot is kept so the next sync reads it again.
+  - **Home shows stored data first.** It loads `?sync=false`, then syncs each rotation in its own request and updates each card as its result arrives. An auto rotation's card (open, Review, Restock) stays locked until its sync finishes, so opening it can't start a second restock.
 - **Interval (N):** stored in hours (`interval_hours`, 1 hour to 365 days). The UI offers presets plus a custom amount in hours, days or weeks.
 - **Due date:** computed when read, not stored, so changes to the interval or the grace period apply immediately to every song not yet kept.
   - **After a keep:** due at the keep date + N.

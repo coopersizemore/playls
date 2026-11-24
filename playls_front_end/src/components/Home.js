@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Alert,
@@ -13,7 +13,7 @@ import {
   Grid,
   Typography,
 } from '@mui/material';
-import { Add, AddCircleOutline, Autorenew, SyncProblem } from '@mui/icons-material';
+import { Add, AddCircleOutline, Autorenew, Sync, SyncProblem } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
 import { Layout, PlaylistCover, relativeDays } from './Layout';
@@ -36,14 +36,17 @@ const Landing = ({ login }) => (
   </Box>
 );
 
-const RotationCard = ({ rotation }) => {
+const RotationCard = ({ rotation, syncing }) => {
   const due = rotation.due_count;
   const ready = rotation.ready_today;
+  // An auto rotation may rotate out and restock during its sync. Opening it meanwhile would
+  // start a second sync that could restock it again, so wait for this one.
+  const locked = syncing && rotation.kind === 'auto';
 
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Tapping the card opens the rotation, like a playlist in Spotify */}
-      <ButtonBase component={RouterLink} to={`/rotation/${rotation.id}`}
+      <ButtonBase component={RouterLink} to={`/rotation/${rotation.id}`} disabled={locked}
         sx={{ display: 'block', textAlign: 'left', flexGrow: 1, borderRadius: 0 }}>
         <CardContent>
           <Box display="flex" alignItems="center" gap={2} mb={1.5}>
@@ -71,7 +74,12 @@ const RotationCard = ({ rotation }) => {
             {rotation.kind !== 'auto' && due === 0 && rotation.next_due_at && `Next song due ${relativeDays(rotation.next_due_at)}`}
             {rotation.kind !== 'auto' && due > ready && `${due} due in total${rotation.daily_limit ? ` · up to ${rotation.daily_limit} a day` : ''}`}
           </Typography>
-          {!rotation.sync_ok && (
+          {syncing ? (
+            <Box display="flex" alignItems="center" mt={1} color="text.secondary">
+              <Sync fontSize="small" sx={{ mr: 0.5 }} />
+              <Typography variant="body2">Checking Spotify…</Typography>
+            </Box>
+          ) : !rotation.sync_ok && (
             <Box display="flex" alignItems="center" mt={1} color="warning.main">
               <SyncProblem fontSize="small" sx={{ mr: 0.5 }} />
               <Typography variant="body2">Couldn't reach Spotify; counts may be out of date</Typography>
@@ -82,12 +90,12 @@ const RotationCard = ({ rotation }) => {
       <CardActions sx={{ px: 2, pb: 2, gap: 1 }}>
         <Badge badgeContent={rotation.kind === 'auto' ? 0 : ready} color="error" max={999}>
           <Button variant="contained" startIcon={<Autorenew />} component={RouterLink}
-            to={`/rotation/${rotation.id}/review`} disabled={due === 0}>
+            to={`/rotation/${rotation.id}/review`} disabled={due === 0 || locked}>
             {rotation.kind === 'auto' ? 'Review' : due > 0 && ready === 0 ? 'Rotate more' : 'Rotate'}
           </Button>
         </Badge>
         <Button variant="outlined" color="inherit" startIcon={<AddCircleOutline />} component={RouterLink}
-          to={`/rotation/${rotation.id}/restock`}>
+          to={`/rotation/${rotation.id}/restock`} disabled={locked}>
           Restock
         </Button>
       </CardActions>
@@ -100,15 +108,35 @@ const Home = () => {
   const [rotations, setRotations] = useState(null);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [syncing, setSyncing] = useState(() => new Set()); // rotation ids still checking Spotify
+  const generation = useRef(0); // ignores syncs from an earlier load
 
+  // Show what's stored right away, then check each rotation against Spotify in parallel
+  // (one request each) and update its card when it answers.
   const fetchRotations = useCallback(async () => {
+    const gen = ++generation.current;
+    let list;
     try {
-      setRotations(await api.rotations());
+      list = await api.rotations({ sync: false });
+      if (gen !== generation.current) return;
+      setRotations(list);
       setError('');
     } catch (e) {
+      if (gen !== generation.current) return;
       setError(errorMessage(e, 'Failed to load your rotations.'));
       setRotations((current) => current || []);
+      return;
     }
+    setSyncing(new Set(list.map((r) => r.id)));
+    list.forEach((r) => {
+      api.rotation(r.id)
+        .catch(() => ({ ...r, sync_ok: false })) // keep the stored numbers, flag them as possibly stale
+        .then((fresh) => {
+          if (gen !== generation.current) return;
+          setRotations((current) => (current || []).map((x) => (x.id === r.id ? fresh : x)));
+          setSyncing((current) => { const next = new Set(current); next.delete(r.id); return next; });
+        });
+    });
   }, []);
 
   useEffect(() => {
@@ -152,7 +180,7 @@ const Home = () => {
         <Grid container spacing={3}>
           {rotations.map((rotation) => (
             <Grid key={rotation.id} size={{ xs: 12, sm: 6, md: 4 }}>
-              <RotationCard rotation={rotation} />
+              <RotationCard rotation={rotation} syncing={syncing.has(rotation.id)} />
             </Grid>
           ))}
         </Grid>

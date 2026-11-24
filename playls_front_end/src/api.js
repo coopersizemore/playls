@@ -9,13 +9,29 @@ export const API_BASE = '/api';
 const CSRF_HEADER = { 'X-Requested-With': 'XMLHttpRequest' };
 axios.defaults.headers.common['X-Requested-With'] = CSRF_HEADER['X-Requested-With'];
 
+// How long the app has been in front of the user. The backend only reuses a recent sync of a
+// rotation if it happened after this point, so coming back from editing a playlist in Spotify
+// always re-checks it.
+let shownAt = Date.now();
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') shownAt = Date.now();
+  });
+  window.addEventListener('pageshow', () => { shownAt = Date.now(); });
+}
+axios.interceptors.request.use((config) => {
+  config.headers['X-Visible-For'] = String(Math.max(0, Date.now() - shownAt));
+  return config;
+});
+
 const data = (promise) => promise.then((r) => r.data);
 
 // The daily review limit resets at the user's local midnight
 const tz = () => ({ tz_offset: new Date().getTimezoneOffset() });
 
 export const api = {
-  rotations: () => data(axios.get(`${API_BASE}/user/me/rotations`, { params: tz() })),
+  rotations: ({ sync = true } = {}) =>
+    data(axios.get(`${API_BASE}/user/me/rotations`, { params: { sync, ...tz() } })),
   rotation: (id, { sync = true } = {}) =>
     data(axios.get(`${API_BASE}/rotation/${id}`, { params: { sync, ...tz() } })),
   createRotation: (body) => data(axios.post(`${API_BASE}/rotation/`, body)),

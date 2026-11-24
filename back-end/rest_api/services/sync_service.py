@@ -4,11 +4,13 @@ flush_pending_removals: push swiped-away tracks to Spotify (batched).
 sync_rotation:          flush, then re-read the playlist if its snapshot changed and diff.
 """
 import logging
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from rest_api import request_context
 from rest_api.clock import utcnow
-from rest_api.database.models.rotation import RotationDB
+from rest_api.database.models.rotation import MANUAL, RotationDB
 from rest_api.database.models.rotation_track import (
     ACTIVE,
     PENDING_REMOVAL,
@@ -22,6 +24,10 @@ from rest_api.services.rotation_logic import PlaylistTrack, parse_playlist_items
 from rest_api.services.spotify.spotify_service import SpotifyService
 
 logger = logging.getLogger(__name__)
+
+# A manual rotation synced this recently (and since the app was last shown) isn't
+# checked against Spotify again; see recently_synced.
+FRESH_SYNC_SECONDS = 120
 
 
 def _mark_removed(track: RotationTrackDB, removed_by: str) -> None:
@@ -51,10 +57,38 @@ async def flush_pending_removals(db: Session, rotation: RotationDB, user: UserDB
     return len(pending)
 
 
+def recently_synced(rotation: RotationDB, now: datetime | None = None) -> bool:
+    """Manual rotations only: skip the Spotify check if the last sync was under
+    FRESH_SYNC_SECONDS ago and happened after the client was last shown.
+
+    "Last shown" comes from the frontend (request_context.visible_since): coming back to
+    the app, e.g. from editing the playlist in Spotify, always re-checks. Requests that
+    don't send it (cron, tests, other clients) never skip. Auto rotations always sync,
+    because their maintenance must run against fresh rows.
+    """
+    ctx = request_context.current()
+    if ctx is None or ctx.visible_since is None:
+        return False
+    if rotation.kind != MANUAL or rotation.last_synced_at is None:
+        return False
+    now = now or utcnow()
+    return (
+        rotation.last_synced_at >= ctx.visible_since
+        and now - rotation.last_synced_at < timedelta(seconds=FRESH_SYNC_SECONDS)
+    )
+
+
 def apply_playlist_snapshot(
-    db: Session, rotation: RotationDB, present: dict[str, PlaylistTrack], snapshot_id: str | None
+    db: Session, rotation: RotationDB, present: dict[str, PlaylistTrack], snapshot_id: str | None,
+    partial: bool = False,
 ) -> None:
-    """Diff the playlist's current tracks against the rotation's rows (no network)."""
+    """Diff the playlist's current tracks against the rotation's rows (no network).
+
+    partial: the playlist changed while it was being read, so `present` may be missing
+    songs that are still there. Only add new songs and refresh metadata; don't mark
+    anything removed or bring removed rows back, and keep the old snapshot (and sync
+    time) so the next sync reads it again.
+    """
     now = utcnow()
     rows = {t.track_id: t for t in db.query(RotationTrackDB).filter(RotationTrackDB.rotation_id == rotation.id)}
 
@@ -82,6 +116,8 @@ def apply_playlist_snapshot(
         row.album, row.image_url, row.duration_ms = track.album, track.image_url, track.duration_ms
         row.is_playable = track.is_playable
 
+        if partial:
+            continue
         if row.status == REMOVED:
             # Re-added on Spotify after a removal: start over from the new added_at
             row.status = ACTIVE
@@ -93,6 +129,10 @@ def apply_playlist_snapshot(
         elif row.status == ACTIVE:
             row.added_at = added_at
         # PENDING_REMOVAL: still on Spotify only because the flush hasn't happened; leave it
+
+    if partial:
+        db.commit()
+        return
 
     for track_id, row in rows.items():
         if track_id in present:
@@ -111,6 +151,8 @@ def apply_playlist_snapshot(
 async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: bool = False) -> bool:
     """Flush pending removals, then re-read the playlist if it changed. Returns True if re-read."""
     await flush_pending_removals(db, rotation, user)
+    if not force and recently_synced(rotation):
+        return False
 
     meta = await SpotifyService.get_playlist(rotation.playlist_id, user, db, fields="snapshot_id,images")
     snapshot_id = meta.get("snapshot_id")
@@ -133,5 +175,14 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
             rotation.playlist_id, len(entries),
         )
         return False
+
+    # Pages are read by offset from the live playlist: if it changed mid-read, a removal can
+    # shift a song past the pages we'd already read. Re-check before trusting absences.
+    if snapshot_id:
+        after = await SpotifyService.get_playlist(rotation.playlist_id, user, db, fields="snapshot_id")
+        if after.get("snapshot_id") != snapshot_id:
+            logger.info("Playlist %s changed during the read; applying additions only", rotation.playlist_id)
+            apply_playlist_snapshot(db, rotation, present, rotation.snapshot_id, partial=True)
+            return True
     apply_playlist_snapshot(db, rotation, present, snapshot_id)
     return True

@@ -26,8 +26,9 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { AutoMode, CreateNewFolder, LibraryMusic, MusicNote } from '@mui/icons-material';
+import { AutoMode, CreateNewFolder, Favorite, LibraryMusic, MusicNote } from '@mui/icons-material';
 import { api, errorMessage } from '../api';
+import { useAuth } from '../contexts/AuthContext';
 import { ListSkeleton } from './Skeletons';
 import {
   AUTO_SETTING_DEFAULTS,
@@ -168,7 +169,13 @@ const AutoSettings = ({ target, percent, intervalHours, onTarget, onPercent, onI
 
 // ---------- create ----------
 
-export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
+// Selection value for the Liked Songs choice (the backend's playlist_id for it, too)
+const LIKED = 'liked';
+
+export const CreateRotationDialog = ({ open, onClose, onCreated, rotations = [] }) => {
+  const { login } = useAuth();
+  const hasLiked = rotations.some((r) => r.is_liked);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
   const [playlists, setPlaylists] = useState(null);
   const [mode, setMode] = useState('existing');
   const [playlistId, setPlaylistId] = useState(null);
@@ -186,7 +193,7 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
   useEffect(() => {
     if (!open) return;
     setMode('existing'); setPlaylistId(null); setName(''); setDescription('');
-    setIntervalHours(24 * 30); setGrace(true); setError(''); setPlaylists(null);
+    setIntervalHours(24 * 30); setGrace(true); setError(''); setPlaylists(null); setNeedsReconnect(false);
     setTarget(AUTO_DEFAULTS.target); setPercent(AUTO_DEFAULTS.percent); setAutoHours(AUTO_DEFAULTS.intervalHours);
     // Start from the interval chosen in Settings (30 days unless changed)
     api.settings()
@@ -206,9 +213,12 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
   const create = async () => {
     setSaving(true);
     setError('');
+    setNeedsReconnect(false);
     try {
       const body = mode === 'existing'
-        ? { playlist_id: playlistId, interval_hours: intervalHours, grace_period: grace }
+        ? (playlistId === LIKED
+          ? { liked_songs: true, interval_hours: intervalHours, grace_period: grace }
+          : { playlist_id: playlistId, interval_hours: intervalHours, grace_period: grace })
         : mode === 'auto'
           ? { kind: 'auto', name: name.trim(), description: description.trim() || null,
               target_size: target, rotate_percent: percent, interval_hours: autoHours }
@@ -216,6 +226,8 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
       await api.createRotation(body);
       onCreated();
     } catch (e) {
+      // 403: Liked Songs needs a permission granted on a newer login
+      setNeedsReconnect(playlistId === LIKED && e?.response?.status === 403);
       setError(errorMessage(e, 'Failed to create the rotation.'));
     } finally {
       setSaving(false);
@@ -226,7 +238,12 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
     <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Create New Rotation</DialogTitle>
       <DialogContent>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}
+            action={needsReconnect ? <Button color="inherit" size="small" onClick={login}>Reconnect</Button> : null}>
+            {error}
+          </Alert>
+        )}
         <RadioGroup row value={mode} onChange={(e) => setMode(e.target.value)} sx={{ mb: 2 }}>
           <FormControlLabel value="existing" control={<Radio />}
             label={<Box display="flex" alignItems="center"><LibraryMusic sx={{ mr: 1 }} />Existing playlist</Box>} />
@@ -239,12 +256,22 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
         {mode === 'existing' ? (
           playlists === null ? (
             <ListSkeleton count={5} dense />
-          ) : available.length === 0 ? (
+          ) : available.length === 0 && hasLiked ? (
             <Typography color="text.secondary">
               No playlists available. You can rotate playlists you own or collaborate on that don't already have a rotation.
             </Typography>
           ) : (
             <List sx={{ maxHeight: 280, overflow: 'auto' }} dense>
+              {!hasLiked && (
+                <ListItemButton selected={playlistId === LIKED} onClick={() => setPlaylistId(LIKED)}>
+                  <ListItemAvatar>
+                    <Avatar variant="rounded" sx={{ bgcolor: 'placeholder.main' }}>
+                      <Favorite sx={{ color: 'primary.main' }} />
+                    </Avatar>
+                  </ListItemAvatar>
+                  <ListItemText primary="Liked Songs" secondary="Removing a song unlikes it" />
+                </ListItemButton>
+              )}
               {available.map((p) => (
                 <ListItemButton key={p.id} selected={playlistId === p.id} onClick={() => setPlaylistId(p.id)}>
                   <ListItemAvatar>
@@ -277,6 +304,12 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
         )}
         {/* A new playlist starts empty, so the grace period has nothing to apply to */}
         {mode === 'existing' && <GracePeriodSwitch checked={grace} onChange={setGrace} />}
+        {mode === 'existing' && playlistId === LIKED && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            Removing a song in Review <strong>unlikes it in Spotify</strong> when you finish reviewing. If you like it
+            again later, Spotify treats it as newly liked. Songs you add from Restock are liked.
+          </Alert>
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={saving}>Cancel</Button>
@@ -453,7 +486,8 @@ export const DeleteRotationDialog = ({ rotation, onClose, onDeleted }) => {
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <Typography>
-          This deletes the rotation and its review history from PlayLS. Your Spotify playlist is not changed.
+          This deletes the rotation and its review history from PlayLS.{' '}
+          {rotation?.is_liked ? 'Your Liked Songs are not changed.' : 'Your Spotify playlist is not changed.'}
         </Typography>
       </DialogContent>
       <DialogActions>
@@ -558,9 +592,11 @@ export const RemoveUnplayableDialog = ({ rotation, onClose, onDone }) => {
         ) : (
           <>
             <Typography paragraph>
-              {tracks.length} song{tracks.length === 1 ? ' is' : 's are'} still in the playlist but no longer
-              playable on Spotify (greyed out). Remove {tracks.length === 1 ? 'it' : 'them'} from the rotation and the
-              Spotify playlist?
+              {rotation?.is_liked
+                ? `${tracks.length} liked song${tracks.length === 1 ? ' is' : 's are'} no longer playable on Spotify (greyed out). Remove ${tracks.length === 1 ? 'it' : 'them'} from the rotation and unlike ${tracks.length === 1 ? 'it' : 'them'}?`
+                : <>{tracks.length} song{tracks.length === 1 ? ' is' : 's are'} still in the playlist but no longer
+                  playable on Spotify (greyed out). Remove {tracks.length === 1 ? 'it' : 'them'} from the rotation and the
+                  Spotify playlist?</>}
             </Typography>
             <List dense sx={{ maxHeight: 280, overflow: 'auto' }}>
               {tracks.map((t) => (

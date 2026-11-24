@@ -9,6 +9,16 @@ MANUAL = "manual"  # wraps a playlist; songs come due for review every interval
 AUTO = "auto"  # created from scratch; PlayLS rotates songs out and restocks to a target size
 KINDS = (MANUAL, AUTO)
 
+# playlist_id of a rotation that wraps the user's Liked Songs (saved tracks) instead of a
+# playlist. Real Spotify playlist ids are 22-character base62, so this can't collide, and
+# the (owner, provider, playlist_id) unique constraint allows one per user. Code that misses
+# the branch calls /playlists/liked and fails loudly (404) rather than touching any rows.
+LIKED_SONGS = "liked"
+
+
+def is_liked(rotation) -> bool:
+    return rotation.playlist_id == LIKED_SONGS
+
 
 class RotationDB(Base):
     __tablename__ = "rotation"
@@ -20,6 +30,8 @@ class RotationDB(Base):
             "kind = 'manual' OR (target_size BETWEEN 1 AND 500 AND rotate_percent BETWEEN 1 AND 100)",
             name="ck_rotation_auto_settings",
         ),
+        # A Liked Songs rotation is always manual (auto rotations would unlike on a schedule)
+        CheckConstraint(f"playlist_id <> '{LIKED_SONGS}' OR kind = 'manual'", name="ck_rotation_liked_manual"),
     )
 
     id = Column(Integer, primary_key=True)

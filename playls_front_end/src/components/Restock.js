@@ -408,6 +408,7 @@ const Restock = () => {
         {addedTotal > 0
           ? `Added ${addedTotal} song${addedTotal === 1 ? '' : 's'} this session.`
           : 'Find songs to add to this rotation.'}
+        {rotation?.is_liked && ' Adding a song likes it in Spotify.'}
       </Typography>
       <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile sx={{ mb: 3 }}>
         {TABS.map((t) => <Tab key={t.source} label={t.label} />)}

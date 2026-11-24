@@ -175,6 +175,32 @@ A second kind of rotation (`rotation.kind = 'auto'`), created only from scratch 
   - They never count toward the daily limit and can't be undone.
   - Rotated-out rows get `removed_by = 'rotation'`.
 
+## Liked Songs rotations (2026-11-24)
+A manual rotation can wrap the user's Liked Songs instead of a playlist. Removing a song in Review **unlikes** it, and a restock add **likes** it.
+- **Data model:**
+  - `playlist_id = 'liked'` (`LIKED_SONGS`, `is_liked()` in `database/models/rotation.py`). There's no new column.
+  - The existing unique constraint allows one per user.
+  - `ck_rotation_liked_manual` (0014) keeps it manual: an auto rotation would unlike on a schedule.
+  - Everything else (rows, due math with `added_at` = like date, history, preferences, undo) is shared with playlist rotations.
+- **Scope:**
+  - `user-library-modify` is requested on every login (`LIBRARY_WRITE_SCOPES`), but it isn't in `/auth/me`'s `missing_scopes`, so existing users aren't nagged.
+  - Creating a Liked Songs rotation without it returns 403, and the dialog offers Reconnect.
+- **Size:** libraries over 5,000 songs are refused at creation (`MAX_LIKED_SONGS`), because full syncs read all of it.
+- **Spotify calls:**
+  - Reads: `GET /me/tracks?market=from_token`.
+  - Writes: `PUT` / `DELETE /me/library?uris=…` (max 40 per request, idempotent, no snapshot).
+  - All writes go through `sync_service.source_add` / `source_remove`, which pick the playlist or library call.
+- **Change detection (no snapshot_id):**
+  - Liked Songs is newest first, so `liked:<UTC date>:<total>:<hash of page-1 ids>` changes on every like or unlike. It's stored in `snapshot_id`.
+  - The date makes the first sync of each day a full read.
+  - Library writes never adopt anything: they clear the fingerprint, so the sync after any PlayLS change reads everything.
+- **Guards** (`sync_liked`; a full read is applied as additions only, keeping the old fingerprint, when any of these fails):
+  - the read returned exactly `total` items;
+  - page 1 still has the same fingerprint after the read;
+  - the diff would not mark more than 25% (and at least 20) of active songs removed in Spotify.
+  - Also the shared guard: if items came back but none parsed, there's no diff.
+- **Not offered:** auto Liked Songs rotations, and a cover image (the UI shows a heart).
+
 ## Preferences (owner decisions, 2026-11-24)
 Tweakable behavior, kept out of the way: each area of Settings shows what it did before, plus a collapsed **More options**, and choices are plain-language chips (no raw numbers). Defaults equal the old fixed behavior, so nothing changes until a user picks something.
 - **Where values live:**

@@ -169,6 +169,38 @@ class FakeSpotify:
         return {"items": [{"track": t, "added_at": a} for t, a in page], "total": len(self.liked),
                 "next": "more" if offset + limit < len(self.liked) else None}
 
+    # ---- Liked Songs as a rotation (the same self.liked list, newest first) ----
+    async def get_saved_tracks_page(self, user, db, offset=0, limit=50):
+        self.calls.append(("liked_page", offset))
+        if self.fail:
+            raise SpotifyAPIError(500)
+        page = self.liked[offset:offset + limit]
+        return {"items": [{"track": t, "added_at": a} for t, a in page], "total": len(self.liked),
+                "next": "more" if offset + limit < len(self.liked) else None}
+
+    async def get_all_saved_tracks(self, user, db, first=None):
+        self.calls.append(("liked_all",))
+        if self.fail:
+            raise SpotifyAPIError(500)
+        return [{"track": t, "added_at": a} for t, a in self.liked], len(self.liked)
+
+    async def save_to_library(self, uris, user, db):
+        self.calls.append(("like", tuple(uris)))
+        if self.fail:
+            raise SpotifyAPIError(500)
+        have = {t["uri"] for t, _ in self.liked}
+        for uri in uris:
+            if uri not in have:
+                track_id = uri.split(":")[-1]
+                self.liked.insert(0, (self.catalog.get(track_id) or track_object(track_id),
+                                      utcnow().isoformat() + "Z"))
+
+    async def remove_from_library(self, uris, user, db):
+        self.calls.append(("unlike", tuple(uris)))
+        if self.fail:
+            raise SpotifyAPIError(500)
+        self.liked[:] = [(t, a) for t, a in self.liked if t["uri"] not in set(uris)]
+
     async def search(self, query, user, db, search_type="track", limit=10, offset=0):
         self.calls.append(("search", query, offset))
         items = self.search_results.get(query, [])
@@ -200,7 +232,8 @@ def spotify(monkeypatch):
     fake.catalog, fake.top, fake.recent, fake.liked, fake.search_results = {}, {}, [], [], {}
     for name in ("get_playlist", "get_all_playlist_items", "remove_items_from_playlist",
                  "create_playlist", "get_user_playlists", "get_track", "get_top_items",
-                 "get_recently_played", "get_saved_tracks", "search", "add_items_to_playlist"):
+                 "get_recently_played", "get_saved_tracks", "search", "add_items_to_playlist",
+                 "get_saved_tracks_page", "get_all_saved_tracks", "save_to_library", "remove_from_library"):
         monkeypatch.setattr(SpotifyService, name, staticmethod(getattr(fake, name)))
     return fake
 

@@ -13,7 +13,7 @@ import {
   Typography,
 } from '@mui/material';
 import {
-  ArrowBack, DarkMode, HelpOutline, Home, Insights, Logout, Menu as MenuIcon, QueueMusic, Settings, Star,
+  ArrowBack, DarkMode, Favorite, HelpOutline, Home, Insights, Logout, Menu as MenuIcon, QueueMusic, Settings, Star,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
@@ -103,7 +103,9 @@ export const PlaylistCover = ({ rotation, size = 48, radius = 1.5, shadow = fals
       boxShadow: shadow ? '0 4px 10px rgba(0,0,0,0.25)' : 'none',
     }}
   >
-    <QueueMusic sx={{ fontSize: size * 0.45 }} />
+    {rotation?.is_liked
+      ? <Favorite sx={{ fontSize: size * 0.45, color: 'primary.main' }} />
+      : <QueueMusic sx={{ fontSize: size * 0.45 }} />}
   </Avatar>
 );
 

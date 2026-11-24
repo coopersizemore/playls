@@ -7,6 +7,7 @@ flush_pending_removals: push swiped-away tracks to Spotify (batched).
 sync_rotation:          check the snapshot, flush, then re-read the playlist if it changed and diff.
 """
 import asyncio
+import hashlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from rest_api import request_context
 from rest_api.clock import utcnow
-from rest_api.database.models.rotation import MANUAL, RotationDB
+from rest_api.database.models.rotation import MANUAL, RotationDB, is_liked
 from rest_api.database.models.rotation_track import (
     ACTIVE,
     PENDING_REMOVAL,
@@ -143,13 +144,35 @@ async def write_adopting_snapshot(
     the playlist. `in_sync` can be passed when the caller just checked; otherwise this checks
     (one cheap call). The caller commits. A write snapshot that doesn't match what reads report
     would only cost a full re-read next time, never a missed change.
+
+    Liked Songs: library writes return no snapshot, so there's nothing to adopt. The stored
+    fingerprint is cleared instead, which makes the next sync read the whole library.
     """
+    if is_liked(rotation):
+        await write()
+        rotation.snapshot_id = None
+        return None
     if in_sync is None:
         in_sync = bool(rotation.snapshot_id) and await _current_snapshot(db, rotation, user) == rotation.snapshot_id
     new_snapshot = await write()
     if in_sync and new_snapshot:
         rotation.snapshot_id = new_snapshot
     return new_snapshot
+
+
+def source_add(db: Session, rotation: RotationDB, user: UserDB, uris: list[str]) -> Awaitable[str | None]:
+    """The Spotify call that adds songs to a rotation: a playlist add, or a like for Liked
+    Songs. Pass it to write_adopting_snapshot (as a lambda), under sync_claim."""
+    if is_liked(rotation):
+        return SpotifyService.save_to_library(uris, user, db)
+    return SpotifyService.add_items_to_playlist(rotation.playlist_id, uris, user, db)
+
+
+def source_remove(db: Session, rotation: RotationDB, user: UserDB, uris: list[str]) -> Awaitable[str | None]:
+    """The Spotify call that removes songs: a playlist removal, or an unlike for Liked Songs."""
+    if is_liked(rotation):
+        return SpotifyService.remove_from_library(uris, user, db)
+    return SpotifyService.remove_items_from_playlist(rotation.playlist_id, uris, user, db)
 
 
 def _mark_removed(track: RotationTrackDB, removed_by: str) -> None:
@@ -176,9 +199,7 @@ async def flush_pending_removals(
     # Removing by URI drops every copy of the track (accepted; see DESIGN.md)
     uris = [t.uri for t in pending]
     await write_adopting_snapshot(
-        db, rotation, user,
-        lambda: SpotifyService.remove_items_from_playlist(rotation.playlist_id, uris, user, db),
-        in_sync=in_sync,
+        db, rotation, user, lambda: source_remove(db, rotation, user, uris), in_sync=in_sync,
     )
     for track in pending:
         _mark_removed(track, REMOVED_BY_USER)
@@ -284,6 +305,8 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
     """Check the playlist's snapshot, flush pending removals, then re-read the playlist if it
     changed. Returns True if re-read. Call under sync_claim (try_sync does)."""
     health.count("sync.attempt")
+    if is_liked(rotation):
+        return await sync_liked(db, rotation, user, force=force)
     if not force and recently_synced(rotation):
         health.count("sync.fresh_skip")
         await flush_pending_removals(db, rotation, user)
@@ -325,4 +348,99 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
         apply_playlist_snapshot(db, rotation, present, rotation.snapshot_id, partial=True)
         return True
     apply_playlist_snapshot(db, rotation, present, snapshot_id)
+    return True
+
+
+# ---------- Liked Songs ----------
+#
+# The library has no snapshot_id. Liked Songs is ordered newest-liked first, so every like
+# lands on page 1 and every unlike lowers the total: (total, page-1 ids) changes on every
+# change to its contents. That fingerprint stands in for the snapshot. The UTC date is part
+# of it, so the first sync of each day reads the whole library anyway (catching anything
+# the shortcut could miss, and refreshing is_playable).
+
+# A full diff that would mark more than this share of active songs (and at least
+# LIKED_MASS_REMOVAL_MIN of them) removed in Spotify is distrusted and applied as
+# additions only. A false alarm costs nothing (the rows stay active, and unliking a song
+# that's already unliked is a no-op); a wrong diff would wipe their kept state.
+LIKED_MASS_REMOVAL_SHARE = 0.25
+LIKED_MASS_REMOVAL_MIN = 20
+
+
+def library_fingerprint(page: dict, now: datetime | None = None) -> str | None:
+    """Stand-in snapshot for Liked Songs from its first page (None if it has no total)."""
+    total = page.get("total")
+    if not isinstance(total, int):
+        return None
+    ids = []
+    for entry in page.get("items") or []:
+        item = (entry or {}).get("track") or (entry or {}).get("item") or {}
+        original = item.get("linked_from") or {}
+        ids.append(original.get("id") or item.get("id") or "")
+    digest = hashlib.sha1(",".join(ids).encode()).hexdigest()[:16]
+    day = (now or utcnow()).strftime("%Y%m%d")
+    return f"liked:{day}:{total}:{digest}"
+
+
+def _would_remove_too_many(db: Session, rotation: RotationDB, present: dict[str, PlaylistTrack]) -> bool:
+    active = [
+        t.track_id for t in db.query(RotationTrackDB.track_id).filter(
+            RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.status == ACTIVE
+        )
+    ]
+    gone = sum(1 for track_id in active if track_id not in present)
+    return gone >= LIKED_MASS_REMOVAL_MIN and gone > LIKED_MASS_REMOVAL_SHARE * len(active)
+
+
+async def sync_liked(db: Session, rotation: RotationDB, user: UserDB, force: bool = False) -> bool:
+    """sync_rotation for a Liked Songs rotation. Returns True if the library was re-read.
+
+    Deliberately conservative (it reads more than a playlist sync does):
+    - the fingerprint is checked before flushing; a flush (unlikes) clears it, so the
+      library is always fully re-read after PlayLS changed it;
+    - a full read is trusted only if it returned `total` items, the fingerprint is the same
+      afterwards, and it wouldn't mark a large share of the songs removed. Otherwise only
+      additions are applied and the old fingerprint is kept, so the next sync reads again.
+    """
+    if not force and recently_synced(rotation):
+        health.count("sync.fresh_skip")
+        await flush_pending_removals(db, rotation, user)
+        return False
+
+    first = await SpotifyService.get_saved_tracks_page(user, db, offset=0)
+    fingerprint = library_fingerprint(first)
+    in_sync = fingerprint is not None and fingerprint == rotation.snapshot_id
+    flushed = await flush_pending_removals(db, rotation, user)
+    if not force and in_sync and not flushed:
+        health.count("sync.unchanged")
+        rotation.last_synced_at = utcnow()
+        db.commit()
+        return False
+    if flushed:
+        # Our own unlikes changed the library; start the read from a fresh first page
+        first = await SpotifyService.get_saved_tracks_page(user, db, offset=0)
+        fingerprint = library_fingerprint(first)
+
+    health.count("sync.full_read")
+    entries, total = await SpotifyService.get_all_saved_tracks(user, db, first=first)
+    present = parse_playlist_items(entries)
+    if entries and not present:
+        logger.warning("Liked Songs returned %d items but none parsed as tracks; skipping diff", len(entries))
+        return False
+
+    reason = None
+    if total is None or len(entries) != total:
+        reason = "count"
+    elif library_fingerprint(await SpotifyService.get_saved_tracks_page(user, db, offset=0)) != fingerprint:
+        reason = "changed"
+    elif _would_remove_too_many(db, rotation, present):
+        reason = "mass_removal"
+        logger.warning("Liked Songs sync for rotation %s would remove too many songs; applying additions only",
+                       rotation.id)
+    if reason:
+        logger.info("Liked Songs read for rotation %s not trusted (%s); applying additions only", rotation.id, reason)
+        health.count(f"sync.liked_partial_{reason}")
+        apply_playlist_snapshot(db, rotation, present, rotation.snapshot_id, partial=True)
+        return True
+    apply_playlist_snapshot(db, rotation, present, fingerprint)
     return True

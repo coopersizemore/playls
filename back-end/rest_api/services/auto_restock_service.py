@@ -31,8 +31,7 @@ from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import health, restock_logic
 from rest_api.services import preferences as prefs
 from rest_api.services import restock_service as rsv
-from rest_api.services.spotify.spotify_service import SpotifyService as ss
-from rest_api.services.sync_service import write_adopting_snapshot
+from rest_api.services.sync_service import source_add, source_remove, write_adopting_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -145,9 +144,7 @@ async def _rotate_out(db: orm.Session, rotation: RotationDB, user: UserDB, leavi
     if not leaving:
         return
     uris = [t.uri for t in leaving]
-    await write_adopting_snapshot(
-        db, rotation, user, lambda: ss.remove_items_from_playlist(rotation.playlist_id, uris, user, db)
-    )
+    await write_adopting_snapshot(db, rotation, user, lambda: source_remove(db, rotation, user, uris))
     for track in leaving:
         track.status = REMOVED
         track.removed_at = now
@@ -160,9 +157,7 @@ async def _add(db: orm.Session, rotation: RotationDB, user: UserDB, chosen: list
     if not chosen:
         return
     uris = [c["meta"]["uri"] for c in chosen]
-    await write_adopting_snapshot(
-        db, rotation, user, lambda: ss.add_items_to_playlist(rotation.playlist_id, uris, user, db)
-    )
+    await write_adopting_snapshot(db, rotation, user, lambda: source_add(db, rotation, user, uris))
     rows = rsv.rotation_rows(db, rotation)
     for c in chosen:
         meta = c["meta"]

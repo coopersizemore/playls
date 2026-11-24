@@ -148,6 +148,12 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
    - **Settings edits during `maintain`:** that rotation uses the old target. Harmless.
    - **Deletes during a sync:** the sync's commits may fail and roll back. Harmless.
 5. **Bring back and the 4-week cooldown** key on PlayLS's `removed_at`. Songs removed in Spotify count too, with the time PlayLS noticed, not when you actually removed them.
+6. **Liked Songs rotations** (DESIGN.md, "Liked Songs rotations"):
+   - **No snapshot (Medium, mitigated).** The page-1 fingerprint assumes Liked Songs is strictly newest first. If Spotify ever orders it differently, a like plus an unlike outside page 1 is missed until the daily full read. Verify the ordering on a real library before relying on the shortcut.
+   - **Every PlayLS write forces a full read (Low, cost).** Unlikes and likes return no snapshot, so the next sync reads the whole library (up to 100 requests at the 5,000-song cap).
+   - **The mass-removal guard can stall (Low).** If you really unlike more than 25% of the library at once in Spotify, every sync re-reads and applies additions only. Those songs stay "active" in PlayLS, and removing them in Review is a harmless no-op unlike. The guard logs `sync.liked_partial_mass_removal`.
+   - **An unlike is lossy (by design, warned in the UI).** Re-liking resets Spotify's like date, so the song's due clock restarts from the new `added_at`.
+   - **Count-check guard:** the liked path refuses to diff when the items read don't match `total` (item 2.1). It's applied only to Liked Songs for now, so playlist sync behaviour is unchanged.
 
 ## 5. Account, tokens and quota
 

@@ -73,16 +73,22 @@ SUGGESTION_SCOPES = [
     "user-read-recently-played",
     "user-library-read",
 ]
-REQUESTED_SCOPES = ROTATION_SCOPES + SUGGESTION_SCOPES
+# Liked Songs rotations: unliking (review removals) and liking (restock adds). Requested on
+# every login, but not part of the default missing_scopes() check, so existing users aren't
+# asked to reconnect unless they create a Liked Songs rotation.
+LIBRARY_WRITE_SCOPES = ["user-library-modify"]
+REQUESTED_SCOPES = ROTATION_SCOPES + SUGGESTION_SCOPES + LIBRARY_WRITE_SCOPES
+# What /api/auth/me reports as missing (its reconnect prompt)
+CORE_SCOPES = ROTATION_SCOPES + SUGGESTION_SCOPES
 
 
 def missing_scopes(user, wanted=None) -> list[str]:
-    """Scopes from `wanted` (default: all requested) the user hasn't granted.
+    """Scopes from `wanted` (default: CORE_SCOPES) the user hasn't granted.
 
     Users who logged in before scopes were recorded (granted_scopes NULL) are assumed to
     have only the rotation scopes.
     """
-    wanted = REQUESTED_SCOPES if wanted is None else wanted
+    wanted = CORE_SCOPES if wanted is None else wanted
     granted = set((user.granted_scopes or " ".join(ROTATION_SCOPES)).split())
     return [s for s in wanted if s not in granted]
 

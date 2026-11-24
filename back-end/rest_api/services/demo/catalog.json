@@ -11510,7 +11510,7 @@
  "playlists": [
   {
    "id": "demo-sample-1",
-   "name": "Shindig",
+   "name": "Tunes",
    "description": "",
    "track_ids": [
     "7LaI3mRTJu66r9HKdv7iBx",
@@ -11560,7 +11560,7 @@
   },
   {
    "id": "demo-sample-2",
-   "name": "Fucking goated songs",
+   "name": "Art",
    "description": "",
    "track_ids": [
     "42qNWdLKCI41S4uzfamhFM",

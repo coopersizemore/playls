@@ -6,6 +6,8 @@ const MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace'
 const SANS = '"Roboto", "Helvetica", "Arial", sans-serif';
 
 export const GREEN = '#7ED34E';
+export const GREEN_DARK = '#5DB032';
+export const GREEN_LIGHT = '#A6E37F';
 export const ON_GREEN = '#0B0B0B'; // text on green surfaces, in both modes
 
 const PALETTES = {
@@ -30,7 +32,7 @@ export const buildTheme = (mode = 'light') => {
   return createTheme({
     palette: {
       mode,
-      primary: { main: GREEN, dark: '#5DB032', light: '#A6E37F', contrastText: ON_GREEN },
+      primary: { main: GREEN, dark: GREEN_DARK, light: GREEN_LIGHT, contrastText: ON_GREEN },
       secondary: { main: '#191414', contrastText: '#FFFFFF' },
       success: { main: '#4CAF50', contrastText: '#FFFFFF' },
       error: { main: mode === 'dark' ? '#EF5350' : '#C62828' },

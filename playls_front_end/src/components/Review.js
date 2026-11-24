@@ -29,6 +29,7 @@ import { AlbumArt, Layout, SpotifyEmbed, daysSince, parseUtc, relativeDays } fro
 import ReviewSummary from './ReviewSummary';
 import { skipReturn, timesWord } from './SettingsControls';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
+import SongStage from './SongStage';
 import { ReviewSkeleton } from './Skeletons';
 import { startSession } from '../telemetry';
 
@@ -43,32 +44,37 @@ const DECIDED_LABEL = {
   skip: 'You skipped this song',
 };
 
-// The big number from the wireframes: days since it was added (or last kept)
+// The big number from the wireframes: days since it was added (or last kept), compact
+// enough to sit beside the title
 const DaysStat = ({ track }) => {
   const kept = !!track.last_kept_at;
   const days = daysSince(kept ? track.last_kept_at : track.added_at);
   return (
-    <Box textAlign="center" my={2.5}>
-      <Typography sx={{ fontSize: '3.2rem', fontWeight: 700, lineHeight: 1 }}>{days ?? '—'}</Typography>
-      <Typography mt={1}>
+    <Box textAlign="right" flexShrink={0}>
+      <Typography sx={{ fontSize: '1.8rem', fontWeight: 700, lineHeight: 1 }}>{days ?? '—'}</Typography>
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.3, mt: 0.25 }}>
         {days === null
           ? 'added date unknown'
-          : `day${days === 1 ? '' : 's'} since you ${kept ? (track.keep_multiplier > 1 ? 'super kept' : 'last kept') : 'added'} this song`}
+          : `day${days === 1 ? '' : 's'} since ${kept ? (track.keep_multiplier > 1 ? 'super kept' : 'last kept') : 'added'}`}
       </Typography>
     </Box>
   );
 };
 
-// Tappable swipe hint ("« Swipe Left to Remove")
+// Tappable swipe hint ("« Swipe left to remove")
 const Hint = ({ side, label, onClick, disabled, active }) => (
   <ButtonBase onClick={onClick} disabled={disabled} sx={{
-    flexDirection: 'column', alignItems: side === 'left' ? 'flex-start' : 'flex-end', p: 1, borderRadius: 2,
+    flexDirection: side === 'left' ? 'row' : 'row-reverse', alignItems: 'center', gap: 0.5, p: 0.75, borderRadius: 2,
     textAlign: side, opacity: disabled ? 0.4 : 1, color: active ? (side === 'left' ? 'error.main' : 'success.main') : 'text.primary',
   }}>
-    {side === 'left' ? <KeyboardDoubleArrowLeft fontSize="large" /> : <KeyboardDoubleArrowRight fontSize="large" />}
-    <Typography variant="body2" sx={{ whiteSpace: 'pre-line', mt: 0.5 }}>{label}</Typography>
+    {side === 'left' ? <KeyboardDoubleArrowLeft /> : <KeyboardDoubleArrowRight />}
+    <Typography variant="body2" sx={{ whiteSpace: 'pre-line', lineHeight: 1.25 }}>{label}</Typography>
   </ButtonBase>
 );
+
+// Height left for everything but the album art (see SongStage): top bar, progress and
+// tally, and on phones the details and controls stacked under the art
+const RESERVE = { xs: 440, md: 170 };
 
 // Review a rotation's due songs in daily batches (the user's review limit, most overdue
 // first). Each decision is saved right away (DB only); removals are pushed to Spotify in
@@ -297,7 +303,7 @@ const Review = () => {
   }
 
   if (batch === null) {
-    return <Layout maxWidth="sm" back={backTo}><ReviewSkeleton /></Layout>;
+    return <Layout maxWidth="md" back={backTo}><ReviewSkeleton reserve={RESERVE} /></Layout>;
   }
 
   const done = !track;
@@ -307,12 +313,20 @@ const Review = () => {
   const moreDue = batch.remaining_after_batch;
   const nextBatchSize = batch.daily_limit ? Math.min(batch.daily_limit, moreDue) : moreDue;
   const locked = !!current?.locked;
+  const badges = [];
+  if (track?.is_playable === false) badges.push({ label: 'Unavailable on Spotify', color: 'warning', variant: 'filled' });
+  if (track && rotation?.kind === 'auto') {
+    if (track.protected) badges.push({ label: 'Kept for the next rotation' });
+    else if (track.due_at) badges.push({ label: `Leaves ${relativeDays(track.due_at)}` });
+  } else if (track && reviewAll && track.due_at && parseUtc(track.due_at) > new Date()) {
+    badges.push({ label: 'Not due yet' });
+  }
 
   return (
-    <Layout maxWidth="sm" back={backTo}>
+    <Layout maxWidth="md" back={backTo}>
       {/* Progress + live tally */}
       {tracks.length > 0 && (
-        <Box mb={2}>
+        <Box mb={1.5}>
           <Box display="flex" justifyContent="space-between" alignItems="baseline" gap={1}>
             <Typography variant="body2" noWrap>{rotation?.name}</Typography>
             <Typography variant="body2" color="text.secondary" noWrap>
@@ -321,8 +335,8 @@ const Review = () => {
             </Typography>
           </Box>
           <LinearProgress variant="determinate" value={(reviewedInBatch / tracks.length) * 100}
-            sx={{ mt: 1, height: 6, borderRadius: 3 }} />
-          <Box display="flex" justifyContent="center" gap={1} mt={1.5} flexWrap="wrap" aria-live="polite">
+            sx={{ mt: 0.75, height: 6, borderRadius: 3 }} />
+          <Box display="flex" justifyContent="center" gap={1} mt={1} flexWrap="wrap" aria-live="polite">
             <Chip size="small" color="success" variant={counts.keep + counts.super_keep ? 'filled' : 'outlined'}
               icon={<ThumbUp />} label={`${counts.keep + counts.super_keep} kept${counts.super_keep ? ` (${counts.super_keep} super)` : ''}`} />
             <Chip size="small" color="error" variant={counts.remove ? 'filled' : 'outlined'}
@@ -331,7 +345,7 @@ const Review = () => {
               icon={<SkipNext />} label={`${counts.skip} skipped`} />
           </Box>
           {reviewAll && (
-            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={1}>
+            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={0.5}>
               Reviewing every song, soonest due first.
             </Typography>
           )}
@@ -374,58 +388,59 @@ const Review = () => {
           </Box>
         </Box>
       ) : (
-        <>
-          <Box sx={{ px: { xs: 2, sm: 5 } }}>
-            <SwipeCard key={track.track_id} exit={exit} disabled={busy || locked}
-              onSwipe={(dir) => decide(dir === 'right' ? 'keep' : 'remove', 'swipe')}>
-              <AlbumArt src={track.image_url} alt={track.album || track.title} />
-              {current && (
-                <Chip
-                  icon={<Check />}
-                  color={current.action === 'remove' ? 'error' : current.action === 'skip' ? 'default' : 'success'}
-                  label={`${DECIDED_LABEL[current.action]}${locked ? ' · already removed from Spotify' : ''}`}
-                  sx={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', maxWidth: '92%' }}
-                />
-              )}
-            </SwipeCard>
-          </Box>
-
-          <Box textAlign="center" mt={3}>
-            <Typography variant="h5" component="h2" sx={{ overflowWrap: 'anywhere' }}>{track.title}</Typography>
-            <Typography mt={1}>{track.artists}</Typography>
-            <Box display="flex" justifyContent="center" gap={1} mt={1} flexWrap="wrap">
-              {track.is_playable === false && <Chip size="small" color="warning" label="Unavailable on Spotify" />}
-              {rotation?.kind === 'auto' ? (
-                track.protected
-                  ? <Chip size="small" variant="outlined" label="Kept for the next rotation" />
-                  : track.due_at && <Chip size="small" variant="outlined" label={`Leaves ${relativeDays(track.due_at)}`} />
-              ) : reviewAll && track.due_at && parseUtc(track.due_at) > new Date() && (
-                <Chip size="small" variant="outlined" label="Not due yet" />
-              )}
+        <SongStage reserve={RESERVE} art={
+          <SwipeCard key={track.track_id} exit={exit} disabled={busy || locked}
+            onSwipe={(dir) => decide(dir === 'right' ? 'keep' : 'remove', 'swipe')}>
+            <AlbumArt src={track.image_url} alt={track.album || track.title} />
+            {current && (
+              <Chip
+                icon={<Check />}
+                color={current.action === 'remove' ? 'error' : current.action === 'skip' ? 'default' : 'success'}
+                label={`${DECIDED_LABEL[current.action]}${locked ? ' · already removed from Spotify' : ''}`}
+                sx={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', maxWidth: '92%' }}
+              />
+            )}
+          </SwipeCard>
+        }>
+          {/* Title and artist stay small: the player below identifies the song too */}
+          <Box display="flex" alignItems="center" gap={2}>
+            <Box minWidth={0} flexGrow={1}>
+              <Typography variant="subtitle1" component="h2" noWrap title={track.title}
+                sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                {track.title}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" noWrap title={track.artists}>{track.artists}</Typography>
             </Box>
+            <DaysStat track={track} />
           </Box>
+          {badges.length > 0 && (
+            <Box display="flex" gap={1} mt={1} flexWrap="wrap">
+              {badges.map((b) => (
+                <Chip key={b.label} size="small" color={b.color || 'default'} variant={b.variant || 'outlined'} label={b.label} />
+              ))}
+            </Box>
+          )}
 
-          <DaysStat track={track} />
+          <Box mt={1.5}><SpotifyEmbed trackId={track.track_id} title={track.title} compact /></Box>
 
-          <SpotifyEmbed trackId={track.track_id} title={track.title} compact />
-
-          <Box display="flex" justifyContent="space-between" alignItems="flex-end" mt={3}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mt={1.5}>
             <Hint side="left"
               label={rotation?.is_liked
-                ? (touch ? 'Swipe Left\nto Unlike' : 'Unlike\n(← key)')
-                : (touch ? 'Swipe Left\nto Remove' : 'Remove\n(← key)')}
+                ? (touch ? 'Swipe left\nto unlike' : 'Unlike\n(← key)')
+                : (touch ? 'Swipe left\nto remove' : 'Remove\n(← key)')}
               onClick={() => decide('remove')} disabled={busy || locked} active={current?.action === 'remove'} />
             <Button variant={current?.action === 'super_keep' ? 'contained' : 'outlined'} color="warning"
               startIcon={current?.action === 'super_keep' ? <Check /> : <Star />} onClick={() => decide('super_keep')}
               disabled={busy || locked}
-              title={`Keep, and don't ask again for ${timesWord(rotation?.super_keep_multiplier || 3)} as long`} sx={{ mb: 1 }}>
+              title={`Keep, and don't ask again for ${timesWord(rotation?.super_keep_multiplier || 3)} as long`}>
               Super keep
             </Button>
-            <Hint side="right" label={touch ? 'Swipe Right\nto Keep' : 'Keep\n(→ key)'}
+            <Hint side="right" label={touch ? 'Swipe right\nto keep' : 'Keep\n(→ key)'}
               onClick={() => decide('keep')} disabled={busy || locked} active={current?.action === 'keep'} />
           </Box>
           {rotation && (
-            <Typography variant="caption" color="text.secondary" display="block" textAlign="center">
+            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={0.5}
+              sx={{ lineHeight: 1.4 }}>
               {rotation.kind === 'auto'
                 ? `Kept songs stay through the next rotation; super kept songs age ${timesWord(rotation.super_keep_multiplier)} slower. Removed songs are replaced.`
                 : <>Kept songs come back in {formatInterval(rotation.interval_hours)}, super kept in{' '}
@@ -435,7 +450,7 @@ const Review = () => {
           )}
 
           {/* Back / forward through the batch */}
-          <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
             <Button startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0} color="inherit">Back</Button>
             <Button onClick={() => finish('stopped')} disabled={finishing} color="inherit" size="small">
               {finishing ? 'Updating Spotify…' : 'Stop for now'}
@@ -446,11 +461,11 @@ const Review = () => {
             </Button>
           </Box>
           {!touch && (
-            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={1}>
+            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={0.5}>
               Drag the card, or use ← remove · → keep · ↑ super keep · ↓ skip · Backspace back
             </Typography>
           )}
-        </>
+        </SongStage>
       )}
 
       <Snackbar

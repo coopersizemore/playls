@@ -64,6 +64,13 @@ def test_start_creates_and_seeds_a_demo_account(demo, db):
     assert rotations["Fresh Rotation"]["active_count"] == 30
 
 
+def test_rename_sticks_in_the_demo(demo, db):
+    start_demo(demo)
+    rid = _rotations(demo)["Daily Mix"]["id"]
+    assert demo.put(f"/api/rotation/{rid}", json={"name": "My Mix"}).status_code == 200
+    assert demo.get(f"/api/rotation/{rid}").json()["name"] == "My Mix"  # sync doesn't undo it
+
+
 def test_start_again_reuses_the_account(demo, db):
     start_demo(demo)
     start_demo(demo)

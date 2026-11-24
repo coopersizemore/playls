@@ -94,8 +94,14 @@ class DemoSpotify:
             raise _not_found()
         cat = catalog()
         p = cat.playlists.get(playlist_id) or {}
+        # The rotation row is the demo playlist's store, so its name is the playlist's name
+        # (sync copies the name from here, and renames change only the row)
+        rotation = db.query(RotationDB.name).filter(
+            RotationDB.owner_id == user.id, RotationDB.playlist_id == playlist_id
+        ).first()
+        name = (rotation.name if rotation is not None else None) or p.get("name") or "Playlist"
         return {
-            "id": playlist_id, "name": p.get("name") or "Playlist", "description": p.get("description") or "",
+            "id": playlist_id, "name": name, "description": p.get("description") or "",
             "collaborative": False, "owner": {"id": user.spotify_id}, "snapshot_id": snapshot(playlist_id),
             "images": _cover(cat.playlist_tracks(playlist_id)),
         }
@@ -137,6 +143,11 @@ class DemoSpotify:
         if not _known_playlist(playlist_id):
             raise _not_found()
         return snapshot(playlist_id)
+
+    @staticmethod
+    async def rename_playlist(playlist_id: str, name: str, user: UserDB, db: Session) -> None:
+        if not _known_playlist(playlist_id):
+            raise _not_found()
 
     @staticmethod
     async def create_playlist(

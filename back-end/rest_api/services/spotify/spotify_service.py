@@ -400,7 +400,7 @@ from ..demo.demo_spotify import DemoSpotify  # noqa: E402
 _DEMO_ROUTED = (
     "get_user_playlists", "get_playlist", "get_playlist_items_page", "get_all_playlist_items",
     "get_saved_tracks_page", "get_all_saved_tracks", "save_to_library", "remove_from_library",
-    "add_items_to_playlist", "remove_items_from_playlist", "create_playlist", "get_track",
+    "add_items_to_playlist", "remove_items_from_playlist", "create_playlist", "rename_playlist", "get_track",
     "get_top_items", "get_recently_played", "get_saved_tracks", "search",
 )
 

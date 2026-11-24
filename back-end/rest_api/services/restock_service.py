@@ -60,9 +60,39 @@ def rotation_rows(db: orm.Session, rotation: RotationDB) -> dict[str, RotationTr
     return {r.track_id: r for r in db.query(RotationTrackDB).filter(RotationTrackDB.rotation_id == rotation.id)}
 
 
+class RotationSongs:
+    """A rotation's rows, looked up by track id or, failing that, by song (logic.song_key),
+    so a relinked or re-released copy of a song counts as the same song."""
+
+    def __init__(self, rows: dict[str, RotationTrackDB]):
+        self.by_id = rows
+        self.by_key: dict[str, RotationTrackDB] = {}
+        for row in rows.values():
+            key = logic.song_key(row.title, row.artists)
+            current = self.by_key.get(key) if key else None
+            # Prefer a row that's still in the rotation over a removed copy
+            if key and (current is None or (current.status == REMOVED and row.status != REMOVED)):
+                self.by_key[key] = row
+
+    def find(self, track_id: str, title: str | None = None, artists: str | None = None) -> RotationTrackDB | None:
+        row = self.by_id.get(track_id)
+        if row is None:
+            key = logic.song_key(title, artists)
+            row = self.by_key.get(key) if key else None
+        return row
+
+    def find_meta(self, meta: dict[str, Any]) -> RotationTrackDB | None:
+        return self.find(meta["track_id"], meta.get("title"), meta.get("artists"))
+
+
+def rotation_songs(db: orm.Session, rotation: RotationDB) -> RotationSongs:
+    return RotationSongs(rotation_rows(db, rotation))
+
+
 def in_other_rotations(db: orm.Session, user: UserDB, rotation: RotationDB) -> set:
+    """Track ids and song keys (logic.song_key) live in the user's other rotations."""
     rows = (
-        db.query(RotationTrackDB.track_id)
+        db.query(RotationTrackDB.track_id, RotationTrackDB.title, RotationTrackDB.artists)
         .join(RotationDB, RotationTrackDB.rotation_id == RotationDB.id)
         .filter(
             RotationDB.owner_id == user.id,
@@ -70,7 +100,18 @@ def in_other_rotations(db: orm.Session, user: UserDB, rotation: RotationDB) -> s
             RotationTrackDB.status.in_((ACTIVE, PENDING_REMOVAL)),
         )
     )
-    return {track_id for (track_id,) in rows}
+    found = set()
+    for track_id, title, artists in rows:
+        found.add(track_id)
+        key = logic.song_key(title, artists)
+        if key:
+            found.add(key)
+    return found
+
+
+def is_elsewhere(elsewhere: set, meta: dict[str, Any]) -> bool:
+    key = logic.song_key(meta.get("title"), meta.get("artists"))
+    return meta["track_id"] in elsewhere or (key is not None and key in elsewhere)
 
 
 def skip_counts(db: orm.Session, user: UserDB) -> Counter:
@@ -199,12 +240,12 @@ def active_picks_query(db: orm.Session, now):
 
 def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_minutes: int = 0) -> DeckOut:
     now = utcnow()
-    rows = rotation_rows(db, rotation)
+    songs = rotation_songs(db, rotation)
     skipped_today = _skipped_since(db, user, _today(tz_offset_minutes)) | blocked_ids(db, user)
     skips = skip_counts(db, user)
     seen, picks, already_in = set(), [], set()
     for pick in active_picks_query(db, now).order_by(CuratedPickDB.created_at.desc(), CuratedPickDB.id.desc()):
-        row = rows.get(pick.track_id)
+        row = songs.find(pick.track_id, pick.title, pick.artists)
         if row and row.status != REMOVED:
             already_in.add(pick.track_id)  # reported, so an empty deck can explain itself
             continue
@@ -352,17 +393,18 @@ async def suggested_deck(
     payload = await suggestion_signals(db, user, refresh)
     now = utcnow()
     today = _today(tz_offset_minutes)
-    rows = rotation_rows(db, rotation)  # in rotation, or removed from it (that's "bring back")
+    # In the rotation, or removed from it (that's "bring back"), under any of the song's track ids
+    songs = rotation_songs(db, rotation)
     skipped_today = _skipped_since(db, user, today) | blocked_ids(db, user)
     skips = skip_counts(db, user)
     elsewhere = in_other_rotations(db, user, rotation)
 
     known, discoveries = [], []
     for track_id, entry in payload["candidates"].items():
-        if track_id in rows or track_id in skipped_today:
+        if songs.find_meta(entry["meta"]) is not None or track_id in skipped_today:
             continue
         score, reason = logic.score_suggestion(
-            entry["features"], skips[track_id], track_id in elsewhere, now, skip_factor(user)
+            entry["features"], skips[track_id], is_elsewhere(elsewhere, entry["meta"]), now, skip_factor(user)
         )
         if score <= 0:
             continue
@@ -383,13 +425,13 @@ async def suggested_deck(
 async def search(db: orm.Session, rotation: RotationDB, user: UserDB, q: str, offset: int = 0) -> SearchOut:
     result = await ss.search(q, user, db, "track", 10, offset)
     page = (result or {}).get("tracks") or {}
-    rows = rotation_rows(db, rotation)
+    songs = rotation_songs(db, rotation)
     items = []
     for item in page.get("items") or []:
         meta = logic.track_meta(item)
         if meta is None:
             continue
-        row = rows.get(meta["track_id"])
+        row = songs.find_meta(meta)
         items.append(_candidate(meta, "search", in_rotation=bool(row and row.status != REMOVED)))
     next_offset = offset + 10 if page.get("next") and offset + 10 <= 1000 else None
     return SearchOut(items=items, next_offset=next_offset)
@@ -432,6 +474,11 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
     if row is not None and row.status in (ACTIVE, PENDING_REMOVAL):
         raise HTTPException(status_code=409, detail="That song is already in this rotation")
     meta = await _resolve_meta(db, user, track_id, row)
+    if row is None:
+        # The same song under another track id (relinked, or a single vs. the album cut)
+        same = rotation_songs(db, rotation).find_meta(meta)
+        if same is not None and same.status in (ACTIVE, PENDING_REMOVAL):
+            raise HTTPException(status_code=409, detail="That song is already in this rotation")
 
     # A playlist add, or a like for a Liked Songs rotation
     await write_adopting_snapshot(db, rotation, user, lambda: source_add(db, rotation, user, [meta["uri"]]))

@@ -42,6 +42,20 @@ def _pick_image(album: dict[str, Any]) -> str | None:
     return sized[-1].get("url")
 
 
+def song_key(title: str | None, artists: str | None) -> str | None:
+    """Identity of a song apart from its track id: normalized title + first artist.
+
+    The same song often has several track ids: Spotify relinks playlist and library tracks
+    to a playable version (rows keep the original id, from `linked_from`, while top tracks,
+    search and the like return the playable one), and singles reappear on albums. Track ids
+    alone then miss that a suggested song is already in the rotation.
+    """
+    if not title:
+        return None
+    first_artist = (artists or "").split(", ")[0]
+    return f"{' '.join(title.casefold().split())}|{' '.join(first_artist.casefold().split())}"
+
+
 def track_meta(item: dict[str, Any] | None) -> dict[str, Any] | None:
     """Spotify track object -> compact, JSON-safe dict. None for local files/episodes/nulls."""
     if not item or item.get("type", "track") != "track" or not item.get("id") or item.get("is_local"):

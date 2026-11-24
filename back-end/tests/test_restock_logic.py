@@ -108,3 +108,11 @@ def test_old_skips_hurt_less_than_fresh_ones():
     old = score_suggestion({"top": {"short_term": 0}}, skips=skip_decay(NOW - timedelta(days=60), NOW))[0]
     none = score_suggestion({"top": {"short_term": 0}})[0]
     assert fresh < old < none
+
+
+def test_song_key_ignores_case_spacing_and_featured_artists():
+    from rest_api.services.restock_logic import song_key
+    assert song_key("Hit  Song", "Artist A, Guest") == song_key("hit song", "artist a")
+    assert song_key("Hit Song", "Artist A") != song_key("Hit Song", "Artist B")
+    assert song_key("Hit Song", "Artist A") != song_key("Hit Song - Live", "Artist A")
+    assert song_key(None, "Artist A") is None

@@ -59,6 +59,7 @@ async def choose_additions(
     if slots <= 0:
         return []
     rows = rsv.rotation_rows(db, rotation)
+    songs = rsv.RotationSongs(rows)  # also matches a song under another track id
     blocked = rsv.blocked_ids(db, user)
     skips = rsv.skip_counts(db, user)
     rng = random.Random(restock_logic.daily_seed(user.id, rotation.id, "auto", now.isoformat()))
@@ -83,7 +84,7 @@ async def choose_additions(
     # PlayLS picks that are live and not in (or recently out of) this rotation
     picks, seen = [], set()
     for pick in rsv.active_picks_query(db, now).order_by(CuratedPickDB.created_at.desc(), CuratedPickDB.id.desc()):
-        row = rows.get(pick.track_id)
+        row = songs.find(pick.track_id, pick.title, pick.artists)
         if pick.track_id in seen or pick.track_id in blocked:
             continue
         if row is not None and (row.status != REMOVED or not auto.cooled_down(row.removed_at, now, cooldown)):
@@ -98,10 +99,10 @@ async def choose_additions(
     elsewhere = rsv.in_other_rotations(db, user, rotation)
     known, discoveries = [], []
     for track_id, entry in payload["candidates"].items():
-        if track_id in rows or track_id in blocked:
+        if songs.find_meta(entry["meta"]) is not None or track_id in blocked:
             continue
         score, _ = restock_logic.score_suggestion(
-            entry["features"], skips[track_id], track_id in elsewhere, now, rsv.skip_factor(user)
+            entry["features"], skips[track_id], rsv.is_elsewhere(elsewhere, entry["meta"]), now, rsv.skip_factor(user)
         )
         if score <= 0:
             continue
@@ -128,9 +129,12 @@ async def choose_additions(
         for meta in pool:
             if want <= 0:
                 break
-            if meta["track_id"] in taken:
+            key = restock_logic.song_key(meta.get("title"), meta.get("artists"))
+            if meta["track_id"] in taken or (key and key in taken):
                 continue
             taken.add(meta["track_id"])
+            if key:
+                taken.add(key)
             chosen.append({"meta": meta, "source": source})
             want -= 1
     # Interleave so a restock doesn't land as a block of picks followed by a block of For you

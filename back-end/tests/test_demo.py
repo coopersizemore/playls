@@ -85,6 +85,24 @@ def test_demo_is_capped(demo, db, monkeypatch):
     assert r.status_code == 503
 
 
+def test_demo_is_capped_per_ip(demo, db, monkeypatch):
+    monkeypatch.setattr(demo_service, "DEMO_MAX_PER_CLIENT", 2)
+    same_ip = {**DEMO_HEADERS, "X-Real-IP": "203.0.113.7"}
+    for _ in range(2):
+        assert TestClient(app, headers=same_ip).post("/api/demo/start").status_code == 200
+    r = TestClient(app, headers=same_ip).post("/api/demo/start")
+    assert r.status_code == 403 and "demos" in r.json()["detail"]
+    other_ip = {**DEMO_HEADERS, "X-Real-IP": "198.51.100.1"}
+    assert TestClient(app, headers=other_ip).post("/api/demo/start").status_code == 200
+    # The IP itself is never stored
+    hashes = {u.demo_client_hash for u in db.query(UserDB).filter(UserDB.provider == "demo")}
+    assert len(hashes) == 2 and all(h and "203.0.113.7" not in h for h in hashes)
+    # Ending a demo frees that IP's slot
+    db.delete(db.query(UserDB).filter(UserDB.demo_client_hash == demo_service.client_hash("203.0.113.7")).first())
+    db.commit()
+    assert TestClient(app, headers=same_ip).post("/api/demo/start").status_code == 200
+
+
 def test_start_needs_the_csrf_header(demo):
     r = demo.post("/api/demo/start", headers={"X-Requested-With": ""})
     assert r.status_code == 403

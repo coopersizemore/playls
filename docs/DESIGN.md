@@ -253,6 +253,7 @@ A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spoti
     - a weekly manual "Daily Mix" with about 15 songs due, some history, 4 removed songs (for Bring back) and 2 unplayable ones;
     - a weekly auto rotation of 30 songs.
   - At most `DEMO_MAX_ACTIVE` (env, default 100) accounts exist at once; past that, start returns 503.
+  - One IP can hold at most `DEMO_MAX_PER_CLIENT` (env, default 3) live accounts; past that, start returns 403 (not 429, which the app reserves for Spotify rate limiting). The IP comes from `x-real-ip` / `x-forwarded-for`, which Vercel sets, and is stored only as an HMAC keyed with `SECRET_KEY` (`users.demo_client_hash`). Resuming with the demo cookie doesn't count.
   - Accounts are deleted 24 hours after creation (real time), by `purge_expired`, which runs on every start and in the daily cron. "End demo" deletes one right away.
 - **No Spotify:**
   - `SpotifyService`'s public methods route demo users to `DemoSpotify` (`services/demo/demo_spotify.py`), which makes no network calls.

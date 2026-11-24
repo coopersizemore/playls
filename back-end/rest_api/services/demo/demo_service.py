@@ -5,6 +5,8 @@ DemoSpotify (no network), so every rule (due dates, the queue, history, restock,
 rotations) runs on the real code. Accounts are deleted DEMO_SESSION_HOURS after they're
 created (real time), by purge_expired, which runs on every start and in the daily cron.
 """
+import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -19,7 +21,7 @@ from rest_api.database.models.rotation import AUTO, MANUAL, RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, REMOVED, REMOVED_BY_USER, RotationTrackDB
 from rest_api.database.models.user import DEMO, UserDB
 from rest_api.services import health
-from rest_api.services.auth_service import DEMO_SESSION_HOURS, REQUESTED_SCOPES
+from rest_api.services.auth_service import DEMO_SESSION_HOURS, REQUESTED_SCOPES, SECRET_KEY
 from rest_api.services.rotation_logic import parse_playlist_items
 
 from .catalog import NEW_PLAYLIST_PREFIX, catalog
@@ -29,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Most demo accounts alive at once; bounds what the public demo can add to the shared database
 DEMO_MAX_ACTIVE = int(os.getenv("DEMO_MAX_ACTIVE", "100"))
+# Most live demo accounts one IP can hold, so a script can't take every slot
+DEMO_MAX_PER_CLIENT = int(os.getenv("DEMO_MAX_PER_CLIENT", "3"))
 SKIP_AHEAD_HOURS = 24
 MAX_OFFSET_HOURS = 60 * 24
 
@@ -65,9 +69,27 @@ def active_count(db: Session) -> int:
     return db.query(UserDB).filter(UserDB.provider == DEMO).count()
 
 
-def start(db: Session) -> UserDB:
-    """Create and seed a new demo account. 503 when DEMO_MAX_ACTIVE are already in use."""
+def client_hash(ip: str) -> str:
+    """Keyed hash of a client IP: lets the per-IP cap match clients without storing IPs."""
+    return hmac.new(SECRET_KEY.encode(), ip.encode(), hashlib.sha256).hexdigest()
+
+
+def start(db: Session, client: str | None = None) -> UserDB:
+    """Create and seed a new demo account for `client` (a client_hash).
+
+    403 when that client already holds DEMO_MAX_PER_CLIENT live accounts (not 429: that
+    means Spotify rate limiting, in the UI and on the dashboard); 503 when DEMO_MAX_ACTIVE
+    are already in use.
+    """
     purge_expired(db)
+    if client is not None and db.query(UserDB).filter(
+        UserDB.provider == DEMO, UserDB.demo_client_hash == client
+    ).count() >= DEMO_MAX_PER_CLIENT:
+        health.count("demo.client_limit")
+        raise HTTPException(
+            status_code=403,
+            detail="You've started several demos today. Try again tomorrow.",
+        )
     if active_count(db) >= DEMO_MAX_ACTIVE:
         health.count("demo.full")
         raise HTTPException(status_code=503, detail="The demo is full right now. Try again later.")
@@ -84,6 +106,7 @@ def start(db: Session) -> UserDB:
         analytics_consent=False,
         analytics_consent_at=now,
         granted_scopes=" ".join(REQUESTED_SCOPES),
+        demo_client_hash=client,
     )
     db.add(user)
     db.flush()

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from ..database.config import get_db
@@ -159,6 +159,7 @@ async def flush_removals(rotation_id: int, db: Session = Depends(get_db), user: 
 @router.get("/{rotation_id}/history", response_model=list[HistoryEventOut])
 async def get_history(
     rotation_id: int,
+    response: Response,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     filter: Literal["all", "removed", "kept", "skipped", "rotated", "reviews"] = Query(
@@ -167,4 +168,7 @@ async def get_history(
     db: Session = Depends(get_db),
     user: UserDB = current_user_dep,
 ):
-    return rs.history(db, _get_owned_or_404(db, rotation_id, user), limit, offset, filter)
+    """Newest first. X-Total-Count gives how many events match the filter (for paging)."""
+    events, total = rs.history(db, _get_owned_or_404(db, rotation_id, user), limit, offset, filter)
+    response.headers["X-Total-Count"] = str(total)
+    return events

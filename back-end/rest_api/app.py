@@ -34,7 +34,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Server-Timing"],
+    expose_headers=["Server-Timing", "X-Total-Count"],
 )
 # Outermost: times the whole request and owns the per-request Spotify client
 app.add_middleware(RequestContextMiddleware)

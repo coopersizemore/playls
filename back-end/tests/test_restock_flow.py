@@ -324,12 +324,16 @@ def test_history_filters_and_pages_on_the_server(client, spotify, db):
     newest = client.get(f"/api/rotation/{rid}/history").json()
     assert len(newest) == 100 and all(e["action"] == "keep" for e in newest)  # the old client-side view
 
-    removed = client.get(f"/api/rotation/{rid}/history", params={"filter": "removed"}).json()
+    r = client.get(f"/api/rotation/{rid}/history", params={"filter": "removed"})
+    assert r.headers["x-total-count"] == "2"
+    removed = r.json()
     assert sorted(e["track"]["track_id"] for e in removed) == ["s000", "s001"]
     assert len(client.get(f"/api/rotation/{rid}/history", params={"filter": "kept"}).json()) == 100
     assert client.get(f"/api/rotation/{rid}/history", params={"filter": "skipped"}).json() == []
 
-    page2 = client.get(f"/api/rotation/{rid}/history", params={"limit": 100, "offset": 100}).json()
+    r = client.get(f"/api/rotation/{rid}/history", params={"limit": 100, "offset": 100})
+    assert r.headers["x-total-count"] == "122"
+    page2 = r.json()
     assert len(page2) == 22 and {e["action"] for e in page2[-2:]} == {"remove"}
 
     [last] = client.get(f"/api/rotation/{rid}/history", params={"filter": "reviews", "limit": 1}).json()

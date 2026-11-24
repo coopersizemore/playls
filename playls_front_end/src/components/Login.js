@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { Wordmark } from './Layout';
 import {
   Container,
   Typography,
@@ -31,7 +32,7 @@ const Login = () => {
     <Container maxWidth="sm" sx={{ mt: 8 }}>
       <Box sx={{ textAlign: 'center' }}>
         <Typography variant="h3" component="h1" gutterBottom>
-          Welcome to PlayLS
+          Welcome to <Wordmark />
         </Typography>
         <Typography variant="h6" color="text.secondary" paragraph>
           Connect your Spotify account to start rotating your playlists

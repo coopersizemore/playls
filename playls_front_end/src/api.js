@@ -52,6 +52,10 @@ export const api = {
   // Newest first. filter: all | removed | kept | skipped | rotated | reviews (the user's own decisions)
   history: (id, { filter = 'all', limit = 50, offset = 0 } = {}) =>
     data(axios.get(`${API_BASE}/rotation/${id}/history`, { params: { filter, limit, offset } })),
+  // One page of history plus how many events match in total: { events, total }
+  historyPage: (id, { filter = 'all', limit = 25, offset = 0 } = {}) =>
+    axios.get(`${API_BASE}/rotation/${id}/history`, { params: { filter, limit, offset } })
+      .then((r) => ({ events: r.data, total: Number(r.headers['x-total-count']) || r.data.length })),
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
   settings: () => data(axios.get(`${API_BASE}/user/me/settings`)),
   updateSettings: (body) => data(axios.put(`${API_BASE}/user/me/settings`, body)),

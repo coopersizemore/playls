@@ -17,6 +17,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
 import { HelpDialog } from './Help';
 
+// The PlayLS wordmark: "Play" in the text color, "LS" in the brand green
+export const Wordmark = () => (
+  <>Play<Box component="span" sx={{ color: 'primary.main' }}>LS</Box></>
+);
+
 // Minimal top bar from the wireframes: back arrow (or the PlayLS wordmark on top-level
 // pages) on the left, a ☰ menu on the right.
 const TopBar = ({ back }) => {
@@ -36,7 +41,7 @@ const TopBar = ({ back }) => {
       ) : (
         <Typography component={RouterLink} to="/" variant="h6"
           sx={{ color: 'text.primary', textDecoration: 'none', fontWeight: 700, letterSpacing: '0.04em' }}>
-          PlayLS
+          <Wordmark />
         </Typography>
       )}
       <Box display="flex" alignItems="center">
@@ -139,7 +144,7 @@ export const RequireAuth = ({ children }) => {
   return user ? children : <Navigate to="/" replace />;
 };
 
-const parseUtc = (iso) => new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+export const parseUtc = (iso) => new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
 
 export const formatDate = (iso) =>
   // API timestamps are naive UTC

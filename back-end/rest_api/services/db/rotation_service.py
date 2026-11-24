@@ -507,9 +507,9 @@ HISTORY_FILTERS: dict[str, tuple[str, ...] | None] = {
 
 def history(
     db: orm.Session, rotation: RotationDB, limit: int = 100, offset: int = 0, filter: str = "all"
-) -> list[HistoryEventOut]:
-    """Newest first. Filtering happens here, not in the client, so older events of one kind
-    aren't hidden behind newer events of another."""
+) -> tuple[list[HistoryEventOut], int]:
+    """One page of events (newest first) and how many match in total. Filtering happens here,
+    not in the client, so older events of one kind aren't hidden behind newer events of another."""
     query = (
         db.query(ReviewEventDB, RotationTrackDB)
         .join(RotationTrackDB, ReviewEventDB.rotation_track_id == RotationTrackDB.id)
@@ -518,6 +518,7 @@ def history(
     actions = HISTORY_FILTERS[filter]
     if actions is not None:
         query = query.filter(ReviewEventDB.action.in_(actions))
+    total = query.count()
     rows = (
         query
         .order_by(ReviewEventDB.created_at.desc(), ReviewEventDB.id.desc())
@@ -531,4 +532,4 @@ def history(
             action=event.action, created_at=event.created_at, track=track_out(track, rotation, dates.get(track.id))
         )
         for event, track in rows
-    ]
+    ], total

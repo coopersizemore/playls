@@ -4,7 +4,6 @@ import {
   Alert,
   Box,
   Button,
-  ButtonBase,
   Chip,
   LinearProgress,
   Snackbar,
@@ -15,8 +14,6 @@ import {
   ArrowBack,
   ArrowForward,
   Check,
-  KeyboardDoubleArrowLeft,
-  KeyboardDoubleArrowRight,
   SkipNext,
   Star,
   ThumbDown,
@@ -29,7 +26,7 @@ import { AlbumArt, Layout, SpotifyEmbed, daysSince, parseUtc, relativeDays } fro
 import ReviewSummary from './ReviewSummary';
 import { skipReturn, timesWord } from './SettingsControls';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
-import SongStage from './SongStage';
+import SongStage, { DetailsPanel, NavRow, PanelNote, PanelSection } from './SongStage';
 import { ReviewSkeleton } from './Skeletons';
 import { startSession } from '../telemetry';
 
@@ -61,20 +58,17 @@ const DaysStat = ({ track }) => {
   );
 };
 
-// Tappable swipe hint ("« Swipe left to remove")
-const Hint = ({ side, label, onClick, disabled, active }) => (
-  <ButtonBase onClick={onClick} disabled={disabled} sx={{
-    flexDirection: side === 'left' ? 'row' : 'row-reverse', alignItems: 'center', gap: 0.5, p: 0.75, borderRadius: 2,
-    textAlign: side, opacity: disabled ? 0.4 : 1, color: active ? (side === 'left' ? 'error.main' : 'success.main') : 'text.primary',
-  }}>
-    {side === 'left' ? <KeyboardDoubleArrowLeft /> : <KeyboardDoubleArrowRight />}
-    <Typography variant="body2" sx={{ whiteSpace: 'pre-line', lineHeight: 1.25 }}>{label}</Typography>
-  </ButtonBase>
+// One of the three decision buttons: outlined in its color, filled once it's the choice
+const Decision = ({ chosen, color, icon, children, ...props }) => (
+  <Button variant={chosen ? 'contained' : 'outlined'} color={color} startIcon={chosen ? <Check /> : icon}
+    sx={{ flex: 1, minWidth: 0, px: 1, whiteSpace: 'nowrap' }} {...props}>
+    {children}
+  </Button>
 );
 
 // Height left for everything but the album art (see SongStage): top bar, progress and
 // tally, and on phones the details and controls stacked under the art
-const RESERVE = { xs: 440, md: 170 };
+const RESERVE = { xs: 480, md: 170 };
 
 // Review a rotation's due songs in daily batches (the user's review limit, most overdue
 // first). Each decision is saved right away (DB only); removals are pushed to Spotify in
@@ -402,69 +396,67 @@ const Review = () => {
             )}
           </SwipeCard>
         }>
-          {/* Title and artist stay small: the player below identifies the song too */}
-          <Box display="flex" alignItems="center" gap={2}>
-            <Box minWidth={0} flexGrow={1}>
-              <Typography variant="subtitle1" component="h2" noWrap title={track.title}
-                sx={{ fontWeight: 600, lineHeight: 1.3 }}>
-                {track.title}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" noWrap title={track.artists}>{track.artists}</Typography>
+          <DetailsPanel>
+            {/* Title and artist stay small: the player below identifies the song too */}
+            <Box display="flex" alignItems="center" gap={2}>
+              <Box minWidth={0} flexGrow={1}>
+                <Typography variant="subtitle1" component="h2" noWrap title={track.title}
+                  sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                  {track.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" noWrap title={track.artists}>{track.artists}</Typography>
+              </Box>
+              <DaysStat track={track} />
             </Box>
-            <DaysStat track={track} />
-          </Box>
-          {badges.length > 0 && (
-            <Box display="flex" gap={1} mt={1} flexWrap="wrap">
-              {badges.map((b) => (
-                <Chip key={b.label} size="small" color={b.color || 'default'} variant={b.variant || 'outlined'} label={b.label} />
-              ))}
-            </Box>
-          )}
+            {badges.length > 0 && (
+              <Box display="flex" gap={1} mt={1} flexWrap="wrap">
+                {badges.map((b) => (
+                  <Chip key={b.label} size="small" color={b.color || 'default'} variant={b.variant || 'outlined'} label={b.label} />
+                ))}
+              </Box>
+            )}
 
-          <Box mt={1.5}><SpotifyEmbed trackId={track.track_id} title={track.title} compact /></Box>
+            <PanelSection><SpotifyEmbed trackId={track.track_id} title={track.title} compact /></PanelSection>
 
-          <Box display="flex" justifyContent="space-between" alignItems="center" mt={1.5}>
-            <Hint side="left"
-              label={rotation?.is_liked
-                ? (touch ? 'Swipe left\nto unlike' : 'Unlike\n(← key)')
-                : (touch ? 'Swipe left\nto remove' : 'Remove\n(← key)')}
-              onClick={() => decide('remove')} disabled={busy || locked} active={current?.action === 'remove'} />
-            <Button variant={current?.action === 'super_keep' ? 'contained' : 'outlined'} color="warning"
-              startIcon={current?.action === 'super_keep' ? <Check /> : <Star />} onClick={() => decide('super_keep')}
-              disabled={busy || locked}
-              title={`Keep, and don't ask again for ${timesWord(rotation?.super_keep_multiplier || 3)} as long`}>
-              Super keep
-            </Button>
-            <Hint side="right" label={touch ? 'Swipe right\nto keep' : 'Keep\n(→ key)'}
-              onClick={() => decide('keep')} disabled={busy || locked} active={current?.action === 'keep'} />
-          </Box>
-          {rotation && (
-            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={0.5}
-              sx={{ lineHeight: 1.4 }}>
-              {rotation.kind === 'auto'
-                ? `Kept songs stay through the next rotation; super kept songs age ${timesWord(rotation.super_keep_multiplier)} slower. Removed songs are replaced.`
-                : <>Kept songs come back in {formatInterval(rotation.interval_hours)}, super kept in{' '}
-                  {formatInterval(rotation.interval_hours * rotation.super_keep_multiplier)}.
-                  {rotation.is_liked && ' Removing a song unlikes it in Spotify when you finish.'}</>}
-            </Typography>
-          )}
+            <PanelSection>
+              <Box display="flex" gap={1}>
+                <Decision color="error" icon={<ThumbDown />} chosen={current?.action === 'remove'}
+                  onClick={() => decide('remove')} disabled={busy || locked}>
+                  {rotation?.is_liked ? 'Unlike' : 'Remove'}
+                </Decision>
+                <Decision color="warning" icon={<Star />} chosen={current?.action === 'super_keep'}
+                  onClick={() => decide('super_keep')} disabled={busy || locked}
+                  title={`Keep, and don't ask again for ${timesWord(rotation?.super_keep_multiplier || 3)} as long`}>
+                  Super keep
+                </Decision>
+                <Decision color="success" icon={<ThumbUp />} chosen={current?.action === 'keep'}
+                  onClick={() => decide('keep')} disabled={busy || locked}>
+                  Keep
+                </Decision>
+              </Box>
+            </PanelSection>
 
-          {/* Back / forward through the batch */}
-          <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
-            <Button startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0} color="inherit">Back</Button>
-            <Button onClick={() => finish('stopped')} disabled={finishing} color="inherit" size="small">
-              {finishing ? 'Updating Spotify…' : 'Stop for now'}
-            </Button>
-            <Button endIcon={current ? <ArrowForward /> : <SkipNext />} onClick={() => forward()} disabled={busy} color="inherit"
-              variant={current?.action === 'skip' ? 'outlined' : 'text'}>
-              {current ? 'Next' : 'Skip'}
-            </Button>
-          </Box>
-          {!touch && (
-            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={0.5}>
-              Drag the card, or use ← remove · → keep · ↑ super keep · ↓ skip · Backspace back
-            </Typography>
-          )}
+            {/* Back / forward through the batch */}
+            <NavRow>
+              <Button size="small" startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0}>Back</Button>
+              <Button size="small" onClick={() => finish('stopped')} disabled={finishing}>
+                {finishing ? 'Updating Spotify…' : 'Stop for now'}
+              </Button>
+              <Button size="small" endIcon={current ? <ArrowForward /> : <SkipNext />} onClick={() => forward()} disabled={busy}
+                variant={current?.action === 'skip' ? 'outlined' : 'text'}>
+                {current ? 'Next' : 'Skip'}
+              </Button>
+            </NavRow>
+          </DetailsPanel>
+
+          <PanelNote>
+            {touch ? 'Swipe the card right to keep, left to remove. ' : '← remove · → keep · ↑ super keep · ↓ skip · Backspace back. '}
+            {rotation && (rotation.kind === 'auto'
+              ? `Kept songs stay through the next rotation; super kept songs age ${timesWord(rotation.super_keep_multiplier)} slower. Removed songs are replaced.`
+              : <>Kept songs come back in {formatInterval(rotation.interval_hours)}, super kept in{' '}
+                {formatInterval(rotation.interval_hours * rotation.super_keep_multiplier)}.
+                {rotation.is_liked && ' Removing a song unlikes it in Spotify when you finish.'}</>)}
+          </PanelNote>
         </SongStage>
       )}
 

@@ -139,7 +139,9 @@ const RotationPage = () => {
     try {
       const summary = await api.rotation(rotationId); // syncs with Spotify first
       setRotation(summary);
-      const [songs, history] = await Promise.all([api.tracks(rotationId), api.history(rotationId)]);
+      const [songs, history] = await Promise.all([
+        api.tracks(rotationId), api.history(rotationId, { filter: 'reviews', limit: 1 }),
+      ]);
       setTracks(songs);
       setLastReviewed(history[0]?.created_at || null);
     } catch (e) {
@@ -271,7 +273,7 @@ const RotationPage = () => {
             </>
           )
         ) : (
-          <HistoryList rotationId={rotation.id} onChanged={load} />
+          <HistoryList rotationId={rotation.id} onChanged={load} auto={isAuto} />
         )}
       </Box>
 

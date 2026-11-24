@@ -494,11 +494,32 @@ def _one_out(db: orm.Session, rotation: RotationDB, track: RotationTrackDB) -> T
     return _tracks_out([track], rotation, _tracks(db, rotation, (ACTIVE,)), utcnow())[0]
 
 
-def history(db: orm.Session, rotation: RotationDB, limit: int = 100, offset: int = 0) -> list[HistoryEventOut]:
-    rows = (
+# History tabs -> the actions they show (None = every event, including legacy undo rows)
+HISTORY_FILTERS: dict[str, tuple[str, ...] | None] = {
+    "all": None,
+    "removed": (REMOVE,),
+    "kept": tuple(KEEP_ACTIONS),
+    "skipped": (SKIP,),
+    "rotated": tuple(SYSTEM_ACTIONS),
+    "reviews": (*KEEP_ACTIONS, SKIP, REMOVE),  # the user's own decisions (e.g. "last reviewed")
+}
+
+
+def history(
+    db: orm.Session, rotation: RotationDB, limit: int = 100, offset: int = 0, filter: str = "all"
+) -> list[HistoryEventOut]:
+    """Newest first. Filtering happens here, not in the client, so older events of one kind
+    aren't hidden behind newer events of another."""
+    query = (
         db.query(ReviewEventDB, RotationTrackDB)
         .join(RotationTrackDB, ReviewEventDB.rotation_track_id == RotationTrackDB.id)
         .filter(RotationTrackDB.rotation_id == rotation.id)
+    )
+    actions = HISTORY_FILTERS[filter]
+    if actions is not None:
+        query = query.filter(ReviewEventDB.action.in_(actions))
+    rows = (
+        query
         .order_by(ReviewEventDB.created_at.desc(), ReviewEventDB.id.desc())
         .offset(offset)
         .limit(limit)

@@ -306,3 +306,32 @@ def test_admin_edits_pick_note_and_dates(client, spotify, admin):
 
 def test_pick_edit_is_admin_only(client, spotify):
     assert client.put("/api/admin/picks/1", json={"note": "x"}).status_code == 404
+
+
+def test_history_filters_and_pages_on_the_server(client, spotify, db):
+    """Removals older than 100 newer keeps still show up in the Removed tab, and paging reaches them."""
+    from rest_api.database.models import ReviewEventDB
+    rid = make_rotation(client, spotify, [spotify_item(f"s{i:03}", 10) for i in range(130)])
+    remove(client, rid, "s000")
+    remove(client, rid, "s001")
+    # The removals happened first; 120 keeps came after
+    for e in db.query(ReviewEventDB):
+        e.created_at = utcnow() - timedelta(days=2)
+    db.commit()
+    for i in range(10, 130):
+        client.post(f"/api/rotation/{rid}/review", json={"track_id": f"s{i:03}", "action": "keep"})
+
+    newest = client.get(f"/api/rotation/{rid}/history").json()
+    assert len(newest) == 100 and all(e["action"] == "keep" for e in newest)  # the old client-side view
+
+    removed = client.get(f"/api/rotation/{rid}/history", params={"filter": "removed"}).json()
+    assert sorted(e["track"]["track_id"] for e in removed) == ["s000", "s001"]
+    assert len(client.get(f"/api/rotation/{rid}/history", params={"filter": "kept"}).json()) == 100
+    assert client.get(f"/api/rotation/{rid}/history", params={"filter": "skipped"}).json() == []
+
+    page2 = client.get(f"/api/rotation/{rid}/history", params={"limit": 100, "offset": 100}).json()
+    assert len(page2) == 22 and {e["action"] for e in page2[-2:]} == {"remove"}
+
+    [last] = client.get(f"/api/rotation/{rid}/history", params={"filter": "reviews", "limit": 1}).json()
+    assert last["action"] == "keep"
+    assert client.get(f"/api/rotation/{rid}/history", params={"filter": "bogus"}).status_code == 422

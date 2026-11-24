@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -18,13 +18,15 @@ import { api, errorMessage } from '../api';
 import { formatDate } from './Layout';
 import { ListSkeleton } from './Skeletons';
 
+// Each tab is filtered on the server, so older events of one kind aren't hidden behind newer ones
 const TABS = [
-  { label: 'All', filter: () => true },
-  { label: 'Removed', filter: (e) => e.action === 'remove' },
-  { label: 'Kept', filter: (e) => e.action === 'keep' || e.action === 'super_keep' },
-  { label: 'Skipped', filter: (e) => e.action === 'skip' },
-  { label: 'Rotated', filter: (e) => e.action === 'rotated_out' || e.action === 'auto_added', autoOnly: true },
+  { label: 'All', filter: 'all' },
+  { label: 'Removed', filter: 'removed' },
+  { label: 'Kept', filter: 'kept' },
+  { label: 'Skipped', filter: 'skipped' },
+  { label: 'Rotated', filter: 'rotated', autoOnly: true },
 ];
+const PAGE_SIZE = 50;
 
 const ACTION_CHIP = {
   keep: { label: 'Kept', color: 'success' },
@@ -36,24 +38,53 @@ const ACTION_CHIP = {
   auto_added: { label: 'Added', color: 'primary' },
 };
 
-// A rotation's review history with Add back / Undo removal actions.
-// Embedded in the rotation page's History tab. `onChanged` lets the page refresh its counts.
-export const HistoryList = ({ rotationId, onChanged }) => {
+// A rotation's review history with Add back / Undo removal actions, 50 events at a time.
+// Embedded in the rotation page's History tab. `onChanged` lets the page refresh its counts;
+// `auto` shows the Rotated tab (auto rotations' rotate-outs and additions).
+export const HistoryList = ({ rotationId, onChanged, auto = false }) => {
   const [events, setEvents] = useState(null);
   const [tab, setTab] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const request = useRef(0); // ignores responses for a tab that's no longer shown
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(null); // track_id being updated
   // Current status per track after actions taken on this page (overrides the loaded status)
   const [statusOverride, setStatusOverride] = useState({});
   const [toast, setToast] = useState('');
 
+  const filter = TABS[tab].filter;
+
   const load = useCallback(() => {
-    api.history(rotationId)
-      .then((history) => { setEvents(history); setStatusOverride({}); })
-      .catch((e) => { setError(errorMessage(e, 'Failed to load history.')); setEvents([]); });
-  }, [rotationId]);
+    const id = ++request.current;
+    setEvents(null);
+    api.history(rotationId, { filter, limit: PAGE_SIZE })
+      .then((page) => {
+        if (id !== request.current) return;
+        setEvents(page); setHasMore(page.length === PAGE_SIZE); setStatusOverride({});
+      })
+      .catch((e) => {
+        if (id !== request.current) return;
+        setError(errorMessage(e, 'Failed to load history.')); setEvents([]); setHasMore(false);
+      });
+  }, [rotationId, filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadMore = async () => {
+    const id = request.current;
+    setLoadingMore(true);
+    try {
+      const page = await api.history(rotationId, { filter, limit: PAGE_SIZE, offset: events.length });
+      if (id !== request.current) return;
+      setEvents((current) => [...(current || []), ...page]);
+      setHasMore(page.length === PAGE_SIZE);
+    } catch (e) {
+      if (id === request.current) setError(errorMessage(e, "Couldn't load more history."));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const statusOf = (track) => statusOverride[track.track_id] || track.status;
 
@@ -92,8 +123,8 @@ export const HistoryList = ({ rotationId, onChanged }) => {
     }
   };
 
-  const shown = (events || []).filter(TABS[tab].filter);
-  // Only the newest event per song gets an action button
+  const shown = events || [];
+  // Only the newest loaded event per song gets an action button
   const newestEventKey = new Map();
   (events || []).forEach((e, i) => { if (!newestEventKey.has(e.track.track_id)) newestEventKey.set(e.track.track_id, i); });
 
@@ -122,7 +153,7 @@ export const HistoryList = ({ rotationId, onChanged }) => {
     <Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <Box display="flex" gap={1} flexWrap="wrap" mb={1}>
-        {TABS.map((t, i) => (t.autoOnly && !(events || []).some(TABS[4].filter)) ? null : (
+        {TABS.map((t, i) => (t.autoOnly && !auto) ? null : (
           <Chip key={t.label} label={t.label} onClick={() => setTab(i)}
             color={tab === i ? 'primary' : 'default'} variant={tab === i ? 'filled' : 'outlined'} />
         ))}
@@ -155,6 +186,13 @@ export const HistoryList = ({ rotationId, onChanged }) => {
             );
           })}
         </List>
+      )}
+      {events !== null && hasMore && (
+        <Box textAlign="center" mt={1}>
+          <Button variant="outlined" color="inherit" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </Box>
       )}
 
       <Snackbar open={!!toast} autoHideDuration={4000} onClose={() => setToast('')} message={toast} />

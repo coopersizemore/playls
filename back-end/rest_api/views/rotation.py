@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -159,7 +161,10 @@ async def get_history(
     rotation_id: int,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    filter: Literal["all", "removed", "kept", "skipped", "rotated", "reviews"] = Query(
+        "all", description="Which events: a History tab, or 'reviews' (keeps, skips and removals only)"
+    ),
     db: Session = Depends(get_db),
     user: UserDB = current_user_dep,
 ):
-    return rs.history(db, _get_owned_or_404(db, rotation_id, user), limit, offset)
+    return rs.history(db, _get_owned_or_404(db, rotation_id, user), limit, offset, filter)

@@ -49,7 +49,9 @@ export const api = {
   review: (id, trackId, action) =>
     data(axios.post(`${API_BASE}/rotation/${id}/review`, { track_id: trackId, action })),
   flush: (id) => data(axios.post(`${API_BASE}/rotation/${id}/flush`)),
-  history: (id) => data(axios.get(`${API_BASE}/rotation/${id}/history`)),
+  // Newest first. filter: all | removed | kept | skipped | rotated | reviews (the user's own decisions)
+  history: (id, { filter = 'all', limit = 50, offset = 0 } = {}) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/history`, { params: { filter, limit, offset } })),
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
   settings: () => data(axios.get(`${API_BASE}/user/me/settings`)),
   updateSettings: (body) => data(axios.put(`${API_BASE}/user/me/settings`, body)),

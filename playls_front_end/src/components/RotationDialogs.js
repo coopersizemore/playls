@@ -128,16 +128,20 @@ export const IntervalPicker = ({ value, onChange, label = 'Review each song ever
 
 // ---------- grace period ----------
 
-const GracePeriodSwitch = ({ checked, onChange }) => (
+const GracePeriodSwitch = ({ checked, onChange, liked = false }) => (
   <Box sx={{ mt: 1 }}>
     <FormControlLabel
       control={<Switch checked={checked} onChange={(e) => onChange(e.target.checked)} />}
-      label="Grace period for songs already in the playlist"
+      label={liked ? 'Grace period for songs you already like' : 'Grace period for songs already in the playlist'}
     />
     <Typography variant="body2" color="text.secondary">
-      {checked
-        ? 'On: songs already in the playlist first come up one interval from now.'
-        : "Off: songs come up one interval after they were added to the playlist, so older songs may be due right away. Songs whose add date Spotify doesn't know are due immediately."}
+      {liked
+        ? (checked
+          ? 'On: songs you already like first come up one interval from now.'
+          : 'Off: songs come up one interval after you liked them, so older likes may be due right away.')
+        : (checked
+          ? 'On: songs already in the playlist first come up one interval from now.'
+          : "Off: songs come up one interval after they were added to the playlist, so older songs may be due right away. Songs whose add date Spotify doesn't know are due immediately.")}
     </Typography>
   </Box>
 );
@@ -303,7 +307,7 @@ export const CreateRotationDialog = ({ open, onClose, onCreated, rotations = [] 
           <IntervalPicker key={`manual-${pickerKey}`} value={intervalHours} onChange={setIntervalHours} />
         )}
         {/* A new playlist starts empty, so the grace period has nothing to apply to */}
-        {mode === 'existing' && <GracePeriodSwitch checked={grace} onChange={setGrace} />}
+        {mode === 'existing' && <GracePeriodSwitch checked={grace} onChange={setGrace} liked={playlistId === LIKED} />}
         {mode === 'existing' && playlistId === LIKED && (
           <Alert severity="warning" sx={{ mt: 2 }}>
             Removing a song in Review <strong>unlikes it in Spotify</strong> when you finish reviewing. If you like it
@@ -418,7 +422,7 @@ export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
         {rotation && !isAuto && (
           <>
             <IntervalPicker key={rotation.id} value={intervalHours} onChange={setIntervalHours} />
-            <GracePeriodSwitch checked={grace} onChange={setGrace} />
+            <GracePeriodSwitch checked={grace} onChange={setGrace} liked={!!rotation.is_liked} />
             <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
               Changes apply right away to every song that hasn't been kept yet. Kept songs come up one
               interval after you kept them.

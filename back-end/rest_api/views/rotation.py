@@ -17,7 +17,7 @@ from ..models.rotation import (
 )
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
-from ..services.sync_service import flush_pending_removals, sync_rotation
+from ..services.sync_service import flush_pending_removals, sync_claim, sync_rotation
 
 # Every rotation route requires a logged-in user
 router = APIRouter(
@@ -101,7 +101,10 @@ async def get_unplayable(rotation_id: int, db: Session = Depends(get_db), user: 
     """Songs still in the playlist but unavailable on Spotify. Re-reads the whole playlist
     first, since availability can change without the playlist changing."""
     rotation = _get_owned_or_404(db, rotation_id, user)
-    await sync_rotation(db, rotation, user, force=True)
+    async with sync_claim(db, rotation) as held:
+        if held:
+            await sync_rotation(db, rotation, user, force=True)
+        # else another request is syncing it right now; list what's stored
     return UnplayableOut(tracks=rs.unplayable_tracks(db, rotation))
 
 
@@ -111,11 +114,15 @@ async def remove_unplayable(rotation_id: int, db: Session = Depends(get_db), use
     rotation = _get_owned_or_404(db, rotation_id, user)
     removed = rs.queue_unplayable_removals(db, rotation)
     flushed = True
-    try:
-        await flush_pending_removals(db, rotation, user)
-    except Exception:
-        db.rollback()
-        flushed = False  # stays pending; the next sync retries
+    async with sync_claim(db, rotation) as held:
+        if not held:
+            flushed = False  # stays pending; the sync holding the claim, or the next one, flushes it
+        else:
+            try:
+                await flush_pending_removals(db, rotation, user)
+            except Exception:
+                db.rollback()
+                flushed = False  # stays pending; the next sync retries
     return RemoveUnplayableOut(removed=removed, flushed=flushed)
 
 
@@ -137,9 +144,13 @@ async def review_track(
 async def flush_removals(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """Apply pending removals to the Spotify playlist (called when leaving Review)."""
     rotation = _get_owned_or_404(db, rotation_id, user)
-    removed = await flush_pending_removals(db, rotation, user)
-    if removed and rotation.kind == "auto":
-        await rs.try_maintain(db, rotation, user)  # refill the slots that were just freed
+    removed = 0
+    async with sync_claim(db, rotation) as held:
+        # Not held: another request is syncing it, and the removals stay pending for it (or the next sync)
+        if held:
+            removed = await flush_pending_removals(db, rotation, user)
+            if removed and rotation.kind == "auto":
+                await rs.try_maintain(db, rotation, user)  # refill the slots that were just freed
     return FlushOut(removed=removed, pending=rs.summarize_one(db, rotation).pending_removal_count)
 
 

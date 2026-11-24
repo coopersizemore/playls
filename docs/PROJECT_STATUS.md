@@ -56,26 +56,17 @@ The backend has 63 tests (SQLite plus a fake Spotify). The frontend builds clean
 - Spotify calls in a request share one connection. Playlist pages after the first are fetched 4 at a time.
 - Manual rotations reuse a sync from the last 2 minutes, but only if it happened after the app was last shown.
 - Home renders stored data first, then syncs each rotation in parallel.
+- PlayLS's own playlist writes (flush, restock add, auto rotate-out and fill) store the snapshot Spotify returns, so the next sync short-circuits instead of re-reading the playlist.
+- Spotify 429s are retried when the requested pause is short. Otherwise, and for quota errors, the client gets the error with `Retry-After`.
 - Details are in DESIGN.md, "Sync shortcuts and guards".
 - **Next:** read the `Server-Timing` numbers on prod before doing more. In particular, check `dbconnect`: NullPool opens a new connection after every commit.
 
-## Known sync races (to revisit, found 2026-11-24)
-Found by reading the code; neither has been observed in practice. Both heal on a later sync, but they can lose a song's kept state and leave misleading History entries.
-- **Overlapping syncs of one rotation** (Home + Review, cron + app, two tabs). **Still open.** Home's background sync makes it more likely for manual rotations. For auto cards, Home keeps them locked until their own sync finishes.
-  - The common case is cosmetic: both requests insert the same new song, the second hits `uq_rotation_track`, and `try_sync` rolls back with `sync_ok=false`.
-  - Worse (a): request A reads the playlist while song P's removal is still pending. Request B then flushes P and marks it removed. A's diff sees P as "re-added", marks it active again and wipes its kept state. The next sync marks it "removed in Spotify".
-  - Worse (b), auto rotations: the `last_rotated_at` claim covers rotating out but not the fill. Two requests can both fill the open slots, which overfills the playlist and can add the same song twice. If the second insert fails, the songs end up on Spotify without an `auto_added` event.
-  - Proposed fix:
-    - A per-rotation sync claim: a `sync_claimed_until` column, taken with a conditional UPDATE and a 60-second lease.
-    - The claim covers the flush, the diff and `maintain`; the standalone flush endpoint takes it too.
-    - A request that loses the claim reads the database instead of syncing.
-    - Not advisory locks: through the transaction pooler they end at each commit.
-    - `ON CONFLICT` inserts alone would only fix the cosmetic case.
-- **The playlist changing during a full read** (**fixed 2026-11-24** with the snapshot recheck below):
-  - Items are paged by offset on the live playlist, so a removal mid-read shifts later pages, and one song is never seen.
-  - The diff then marks that song "removed in Spotify". The next sync re-adds it and wipes its kept / super-kept state. For auto rotations it can also trigger an extra fill.
-  - The likeliest cause is PlayLS itself, for example Review's flush-on-exit landing during another request's read.
-  - Proposed fix: re-read `snapshot_id` after the items. If it changed, apply only additions and metadata, mark nothing removed, and keep the old stored snapshot so the next sync re-reads. A count check (items received vs. page 1's `total`) is a free extra guard.
+## Sync races (found and fixed 2026-11-24)
+Both were found by reading the code; neither was observed in practice. Details are in DESIGN.md, "Sync shortcuts and guards".
+- **Overlapping syncs of one rotation** (Home + Review, cron + app, two tabs): duplicate inserts, a pending removal coming back as "re-added", and auto rotations filling twice.
+  - Fixed with a per-rotation sync claim: `rotation.sync_claimed_until` (migration `0010`, applied), a 60-second lease.
+  - Every sync, flush, restock add and auto maintenance takes it, waiting up to 10 s.
+- **The playlist changing during a full read** (an offset shift hides a song, which is then wrongly marked removed): fixed by re-checking the snapshot after the read and applying additions only if it changed.
 
 ## Next
 - Stats derived from review history.

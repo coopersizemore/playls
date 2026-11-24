@@ -8,6 +8,7 @@ from ..models.rotation import TrackOut
 from ..services import restock_service as restock
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
+from ..services.sync_service import sync_claim
 
 # Restocking a rotation. Every route requires a logged-in user who owns the rotation.
 router = APIRouter(
@@ -60,7 +61,11 @@ async def search(
 @router.post("/add", response_model=TrackOut, status_code=201)
 async def add(rotation_id: int, data: RestockActionIn, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """Add a song to the rotation's Spotify playlist now."""
-    return await restock.add_to_rotation(db, _owned(db, rotation_id, user), user, data.track_id, data.source)
+    rotation = _owned(db, rotation_id, user)
+    async with sync_claim(db, rotation) as held:
+        if not held:
+            raise HTTPException(status_code=409, detail="This playlist is being updated. Try again in a moment.")
+        return await restock.add_to_rotation(db, rotation, user, data.track_id, data.source)
 
 
 @router.post("/skip", status_code=204)

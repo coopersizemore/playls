@@ -30,7 +30,7 @@ from rest_api.models.rotation import (
 from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import rotation_logic as logic
 from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService as ss
-from rest_api.services.sync_service import sync_rotation
+from rest_api.services.sync_service import sync_claim, sync_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -210,30 +210,41 @@ def _tracks_out(tracks: list[RotationTrackDB], rotation: RotationDB, active: lis
 # ---------- sync wrappers ----------
 
 async def try_sync(db: orm.Session, rotation: RotationDB, user: UserDB, force: bool = False) -> bool:
-    """Sync, but don't fail the request if Spotify is unavailable. Returns sync_ok."""
-    try:
-        await sync_rotation(db, rotation, user, force=force)
-    except Exception:
-        # Spotify errors, timeouts, or a concurrent sync inserting the same rows
-        db.rollback()
-        logger.warning("Sync failed for rotation %s", rotation.id, exc_info=True)
-        return False
-    if rotation.kind == AUTO:
-        await try_maintain(db, rotation, user)
-    return True
+    """Sync (and, for auto rotations, maintain) under the rotation's sync claim, without
+    failing the request if Spotify is unavailable. Returns sync_ok.
+
+    If another request holds the claim past the wait, this reads what's stored and reports
+    sync_ok=True: that request is syncing it right now.
+    """
+    async with sync_claim(db, rotation) as held:
+        if not held:
+            return True
+        try:
+            await sync_rotation(db, rotation, user, force=force)
+        except Exception:
+            # Spotify errors and timeouts
+            db.rollback()
+            logger.warning("Sync failed for rotation %s", rotation.id, exc_info=True)
+            return False
+        if rotation.kind == AUTO:
+            await try_maintain(db, rotation, user)
+        return True
 
 
 async def try_maintain(db: orm.Session, rotation: RotationDB, user: UserDB) -> bool:
     """Auto rotations: rotate out if due and restock to the target (best effort)."""
     from rest_api.services.auto_restock_service import maintain  # that module imports this one
 
-    try:
-        await maintain(db, rotation, user)
-        return True
-    except Exception:
-        db.rollback()
-        logger.warning("Auto restock failed for rotation %s", rotation.id, exc_info=True)
-        return False
+    async with sync_claim(db, rotation) as held:  # already held when called from try_sync
+        if not held:
+            return False
+        try:
+            await maintain(db, rotation, user)
+            return True
+        except Exception:
+            db.rollback()
+            logger.warning("Auto restock failed for rotation %s", rotation.id, exc_info=True)
+            return False
 
 
 async def list_rotation_summaries(

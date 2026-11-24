@@ -37,6 +37,7 @@ from rest_api.services.auth_service import SUGGESTION_SCOPES, missing_scopes
 from rest_api.services.db.rotation_service import track_out
 from rest_api.services.rotation_logic import local_day_start
 from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService as ss
+from rest_api.services.sync_service import write_adopting_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -378,7 +379,8 @@ async def _resolve_meta(db: orm.Session, user: UserDB, track_id: str, row: Optio
 
 
 async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, track_id: str, source: str):
-    """Add a song to the rotation's Spotify playlist now, and to the rotation itself."""
+    """Add a song to the rotation's Spotify playlist now, and to the rotation itself.
+    Call under sync_service.sync_claim (the route does)."""
     row = db.query(RotationTrackDB).filter(
         RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.track_id == track_id
     ).first()
@@ -386,7 +388,9 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
         raise HTTPException(status_code=409, detail="That song is already in this rotation")
     meta = await _resolve_meta(db, user, track_id, row)
 
-    await ss.add_items_to_playlist(rotation.playlist_id, [meta["uri"]], user, db)
+    await write_adopting_snapshot(
+        db, rotation, user, lambda: ss.add_items_to_playlist(rotation.playlist_id, [meta["uri"]], user, db)
+    )
 
     now = utcnow()
     if row is None:

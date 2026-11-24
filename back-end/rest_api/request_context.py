@@ -37,6 +37,7 @@ class RequestContext:
     db_ms: float = 0.0
     db_queries: int = 0
     db_connect_ms: float = 0.0
+    rate_limit_waited: float = 0.0  # seconds spent waiting out Spotify 429s
     db_connects: int = 0
     _connect_started: Optional[float] = None
     # When the client was last shown (UTC, naive); None if the client didn't say

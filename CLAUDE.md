@@ -10,7 +10,7 @@ Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled
   - `services/auth_service.py` — Spotify OAuth + app session (JWT via python-jose, HS256, 7 days, in an httpOnly cookie). `get_current_user_from_token` is the auth dependency (cookie + CSRF check).
   - `services/spotify/spotify_service.py` — thin httpx wrapper over the post-Feb-2026 Spotify API. Raises `SpotifyAPIError` (an `HTTPException` carrying `upstream_status`); on a 401 it force-refreshes the token and retries once.
   - `services/rotation_logic.py` — pure rules: due-date math (interval in hours; optional per-rotation grace period; NULL `added_at` = unknown), parsing playlist items, queue order. No DB/network; unit-tested.
-  - `services/sync_service.py` — `flush_pending_removals` and `sync_rotation` (snapshot short-circuit, diff against `rotation_track`). Skips the diff if items come back but none parse, so a response-shape change can't mark everything removed. Re-checks the snapshot after a full read; if it changed mid-read, applies additions only. Manual rotations reuse a sync from the last 2 minutes if it happened after the app was last shown (`recently_synced`); see DESIGN.md, "Sync shortcuts and guards".
+  - `services/sync_service.py` — `flush_pending_removals` and `sync_rotation` (snapshot short-circuit, diff against `rotation_track`). Skips the diff if items come back but none parse, so a response-shape change can't mark everything removed. Re-checks the snapshot after a full read; if it changed mid-read, applies additions only. `sync_claim` (a 60 s lease on `rotation.sync_claimed_until`) must wrap every sync and every PlayLS write to a playlist (`try_sync`, flush, remove-unplayable, restock add and `maintain` already take it). Writes go through `write_adopting_snapshot`, which stores Spotify's returned snapshot when the rows were in sync just before. Manual rotations reuse a sync from the last 2 minutes if it happened after the app was last shown (`recently_synced`); see DESIGN.md, "Sync shortcuts and guards".
   - `services/db/rotation_service.py` — rotation CRUD, summaries/due counts, queue (daily limit via `_todays_activity` over `review_event`), `apply_review`, history. `try_sync` is the best-effort wrapper routes use (returns `sync_ok`).
   - `services/restock_logic.py` (pure: bring-back weights, suggestion scoring, weighted sampling, blending) and `services/restock_service.py` (the four sources, the suggestion cache, add / Not now, pick creation). Rules are in DESIGN.md, "Restock".
   - **Auto rotations** (`rotation.kind = 'auto'`, DESIGN.md "Auto rotations"):
@@ -76,7 +76,7 @@ Frontend `GET /api/auth/login` → redirects to Spotify → Spotify redirects to
 ## Known gaps (verify before relying on these)
 - Sessions can't be revoked server-side before their 7-day expiry (logout only clears the cookie). There's no rate limiting.
 - Undo (`action: undo`) reverts the track's most recent keep, skip or remove by deleting that `review_event`; a keep's previous `last_kept_at` is stored on the event. A removal can only be undone while it's still pending (before the flush), otherwise 409. Older `undo` rows from before 0006 still exist and count −1 toward the daily tally.
-- Concurrent syncs of the same rotation can hit the `(rotation_id, track_id)` unique constraint; `try_sync` rolls back and reports `sync_ok=false`, and the next sync recovers.
+- Concurrent syncs of one rotation are serialized by the sync claim. A request that can't get it within 10 s reads stored data instead of syncing. A restock add in that case returns 409.
 - Redirect URIs must be HTTPS or `http://127.0.0.1` (`localhost` isn't allowed).
 
 ## Spotify API constraints (Development Mode, after Feb 2026)
@@ -87,7 +87,7 @@ This app is in Development Mode: max 5 allowlisted users per Client ID, and the 
 - `GET /me/playlists` still works (item count is `items.total`; `tracks.total` is deprecated). `GET /users/{id}/playlists` was removed.
 - `/me` no longer returns `email`, `country` or `product`.
 - Search `limit` is max 10 (default 5), so paginate. Artist top tracks, batch "several" lookups, browse/new releases and `popularity` are gone. Per-type save endpoints moved to `/me/library`.
-- Quota is shared across every Client ID on the developer account. Quota errors come back as 429 with `"reason": "QUOTA_EXCEEDED"`.
+- Quota is shared across every Client ID on the developer account. Quota errors come back as 429 with `"reason": "QUOTA_EXCEEDED"`. `make_spotify_request` retries 429s whose `Retry-After` is 5 s or less (at most 2 retries, 8 s per request). Quota errors and longer pauses raise `SpotifyAPIError(429)`, which passes `Retry-After` on to the client.
 
 ## Out of scope (owner decisions; see DESIGN.md)
 Don't build these: skip detection, social or collaborative features, rotating playlists the user doesn't own, notifications. Restock and curated picks are built (see DESIGN.md).
@@ -99,7 +99,7 @@ Spotify's recommendation endpoints are gone. "For you" (restock) is the interim 
 Personal/demo scope: one Supabase project, one Spotify app, Vercel production on a `*.vercel.app` URL, and local dev with `vercel dev` (local and prod share the database). See [DEPLOYMENT_PLAN.md](docs/DEPLOYMENT_PLAN.md).
 
 ## Testing
-`cd back-end && .venv/Scripts/python -m pytest tests`. `tests/conftest.py` sets dummy env vars before importing the app and provides an in-memory SQLite `db`, a `FakeSpotify` (monkeypatched onto `SpotifyService`), and an authenticated `client`. So tests need no Supabase, `.env` or network. Files: `test_auth.py` (security), `test_rotation_logic.py` and `test_restock_logic.py` (pure rules), `test_rotation_flow.py` and `test_restock_flow.py` (end to end through the API), `test_auto_rotation.py` (auto rotation rules and flow, including the cron), `test_latency.py` (Server-Timing, concurrent pages, the refresh guard, the mid-read snapshot check, recent-sync reuse). There are no frontend tests; verify the frontend with `npx react-scripts build` (from `playls_front_end/`).
+`cd back-end && .venv/Scripts/python -m pytest tests`. `tests/conftest.py` sets dummy env vars before importing the app and provides an in-memory SQLite `db`, a `FakeSpotify` (monkeypatched onto `SpotifyService`), and an authenticated `client`. So tests need no Supabase, `.env` or network. Files: `test_auth.py` (security), `test_rotation_logic.py` and `test_restock_logic.py` (pure rules), `test_rotation_flow.py` and `test_restock_flow.py` (end to end through the API), `test_auto_rotation.py` (auto rotation rules and flow, including the cron), `test_latency.py` (Server-Timing, concurrent pages, the refresh guard, the mid-read snapshot check, recent-sync reuse), `test_sync_claim.py` (the sync claim, stored write snapshots, 429 retries). There are no frontend tests; verify the frontend with `npx react-scripts build` (from `playls_front_end/`).
 
 ## Working notes
 - `back-end/.env` holds real secrets. Never print or commit it.

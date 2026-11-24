@@ -33,6 +33,17 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
     - Pending removals are still flushed.
     - Requests without the header (the cron) and auto rotations always sync.
   - **A full read is double-checked.** Pages are read by offset from the live playlist, a few at a time. Afterwards the snapshot is fetched again. If it changed during the read, only new songs and metadata are applied: nothing is marked removed or reactivated, and the old snapshot is kept so the next sync reads it again.
+  - **One sync at a time per rotation.** A sync claim (`rotation.sync_claimed_until`, a 60-second lease taken with a conditional UPDATE) is held around every sync (including auto maintenance), every flush, and every restock add.
+    - A request waits up to 10 s for another request's claim. If it's still held, the request carries on without syncing:
+      - Pages read what's stored, with `sync_ok` true, since the other request is syncing.
+      - A flush leaves the removals pending for that sync or the next one.
+      - A restock add returns 409 ("try again in a moment").
+    - The claim is re-entrant within a request (a flush that goes on to `maintain`). Only the holder's own lease is released. A function that dies mid-sync blocks others for at most 60 s.
+    - Not advisory locks: through Supabase's transaction pooler they would end at every commit.
+  - **Our own writes keep the snapshot current.** Right before PlayLS writes to the playlist, it checks that Spotify's snapshot still matches the stored one. In a sync, it uses the check it just made. If so, it stores the snapshot Spotify returns from the write, so the next sync short-circuits instead of re-reading.
+    - If the playlist had changed in Spotify, nothing is stored, and the next sync reads it in full.
+    - A change made in Spotify in the instant between that check and the write would be missed until the playlist changes again.
+  - **Spotify 429s** are retried after `Retry-After` when the pause is 5 s or less (at most 2 retries and 8 s of waiting per request; 1 s if no header). Quota errors (`QUOTA_EXCEEDED`) and longer pauses fail at once: the client gets a 429 with `Retry-After`, and a sync just reports `sync_ok=false`.
   - **Home shows stored data first.** It loads `?sync=false`, then syncs each rotation in its own request and updates each card as its result arrives. An auto rotation's card (open, Review, Restock) stays locked until its sync finishes, so opening it can't start a second restock.
 - **Interval (N):** stored in hours (`interval_hours`, 1 hour to 365 days). The UI offers presets plus a custom amount in hours, days or weeks.
 - **Due date:** computed when read, not stored, so changes to the interval or the grace period apply immediately to every song not yet kept.

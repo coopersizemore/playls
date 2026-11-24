@@ -25,14 +25,27 @@ SEARCH_LIMIT_MAX = 10
 # Playlist pages fetched at once after the first; kept low for the shared rate limit
 PLAYLIST_PAGE_CONCURRENCY = 4
 
+# Rate limits (429): wait and retry when Spotify asks for a short pause. Quota errors and long
+# pauses fail right away (with Retry-After passed on to the client), so a page never hangs.
+RATE_LIMIT_RETRIES = 2
+RATE_LIMIT_MAX_WAIT = 5.0  # longest single Retry-After we'll wait out
+RATE_LIMIT_BUDGET = 8.0  # total waiting per request (or per call, outside a request)
+RATE_LIMIT_DEFAULT_WAIT = 1.0  # when Spotify sends no Retry-After
+
 
 class SpotifyAPIError(HTTPException):
     """A failed Spotify call. `upstream_status` lets callers react (e.g. 403/404 playlist)."""
 
-    def __init__(self, upstream_status: int):
+    def __init__(self, upstream_status: int, retry_after: Optional[int] = None, quota: bool = False):
         self.upstream_status = upstream_status
+        self.retry_after = retry_after
         if upstream_status == 429:
-            super().__init__(status_code=429, detail="Spotify rate limit reached, try again shortly")
+            headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
+            detail = (
+                "PlayLS has used up its Spotify request quota for now. Try again later."
+                if quota else "Spotify rate limit reached, try again shortly"
+            )
+            super().__init__(status_code=429, detail=detail, headers=headers)
         else:
             super().__init__(status_code=502, detail="Spotify request failed")
 
@@ -57,6 +70,30 @@ async def _refresh_after_401(user: UserDB, db: Session, rejected_token: str) -> 
         if user.access_token != rejected_token:
             return user.access_token
         return await AuthService.ensure_valid_spotify_token(user, db, force_refresh=True)
+
+
+def _retry_after_seconds(response: httpx.Response) -> Optional[int]:
+    value = response.headers.get("Retry-After")
+    try:
+        return max(0, int(float(value))) if value is not None else None
+    except ValueError:
+        return None
+
+
+def _is_quota_error(response: httpx.Response) -> bool:
+    # Development Mode quota (shared across the account's apps); waiting seconds won't help
+    return "QUOTA_EXCEEDED" in response.text
+
+
+def _rate_limit_wait(response: httpx.Response, waited: float) -> Optional[float]:
+    """Seconds to wait before retrying a 429, or None to give up."""
+    if _is_quota_error(response):
+        return None
+    retry_after = _retry_after_seconds(response)
+    wait = float(retry_after) if retry_after is not None else RATE_LIMIT_DEFAULT_WAIT
+    if wait > RATE_LIMIT_MAX_WAIT or waited + wait > RATE_LIMIT_BUDGET:
+        return None
+    return wait
 
 
 def _chunks(values: List[str], size: int):
@@ -87,12 +124,26 @@ class SpotifyService:
                     method, url, headers={"Authorization": f"Bearer {token}"}, json=data, params=params
                 )
 
+            local_waited = 0.0
             try:
-                response = await send(access_token)
-                if response.status_code == 401:
-                    # Token was revoked or expired early: refresh and retry once
-                    access_token = await _refresh_after_401(user, db, access_token)
+                for attempt in range(RATE_LIMIT_RETRIES + 1):
                     response = await send(access_token)
+                    if response.status_code == 401:
+                        # Token was revoked or expired early: refresh and retry once
+                        access_token = await _refresh_after_401(user, db, access_token)
+                        response = await send(access_token)
+                    if response.status_code != 429 or attempt == RATE_LIMIT_RETRIES:
+                        break
+                    # A 429 is rejected before Spotify acts on it, so retrying a write is safe
+                    waited = ctx.rate_limit_waited if ctx is not None else local_waited
+                    wait = _rate_limit_wait(response, waited)
+                    if wait is None:
+                        break
+                    logger.info("Spotify rate limited %s %s; retrying in %.1fs", method, endpoint, wait)
+                    if ctx is not None:
+                        ctx.rate_limit_waited += wait
+                    local_waited += wait
+                    await asyncio.sleep(wait)
             finally:
                 if ctx is not None:
                     ctx.spotify_ms += (time.perf_counter() - started) * 1000
@@ -103,6 +154,8 @@ class SpotifyService:
             logger.warning(
                 "Spotify API %s %s failed: %s %s", method, endpoint, response.status_code, response.text[:500]
             )
+            if response.status_code == 429:
+                raise SpotifyAPIError(429, retry_after=_retry_after_seconds(response), quota=_is_quota_error(response))
             raise SpotifyAPIError(response.status_code)
 
         return response.json() if response.content else {}

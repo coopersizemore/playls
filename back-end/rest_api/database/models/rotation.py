@@ -42,6 +42,8 @@ class RotationDB(Base):
     target_size = Column(Integer, nullable=True)
     rotate_percent = Column(Integer, nullable=True)
     last_rotated_at = Column(DateTime, nullable=True)  # NULL: never yet (counts from created_at)
+    # Lease held by the request syncing or writing this playlist (sync_service.sync_claim)
+    sync_claimed_until = Column(DateTime, nullable=True)
 
     # Last playlist version we synced; an unchanged snapshot skips re-reading the items
     snapshot_id = Column(String(128), nullable=True)

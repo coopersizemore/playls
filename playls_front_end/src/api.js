@@ -95,7 +95,14 @@ export const flushOnExit = (rotationId) => {
 // Generic, user-facing message for a failed request
 export const errorMessage = (error, fallback = 'Something went wrong. Please try again.') => {
   const status = error?.response?.status;
-  if (status === 429) return 'Spotify is rate limiting requests. Try again in a minute.';
   const detail = error?.response?.data?.detail;
+  if (status === 429) {
+    // The backend already waited out short pauses; this is a quota error or a long one
+    if (typeof detail === 'string' && detail.includes('quota')) return detail;
+    const wait = Number(error?.response?.headers?.['retry-after']);
+    return wait > 0 && wait <= 120
+      ? `Spotify is rate limiting requests. Try again in ${wait} seconds.`
+      : 'Spotify is rate limiting requests. Try again in a minute.';
+  }
   return typeof detail === 'string' && status && status < 500 ? detail : fallback;
 };

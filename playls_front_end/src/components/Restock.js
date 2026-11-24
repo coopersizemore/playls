@@ -18,7 +18,19 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { Add, Block, Check, Close, MusicNote, Refresh, Search as SearchIcon } from '@mui/icons-material';
+import {
+  Add,
+  ArrowBack,
+  ArrowForward,
+  Block,
+  Check,
+  Close,
+  MusicNote,
+  Refresh,
+  Search as SearchIcon,
+  SkipNext,
+  Undo,
+} from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { api, errorMessage } from '../api';
 import { AlbumArt, Layout, RotationHeader, SpotifyEmbed } from './Layout';
@@ -32,15 +44,25 @@ const TABS = [
   { source: 'search', label: 'Search' },
 ];
 
-// One card at a time with a player; Add (→) or Not now (←)
+// What each decision looks like on a revisited card
+const DECIDED = {
+  add: { label: 'Added to the playlist', color: 'success' },
+  skip: { label: 'Not now', color: 'default' },
+  block: { label: "Won't suggest again", color: 'default' },
+};
+const EXIT_FOR = { add: 'right', skip: 'left', block: 'left' };
+
+// One card at a time with a player; Add (→) or Not now (←). Like Review, Back and Skip/Next
+// move through the deck, picking a different answer for a card undoes the old one first, and
+// an add can be undone from the toast (the song is taken back out of the playlist).
 const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   const { login } = useAuth();
   const [deck, setDeck] = useState(null);
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [added, setAdded] = useState(0);
+  const [decisions, setDecisions] = useState({}); // { [track_id]: 'add' | 'skip' | 'block' } this session
   const [error, setError] = useState('');
-  const [blocked, setBlocked] = useState(null); // { track, index } for the Undo toast
+  const [toast, setToast] = useState(null); // { track, action, index } after an add or block, with Undo
   const [exit, setExit] = useState(null); // card animation: right = add, left = not now / block
 
   const load = useCallback(async (refresh = false) => {
@@ -49,6 +71,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
     try {
       setDeck(await api.restockDeck(rotationId, source, { refresh }));
       setIndex(0);
+      setDecisions({});
     } catch (e) {
       setError(errorMessage(e, 'Failed to load suggestions.'));
       setDeck({ items: [], missing_scopes: [] });
@@ -59,64 +82,101 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
 
   const items = deck?.items || [];
   const current = items[index];
+  const decided = current ? decisions[current.track_id] : null;
+  const added = Object.values(decisions).filter((a) => a === 'add').length;
+
+  const setDecision = useCallback((trackId, action) => setDecisions((d) => {
+    const next = { ...d };
+    if (action) next[trackId] = action; else delete next[trackId];
+    return next;
+  }), []);
+
+  // Take back one decision (server-side), keeping the session's add count in step
+  const revert = useCallback(async (track, action) => {
+    if (action === 'block') await api.unblockSong(track.track_id);
+    else await api.restockUndo(rotationId, track.track_id, source);
+    setDecision(track.track_id, null);
+    if (action === 'add') onAdded(-1);
+  }, [rotationId, source, setDecision, onAdded]);
 
   const act = useCallback(async (action) => {
     if (!current || busy) return;
+    const prev = decisions[current.track_id];
     setBusy(true);
     setError('');
-    setExit(action === 'add' ? 'right' : 'left');
+    setToast(null);
+    setExit(EXIT_FOR[action]);
     const animation = new Promise((r) => setTimeout(r, EXIT_MS));
     try {
-      if (action === 'add') {
-        await api.restockAdd(rotationId, current.track_id, source);
-        setAdded((n) => n + 1);
-        onAdded();
-        setBlocked(null);
-      } else if (action === 'block') {
-        await api.restockBlock(rotationId, current.track_id, source);
-        setBlocked({ track: current, index });
-      } else {
-        await api.restockSkip(rotationId, current.track_id, source);
-        setBlocked(null);
+      if (prev !== action) {
+        if (prev) await revert(current, prev);
+        if (action === 'add') await api.restockAdd(rotationId, current.track_id, source);
+        else if (action === 'block') await api.restockBlock(rotationId, current.track_id, source);
+        else await api.restockSkip(rotationId, current.track_id, source);
+        setDecision(current.track_id, action);
+        if (action === 'add') onAdded(1);
+        if (action !== 'skip') setToast({ track: current, action, index });
       }
       await animation;
       setIndex((i) => i + 1);
     } catch (e) {
-      if (e?.response?.status === 409) setIndex((i) => i + 1); // already in the rotation
+      if (action === 'add' && e?.response?.status === 409 && !prev) setIndex((i) => i + 1); // already in the rotation
       else setError(errorMessage(e, "Couldn't save that. Please try again."));
     } finally {
       setExit(null);
       setBusy(false);
     }
-  }, [current, busy, index, rotationId, source, onAdded]);
+  }, [current, busy, decisions, index, rotationId, source, revert, setDecision, onAdded]);
 
-  const undoBlock = async () => {
-    if (!blocked) return;
+  // Skip / Next: move on without answering (nothing is recorded), or past an answered card
+  const forward = useCallback(() => {
+    if (!current || busy) return;
+    setError('');
+    setIndex((i) => i + 1);
+  }, [current, busy]);
+
+  const back = useCallback(() => {
+    if (busy || index === 0) return;
+    setError('');
+    setIndex((i) => Math.max(0, i - 1));
+  }, [busy, index]);
+
+  // The toast's Undo: take the add (or block) back and return to that card
+  const undoToast = async () => {
+    const entry = toast;
+    setToast(null);
+    if (!entry || busy || decisions[entry.track.track_id] !== entry.action) return;
+    setBusy(true);
     try {
-      await api.unblockSong(blocked.track.track_id);
-      setIndex(blocked.index); // show the card again
+      await revert(entry.track, entry.action);
+      setIndex(entry.index);
     } catch (e) {
-      setError(errorMessage(e, "Couldn't undo. You can resume it from Settings."));
+      setError(errorMessage(e, entry.action === 'block'
+        ? "Couldn't undo. You can resume it from Settings."
+        : "Couldn't undo that add."));
     } finally {
-      setBlocked(null);
+      setBusy(false);
     }
   };
 
+  // Keyboard: → add, ← not now, ↓ skip / next, Backspace or Z back
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.key === 'ArrowRight') act('add');
       else if (e.key === 'ArrowLeft') act('skip');
+      else if (e.key === 'ArrowDown') { e.preventDefault(); forward(); }
+      else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') { e.preventDefault(); back(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [act]);
+  }, [act, forward, back]);
 
   if (deck === null) return <SongCardSkeleton stat={false} />;
 
   return (
     <Box>
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
       {deck.missing_scopes?.length > 0 && (
         <Alert severity="info" sx={{ mb: 2 }}
           action={<Button color="inherit" size="small" onClick={login}>Reconnect</Button>}>
@@ -134,6 +194,11 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
               ? `${deck.already_in_rotation} current PlayLS pick${deck.already_in_rotation === 1 ? ' is' : 's are'} already in this rotation, so there's nothing new to add.`
               : emptyText)}
           </Typography>
+          {items.length > 0 && (
+            <Box mb={1}>
+              <Button startIcon={<ArrowBack />} onClick={back} disabled={busy}>Back to the last song</Button>
+            </Box>
+          )}
           <Button startIcon={<Refresh />} onClick={() => load(source === 'suggested')}>Refresh</Button>
         </Box>
       ) : (
@@ -145,6 +210,10 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
             <SwipeCard key={current.track_id} exit={exit} disabled={busy}
               onSwipe={(dir) => act(dir === 'right' ? 'add' : 'skip')}>
               <AlbumArt src={current.image_url} alt={current.album || current.title} />
+              {decided && (
+                <Chip icon={<Check />} color={DECIDED[decided].color} label={DECIDED[decided].label}
+                  sx={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', maxWidth: '92%' }} />
+              )}
             </SwipeCard>
           </Box>
           <Box textAlign="center" mt={2.5} mb={2}>
@@ -154,31 +223,46 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
           </Box>
           <Box mb={2.5}><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></Box>
           <Box display="flex" justifyContent="center" gap={2}>
-            <Button variant="outlined" size="large" startIcon={<Close />} onClick={() => act('skip')}
-              disabled={busy} sx={{ minWidth: 140 }}>Not now</Button>
-            <Button variant="contained" size="large" startIcon={<Add />} onClick={() => act('add')}
-              disabled={busy} sx={{ minWidth: 140 }}>Add</Button>
+            <Button variant={decided === 'skip' ? 'contained' : 'outlined'} color={decided === 'skip' ? 'inherit' : 'primary'}
+              size="large" startIcon={<Close />} onClick={() => act('skip')} disabled={busy} sx={{ minWidth: 140 }}>
+              Not now
+            </Button>
+            <Button variant="contained" size="large" startIcon={decided === 'add' ? <Check /> : <Add />}
+              onClick={() => act('add')} disabled={busy} sx={{ minWidth: 140 }}>
+              {decided === 'add' ? 'Added' : 'Add'}
+            </Button>
           </Box>
           {source === 'bring_back' && (
             <Box textAlign="center" mt={1.5}>
-              <Button color="inherit" size="small" startIcon={<Block />} onClick={() => act('block')} disabled={busy}
-                sx={{ color: 'text.secondary' }}>
+              <Button color="inherit" size="small" startIcon={<Block />} onClick={() => act('block')}
+                disabled={busy || decided === 'block'} sx={{ color: 'text.secondary' }}>
                 Stop suggesting this song
               </Button>
             </Box>
           )}
-          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={2}>
-            Swipe or drag: left = not now, right = add (or ← / → keys). Adding puts the song in your Spotify playlist right away.
+
+          {/* Back / forward through the deck */}
+          <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
+            <Button startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0} color="inherit">Back</Button>
+            <Button endIcon={decided ? <ArrowForward /> : <SkipNext />} onClick={forward} disabled={busy} color="inherit">
+              {decided ? 'Next' : 'Skip'}
+            </Button>
+          </Box>
+          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={1}>
+            Swipe or drag: left = not now, right = add (or ← / → keys; ↓ skip, Backspace back). Adding puts the
+            song in your Spotify playlist right away; Skip moves on without answering.
           </Typography>
         </>
       )}
       <Snackbar
-        open={!!blocked}
-        onClose={(_, reason) => { if (reason !== 'clickaway') setBlocked(null); }}
+        open={!!toast}
+        onClose={(_, reason) => { if (reason !== 'clickaway') setToast(null); }}
         autoHideDuration={6000}
         anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        message={blocked ? `Won't suggest “${blocked.track.title}” again` : ''}
-        action={<Button color="primary" size="small" onClick={undoBlock}>Undo</Button>}
+        message={toast ? (toast.action === 'add'
+          ? `Added “${toast.track.title}”`
+          : `Won't suggest “${toast.track.title}” again`) : ''}
+        action={<Button color="primary" size="small" startIcon={<Undo />} onClick={undoToast}>Undo</Button>}
       />
     </Box>
   );
@@ -284,7 +368,8 @@ const Restock = () => {
   const [rotation, setRotation] = useState(null);
   const [tab, setTab] = useState(0);
   const [addedTotal, setAddedTotal] = useState(0);
-  const onAdded = useCallback(() => setAddedTotal((n) => n + 1), []);
+  // delta: +1 per add, -1 when an add is undone
+  const onAdded = useCallback((delta = 1) => setAddedTotal((n) => Math.max(0, n + delta)), []);
 
   useEffect(() => {
     api.rotation(rotationId, { sync: false }).then(setRotation).catch(() => {});

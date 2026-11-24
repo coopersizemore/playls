@@ -68,6 +68,17 @@ async def add(rotation_id: int, data: RestockActionIn, db: Session = Depends(get
         return await restock.add_to_rotation(db, rotation, user, data.track_id, data.source)
 
 
+@router.post("/undo")
+async def undo(rotation_id: int, data: RestockActionIn, db: Session = Depends(get_db), user: UserDB = current_user_dep):
+    """Undo the latest Add or Not now on a song (an add is taken back out of the playlist).
+    Returns {"undone": "add" | "skip"}."""
+    rotation = _owned(db, rotation_id, user)
+    async with sync_claim(db, rotation) as held:
+        if not held:
+            raise HTTPException(status_code=409, detail="This playlist is being updated. Try again in a moment.")
+        return {"undone": await restock.undo_last(db, rotation, user, data.track_id)}
+
+
 @router.post("/skip", status_code=204)
 async def skip(rotation_id: int, data: RestockActionIn, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """"Not now": hidden for the rest of today, and weighted lower from then on."""

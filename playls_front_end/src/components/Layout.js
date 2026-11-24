@@ -134,7 +134,8 @@ export const SpotifyEmbed = ({ trackId, title, compact = false }) => (
     src={`https://open.spotify.com/embed/track/${encodeURIComponent(trackId)}`}
     allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
     loading="lazy"
-    sx={{ width: '100%', height: compact ? 80 : 152, border: 0, display: 'block', borderRadius: 3 }}
+    // Spotify's player has 12px corners; a bigger radius (theme units multiply by 12) clips it
+    sx={{ width: '100%', height: compact ? 80 : 152, border: 0, display: 'block', borderRadius: '12px' }}
   />
 );
 

@@ -4,10 +4,11 @@ Spotify stays the source of truth: adding a song writes it to the playlist right
 and upserts its rotation_track row so it's in rotation immediately (the next sync
 reconciles anything else).
 """
+import json
 import logging
 import random
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -398,15 +399,82 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
         db.add(row)
     row.uri, row.title, row.artists = meta["uri"], meta["title"], meta.get("artists")
     row.album, row.image_url, row.duration_ms = meta.get("album"), meta.get("image_url"), meta.get("duration_ms")
+    previous = _row_state(row)
     # A fresh start: comes due one interval from now
     row.status, row.added_at, row.last_kept_at, row.keep_multiplier = ACTIVE, now, None, 1
     row.removed_at = row.removed_by = None
     db.add(RestockFeedbackDB(
         user_id=user.id, rotation_id=rotation.id, track_id=track_id, source=source, action=ADD, created_at=now,
+        previous_state=json.dumps(previous),
     ))
     db.commit()
     db.refresh(row)
     return track_out(row, rotation)
+
+
+# Row fields a restock add overwrites (restored by undo)
+_UNDO_FIELDS = ("status", "added_at", "last_kept_at", "keep_multiplier", "removed_at", "removed_by")
+
+
+def _row_state(row: Optional[RotationTrackDB]) -> Dict[str, Any]:
+    if row is None or row.id is None:
+        return {"created": True}
+    return {
+        f: (v.isoformat() if hasattr(v, "isoformat") else v)
+        for f in _UNDO_FIELDS for v in [getattr(row, f)]
+    }
+
+
+def _restore_row(row: RotationTrackDB, state: Dict[str, Any]) -> None:
+    for f in _UNDO_FIELDS:
+        value = state.get(f)
+        if f in ("added_at", "last_kept_at", "removed_at") and value is not None:
+            value = datetime.fromisoformat(value)
+        setattr(row, f, value)
+
+
+async def undo_last(db: orm.Session, rotation: RotationDB, user: UserDB, track_id: str) -> str:
+    """Undo the latest restock decision on a song in this rotation. Returns what was undone.
+
+    - Not now: forgotten (the song can show up again today, at full weight).
+    - Add: taken back out of the Spotify playlist, and the song's row goes back to how it was
+      (a brought-back song is removed again with its old removal date and history). Only
+      while nothing has happened to it since: no review, still active. Call under sync_claim.
+    "Stop suggesting" is undone separately (DELETE /user/me/blocked-songs/{id}).
+    """
+    feedback = db.query(RestockFeedbackDB).filter(
+        RestockFeedbackDB.user_id == user.id,
+        RestockFeedbackDB.rotation_id == rotation.id,
+        RestockFeedbackDB.track_id == track_id,
+    ).order_by(RestockFeedbackDB.created_at.desc(), RestockFeedbackDB.id.desc()).first()
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="Nothing to undo for this song")
+    if feedback.action == SKIP:
+        db.delete(feedback)
+        db.commit()
+        return SKIP
+
+    row = db.query(RotationTrackDB).filter(
+        RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.track_id == track_id
+    ).first()
+    reviewed_since = row is not None and db.query(ReviewEventDB).filter(
+        ReviewEventDB.rotation_track_id == row.id, ReviewEventDB.created_at >= feedback.created_at
+    ).first() is not None
+    if feedback.previous_state is None or row is None or row.status != ACTIVE or reviewed_since:
+        raise HTTPException(
+            status_code=409, detail="That song has changed since it was added. Remove it from Review instead."
+        )
+    state = json.loads(feedback.previous_state)
+    await write_adopting_snapshot(
+        db, rotation, user, lambda: ss.remove_items_from_playlist(rotation.playlist_id, [row.uri], user, db)
+    )
+    if state.get("created"):
+        db.delete(row)
+    else:
+        _restore_row(row, state)
+    db.delete(feedback)
+    db.commit()
+    return ADD
 
 
 def record_skip(db: orm.Session, rotation: RotationDB, user: UserDB, track_id: str, source: str) -> None:

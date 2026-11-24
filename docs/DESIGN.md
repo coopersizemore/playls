@@ -96,6 +96,13 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 ## Restock (owner decisions, 2026-11-22)
 Restocking is open-ended, per rotation: there's a Restock page for each rotation, reached from its Home card or from the end of a review session that removed songs. It has four tabs. The first three are swipe decks of up to 30 songs (Add / Not now, with a player); Search is a list.
 - **Adding a song** writes it to the Spotify playlist right away (`POST /playlists/{id}/items`). It also upserts the `rotation_track` row as `active`, with `added_at = now`, so the song comes due one interval later. Spotify stays the source of truth, and the next sync reconciles anything else.
+- **Moving through a deck works like Review (2026-11-24).** Back and Skip/Next move between cards without answering, and Skip records nothing. Picking a different answer for a card undoes the old one first.
+  - Undoing **Not now** deletes that feedback row, so the song can show up again today at full weight.
+  - Undoing an **add** removes the song from the Spotify playlist again and restores its `rotation_track` row:
+    - The add saved the row's previous state in `restock_feedback.previous_state`. A song that was brought back is "removed" again with its old date and history. A song the add created is deleted.
+    - This is only allowed while nothing has happened to the song since: still active and not reviewed. Otherwise it returns 409, and the user removes it through Review instead.
+    - Adds made before migration 0011 can't be undone.
+  - The Undo toast after an add, or after "Stop suggesting", does the same.
 - **Not now** (`restock_feedback.action = skip`) hides the song for the rest of the user's local day. It also lowers the song's weight in every source, by a penalty that fades: a fresh skip halves the weight, and each skip's effect halves every **30 days** (`weight × 0.5^Σ 0.5^(age_days/30)`). After 30 days a single skip costs about ×0.71, and after 90 days about ×0.92.
 - **Deck order** is a weighted random sample (Efraimidis–Spirakis), seeded per user, rotation, source and day. Heavier songs usually come first, but lighter ones still show up, and reloading the same day doesn't reshuffle.
 

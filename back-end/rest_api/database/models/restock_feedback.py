@@ -1,5 +1,5 @@
 """What the user did with a restock suggestion. "skip" (Not now) lowers that song's weight."""
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 
@@ -28,3 +28,6 @@ class RestockFeedbackDB(Base):
     source = Column(String(20), nullable=False)
     action = Column(String(10), nullable=False)
     created_at = Column(DateTime, nullable=False, default=utcnow)
+    # Manual adds only: JSON of the song's rotation_track row before the add ({"created": true}
+    # if the add created it), so the add can be undone. NULL: an add from before 0011 (can't undo).
+    previous_state = Column(Text, nullable=True)

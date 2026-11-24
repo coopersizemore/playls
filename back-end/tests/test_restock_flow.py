@@ -339,3 +339,63 @@ def test_history_filters_and_pages_on_the_server(client, spotify, db):
     [last] = client.get(f"/api/rotation/{rid}/history", params={"filter": "reviews", "limit": 1}).json()
     assert last["action"] == "keep"
     assert client.get(f"/api/rotation/{rid}/history", params={"filter": "bogus"}).status_code == 422
+
+
+def undo(client, rid, track_id, source="bring_back"):
+    return client.post(f"/api/rotation/{rid}/restock/undo", json={"track_id": track_id, "source": source})
+
+
+def playlist_ids(spotify, pid="p1"):
+    return [i["item"]["id"] for i in spotify.playlists[pid]["items"]]
+
+
+def test_undo_bring_back_add_restores_the_removed_song(client, spotify, db):
+    rid = make_rotation(client, spotify, [spotify_item("a", 10), spotify_item("b", 10)])
+    remove(client, rid, "a")
+    client.post(f"/api/rotation/{rid}/flush")
+    row = db.query(RotationTrackDB).filter_by(rotation_id=rid, track_id="a").one()
+    removed_at = row.removed_at
+
+    client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "a", "source": "bring_back"})
+    assert "a" in playlist_ids(spotify)
+    r = undo(client, rid, "a")
+    assert r.status_code == 200 and r.json() == {"undone": "add"}
+
+    db.expire_all()
+    row = db.query(RotationTrackDB).filter_by(rotation_id=rid, track_id="a").one()
+    assert (row.status, row.removed_at, row.removed_by) == ("removed", removed_at, "user")
+    assert "a" not in playlist_ids(spotify)
+    assert db.query(RestockFeedbackDB).filter_by(action="add").count() == 0
+    assert ids(deck(client, rid, "bring_back")) == ["a"]  # offered again
+    assert undo(client, rid, "a").status_code == 404
+
+
+def test_undo_add_of_a_new_song_deletes_it(client, spotify, db):
+    rid = make_rotation(client, spotify, [spotify_item("a", 10)])
+    spotify.catalog["n1"] = track_object("n1")
+    client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "n1", "source": "search"})
+    assert undo(client, rid, "n1", "search").json() == {"undone": "add"}
+    assert db.query(RotationTrackDB).filter_by(rotation_id=rid, track_id="n1").count() == 0
+    assert playlist_ids(spotify) == ["a"]
+    # The sync afterwards agrees with the playlist
+    assert client.get(f"/api/rotation/{rid}").json()["active_count"] == 1
+
+
+def test_undo_not_now_shows_the_song_again(client, spotify, db):
+    rid = make_rotation(client, spotify, [spotify_item("a", 10), spotify_item("b", 10)])
+    remove(client, rid, "a")
+    client.post(f"/api/rotation/{rid}/flush")
+    client.post(f"/api/rotation/{rid}/restock/skip", json={"track_id": "a", "source": "bring_back"})
+    assert ids(deck(client, rid, "bring_back")) == []  # hidden for today
+    assert undo(client, rid, "a").json() == {"undone": "skip"}
+    assert ids(deck(client, rid, "bring_back")) == ["a"]
+    assert db.query(RestockFeedbackDB).count() == 0
+
+
+def test_cannot_undo_an_add_after_reviewing_the_song(client, spotify, db):
+    rid = make_rotation(client, spotify, [spotify_item("a", 10)])
+    spotify.catalog["n1"] = track_object("n1")
+    client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "n1", "source": "search"})
+    client.post(f"/api/rotation/{rid}/review", json={"track_id": "n1", "action": "keep"})
+    assert undo(client, rid, "n1", "search").status_code == 409
+    assert "n1" in playlist_ids(spotify)

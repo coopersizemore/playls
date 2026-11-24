@@ -68,6 +68,9 @@ export const api = {
     data(axios.post(`${API_BASE}/rotation/${id}/restock/add`, { track_id: trackId, source })),
   restockSkip: (id, trackId, source) =>
     data(axios.post(`${API_BASE}/rotation/${id}/restock/skip`, { track_id: trackId, source })),
+  // Undo the latest Add (taken back out of the playlist) or Not now on a song: { undone: 'add' | 'skip' }
+  restockUndo: (id, trackId, source) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/undo`, { track_id: trackId, source })),
   // "Stop suggesting" a song in every restock deck (undo: unblockSong)
   restockBlock: (id, trackId, source) =>
     data(axios.post(`${API_BASE}/rotation/${id}/restock/block`, { track_id: trackId, source })),

@@ -58,6 +58,26 @@ class RotationUpdate(BaseModel):
     grace_period: bool | None = None
     target_size: Literal[30, 50, 100, 200] | None = None  # auto rotations only
     rotate_percent: int | None = Field(None, ge=5, le=100)
+    # Overrides of the account settings; null = use the account setting
+    super_keep_multiplier: Literal[2, 3, 5] | None = None
+    skip_hold_days: Literal[1, 3, 7] | None = None
+    review_order: Literal["overdue", "oldest", "shuffle"] | None = None
+    review_limit: int | None = Field(None, ge=0, le=1000)  # 0 = no limit for this rotation
+    # Auto rotations only; null = the default
+    return_cooldown_days: Literal[14, 28, 56] | None = None
+    pick_percent: Literal[0, 10, 25] | None = None
+    bring_back_percent: Literal[0, 20, 40] | None = None
+
+
+class RotationOverrides(BaseModel):
+    """A rotation's own settings as stored (null = uses the account setting or default)."""
+    super_keep_multiplier: int | None = None
+    skip_hold_days: int | None = None
+    review_order: str | None = None
+    review_limit: int | None = None  # 0 = no limit
+    return_cooldown_days: int | None = None
+    pick_percent: int | None = None
+    bring_back_percent: int | None = None
 
 
 class RotationOut(BaseModel):
@@ -86,6 +106,11 @@ class RotationOut(BaseModel):
     ready_today: int  # due songs offered today (not skipped today, within the limit)
     # False when the last sync attempt with Spotify failed (counts may be stale)
     sync_ok: bool = True
+    # Settings in effect for this rotation (its override, else the account setting)
+    super_keep_multiplier: int = 3
+    skip_hold_days: int = 1
+    review_order: str = "overdue"
+    overrides: RotationOverrides = RotationOverrides()
 
 
 class TrackOut(BaseModel):

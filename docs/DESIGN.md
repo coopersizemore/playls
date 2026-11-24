@@ -175,7 +175,45 @@ A second kind of rotation (`rotation.kind = 'auto'`), created only from scratch 
   - They never count toward the daily limit and can't be undone.
   - Rotated-out rows get `removed_by = 'rotation'`.
 
-## Data model (Alembic revisions 0001–0009)
+## Preferences (owner decisions, 2026-11-24)
+Tweakable behavior, kept out of the way: each area of Settings shows what it did before, plus a collapsed **More options**, and choices are plain-language chips (no raw numbers). Defaults equal the old fixed behavior, so nothing changes until a user picks something.
+- **Where values live:**
+  - Account-wide settings are columns on `users`.
+  - A rotation can override the review ones; those are columns on `rotation`.
+  - NULL means "not set": a rotation falls back to the account setting, and the account falls back to the built-in default.
+  - Resolution is in `services/preferences.py` (pure), which also holds the allowed choices. Stored values outside those choices also fall back to the default.
+  - Migration `0012`.
+- **Reviewing** (account, and overridable per rotation):
+  - **Super keep length:** 2×, 3× (default) or 5× the interval. It's stored on the song when it's super kept (`keep_multiplier`), so changing it only affects later super keeps.
+  - **Skip hold:** until tomorrow (default), 3 days or a week.
+    - A skip on local day D keeps the song out of the queue through day D + hold − 1.
+    - Only today's events count toward the daily limit.
+  - **Review order** (manual rotations):
+    - most overdue first (default)
+    - longest in the playlist (`added_at`, unknown dates first)
+    - shuffled: a stable order per rotation per UTC day, so the daily batch doesn't reshuffle between loads
+    - Auto rotations always review what's leaving next.
+  - **Daily review limit:** per rotation, `rotation.review_limit`.
+    - NULL = the account limit.
+    - 0 = no limit for this rotation.
+    - Otherwise 1–1000.
+- **Account only:** the starting interval for new manual rotations (30 days by default; the Create dialog starts from it).
+- **Restocking** (account only):
+  - Deck size: 10 / 20 / 30 (default) / 50.
+  - For you discovery share: 15% / 33% (default) / 60%.
+  - Not now strength: the weight left after a fresh Not now is 75% / 50% (default) / 25%. The 30-day half-life of its effect is unchanged.
+  - Bring back recovery: a removed song reaches full weight after 30 / 90 (default) / 180 days.
+  - Auto restocks use the owner's values for the same rules.
+- **Auto rotations** (per rotation; defaults as before):
+  - Return cooldown: 2 / 4 / 8 weeks.
+  - PlayLS pick chance per new slot: 0% / 10% / 25%.
+  - Bring back share: 0% / 20% / 40%.
+- **API:**
+  - `GET|PUT /user/me/settings` returns every account setting. PUT changes only the fields sent (null = default; for `review_limit`, null = no limit).
+  - `PUT /rotation/{id}` takes the override fields (null clears one; the auto-only ones return 400 on manual rotations).
+  - `RotationOut` carries the effective `super_keep_multiplier`, `skip_hold_days` and `review_order`, plus the raw `overrides`.
+
+## Data model (Alembic revisions 0001–0012)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
   - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -17,6 +17,7 @@ import {
   ListItem,
   ListItemAvatar,
   ListItemText,
+  Snackbar,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -27,9 +28,23 @@ import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
 import { api, errorMessage } from '../api';
 import { Layout } from './Layout';
+import { IntervalPicker } from './RotationDialogs';
+import {
+  DECK_OPTIONS,
+  DISCOVERY_OPTIONS,
+  MoreOptions,
+  NOT_NOW_OPTIONS,
+  ORDER_OPTIONS,
+  OptionChips,
+  RECOVERY_OPTIONS,
+  SKIP_HOLD_OPTIONS,
+  SUPER_KEEP_OPTIONS,
+} from './SettingsControls';
 import { ListSkeleton } from './Skeletons';
 
 const DEFAULT_LIMIT = 50;
+const REVIEW_EXTRAS = ['super_keep_multiplier', 'skip_hold_days', 'review_order', 'default_interval_hours'];
+const RESTOCK_EXTRAS = ['deck_size', 'discovery_percent', 'not_now_percent', 'bring_back_recovery_days'];
 
 const AppearanceCard = () => {
   const { preference, setPreference } = useColorMode();
@@ -51,55 +66,61 @@ const AppearanceCard = () => {
   );
 };
 
-// Songs offered for review per rotation per day (null = no limit)
-const ReviewLimitCard = () => {
-  const [loaded, setLoaded] = useState(false);
+const ResetLink = ({ onClick }) => (
+  <Button size="small" color="inherit" onClick={onClick} sx={{ mt: 2, color: 'text.secondary' }}>
+    Reset these to defaults
+  </Button>
+);
+
+// The daily limit up front; the rest of how reviewing works is under "More options"
+const ReviewingCard = ({ settings, save }) => {
   const [noLimit, setNoLimit] = useState(false);
   const [amount, setAmount] = useState(String(DEFAULT_LIMIT));
-  const [saved, setSaved] = useState(null);
-  const [status, setStatus] = useState({ type: '', text: '' });
+  const [pickerKey, setPickerKey] = useState(0);
+  const intervalTimer = useRef(null);
+  const loaded = !!settings;
+  const saved = settings?.review_limit;
 
   useEffect(() => {
-    api.settings()
-      .then(({ review_limit: limit }) => {
-        setNoLimit(limit === null);
-        setAmount(String(limit ?? DEFAULT_LIMIT));
-        setSaved(limit);
-        setLoaded(true);
-      })
-      .catch((e) => setStatus({ type: 'error', text: errorMessage(e, 'Failed to load settings.') }));
-  }, []);
+    if (!settings) return;
+    setNoLimit(settings.review_limit === null);
+    setAmount(String(settings.review_limit ?? DEFAULT_LIMIT));
+  }, [settings?.review_limit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => clearTimeout(intervalTimer.current), []);
 
   const n = Number(amount);
   const valid = noLimit || (Number.isInteger(n) && n >= 1 && n <= 1000);
   const value = noLimit ? null : n;
   const dirty = loaded && valid && value !== saved;
 
-  const save = async () => {
-    try {
-      const { review_limit: limit } = await api.updateSettings({ review_limit: value });
-      setSaved(limit);
-      setStatus({ type: 'success', text: 'Saved.' });
-    } catch (e) {
-      setStatus({ type: 'error', text: errorMessage(e, 'Failed to save settings.') });
-    }
+  // The interval picker reports every keystroke; save once typing pauses
+  const saveInterval = (hours) => {
+    clearTimeout(intervalTimer.current);
+    if (hours === null || hours === settings.default_interval_hours) return;
+    intervalTimer.current = setTimeout(() => save({ default_interval_hours: hours }), 600);
+  };
+
+  const reset = async () => {
+    await save(Object.fromEntries(REVIEW_EXTRAS.map((k) => [k, null])));
+    setPickerKey((k) => k + 1); // re-read the restored interval
   };
 
   return (
     <Card sx={{ mb: 3 }}>
       <CardContent>
-        <Typography variant="h6" gutterBottom>Daily review limit</Typography>
+        <Typography variant="h6" gutterBottom>Reviewing</Typography>
+        <Typography variant="subtitle2">Daily review limit</Typography>
         <Typography color="text.secondary" paragraph>
-          The most songs each rotation offers for review per day, most overdue first, so a big backlog
-          doesn't arrive all at once. After finishing a day's batch you can still choose to review more.
+          The most songs each rotation offers for review per day, so a big backlog doesn't arrive all at
+          once. After finishing a day's batch you can still choose to review more.
         </Typography>
-        {status.text && <Alert severity={status.type} sx={{ mb: 2 }}>{status.text}</Alert>}
         <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
           <TextField
             label="Songs per day"
             type="number"
             value={amount}
-            onChange={(e) => { setAmount(e.target.value); setStatus({ type: '', text: '' }); }}
+            onChange={(e) => setAmount(e.target.value)}
             disabled={!loaded || noLimit}
             error={!valid}
             helperText={!valid ? 'Between 1 and 1000' : ' '}
@@ -107,17 +128,63 @@ const ReviewLimitCard = () => {
             sx={{ width: 160 }}
           />
           <FormControlLabel
-            control={<Checkbox checked={noLimit} disabled={!loaded}
-              onChange={(e) => { setNoLimit(e.target.checked); setStatus({ type: '', text: '' }); }} />}
+            control={<Checkbox checked={noLimit} disabled={!loaded} onChange={(e) => setNoLimit(e.target.checked)} />}
             label="No limit"
             sx={{ mb: 2.5 }}
           />
-          <Button variant="contained" onClick={save} disabled={!dirty} sx={{ mb: 2.5 }}>Save</Button>
+          <Button variant="contained" onClick={() => save({ review_limit: value })} disabled={!dirty} sx={{ mb: 2.5 }}>
+            Save
+          </Button>
         </Box>
+
+        {loaded && (
+          <MoreOptions>
+            <Typography variant="body2" color="text.secondary">
+              These apply to every rotation. A rotation can choose differently in its own settings.
+            </Typography>
+            <OptionChips title="Super keep" help="How much longer a super kept song waits before it comes back."
+              options={SUPER_KEEP_OPTIONS} value={settings.super_keep_multiplier}
+              onChange={(v) => save({ super_keep_multiplier: v })} />
+            <OptionChips title="Skipped songs come back" options={SKIP_HOLD_OPTIONS} value={settings.skip_hold_days}
+              onChange={(v) => save({ skip_hold_days: v })} />
+            <OptionChips title="Review order" help="Which due songs come up first."
+              options={ORDER_OPTIONS} value={settings.review_order} onChange={(v) => save({ review_order: v })} />
+            <IntervalPicker key={pickerKey} value={settings.default_interval_hours} onChange={saveInterval}
+              label="Starting interval for new rotations" />
+            <ResetLink onClick={reset} />
+          </MoreOptions>
+        )}
       </CardContent>
     </Card>
   );
 };
+
+// How Restock chooses songs; everything is under "More options"
+const RestockingCard = ({ settings, save }) => (
+  <Card sx={{ mb: 3 }}>
+    <CardContent>
+      <Typography variant="h6" gutterBottom>Restocking</Typography>
+      <Typography color="text.secondary">How Restock picks songs for you, across every rotation.</Typography>
+      {settings && (
+        <MoreOptions>
+          <OptionChips title="Songs per deck" options={DECK_OPTIONS} value={settings.deck_size}
+            onChange={(v) => save({ deck_size: v })} />
+          <OptionChips title="For you" help="How many suggestions are new to you, rather than songs you already play."
+            options={DISCOVERY_OPTIONS} value={settings.discovery_percent}
+            onChange={(v) => save({ discovery_percent: v })} />
+          <OptionChips title="Not now pushes a song back" help="How much less often a song comes up after you pass on it."
+            options={NOT_NOW_OPTIONS} value={settings.not_now_percent}
+            onChange={(v) => save({ not_now_percent: v })} />
+          <OptionChips title="Removed songs are back in Bring back"
+            help="Removed songs start rare in Bring back and become more likely over time."
+            options={RECOVERY_OPTIONS} value={settings.bring_back_recovery_days}
+            onChange={(v) => save({ bring_back_recovery_days: v })} />
+          <ResetLink onClick={() => save(Object.fromEntries(RESTOCK_EXTRAS.map((k) => [k, null])))} />
+        </MoreOptions>
+      )}
+    </CardContent>
+  </Card>
+);
 
 // Songs the user asked Restock to stop suggesting, with a way to undo each
 const BlockedSongsCard = () => {
@@ -171,6 +238,23 @@ const Settings = () => {
   const navigate = useNavigate();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
+  const [settings, setSettings] = useState(null);
+  const [toast, setToast] = useState('');
+
+  useEffect(() => {
+    api.settings().then(setSettings).catch((e) => setError(errorMessage(e, 'Failed to load settings.')));
+  }, []);
+
+  // Save some settings right away (only the fields given change)
+  const save = useCallback(async (fields) => {
+    setError('');
+    try {
+      setSettings(await api.updateSettings(fields));
+      setToast('Saved');
+    } catch (e) {
+      setError(errorMessage(e, 'Failed to save settings.'));
+    }
+  }, []);
 
   const signOut = async () => {
     await logout();
@@ -194,7 +278,8 @@ const Settings = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <AppearanceCard />
-      <ReviewLimitCard />
+      <ReviewingCard settings={settings} save={save} />
+      <RestockingCard settings={settings} save={save} />
       <BlockedSongsCard />
 
       <Card sx={{ mb: 3 }}>
@@ -230,6 +315,9 @@ const Settings = () => {
           <Button color="error" variant="contained" onClick={deleteAccount}>Delete</Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar open={!!toast} autoHideDuration={1500} onClose={() => setToast('')} message={toast}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
     </Layout>
   );
 };

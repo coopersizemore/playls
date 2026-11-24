@@ -6,6 +6,7 @@ from ..database.models.user import UserDB
 from ..models.rotation import RotationOut
 from ..models.user import SettingsOut, SettingsUpdate
 from ..models.restock import BlockedSongOut
+from ..services import preferences as prefs
 from ..services import restock_service as restock
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
@@ -27,9 +28,13 @@ async def get_current_user_rotations(
     return await rs.list_rotation_summaries(db, current_user, sync=sync, tz_offset_minutes=tz_offset)
 
 
+def _settings_out(user: UserDB) -> SettingsOut:
+    return SettingsOut(review_limit=user.review_limit, **prefs.account_settings(user))
+
+
 @router.get("/me/settings", response_model=SettingsOut)
 async def get_settings(current_user: UserDB = Depends(AuthService.get_current_user_from_token)):
-    return SettingsOut(review_limit=current_user.review_limit)
+    return _settings_out(current_user)
 
 
 @router.put("/me/settings", response_model=SettingsOut)
@@ -38,10 +43,12 @@ async def update_settings(
     current_user: UserDB = Depends(AuthService.get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    """review_limit: songs offered per rotation per day (1-1000), or null for no limit."""
-    current_user.review_limit = data.review_limit
+    """Change only the settings sent. review_limit: 1-1000, or null for no limit. For the
+    others, null puts the setting back to its default."""
+    for name in data.model_fields_set:
+        setattr(current_user, name, getattr(data, name))
     db.commit()
-    return SettingsOut(review_limit=current_user.review_limit)
+    return _settings_out(current_user)
 
 
 @router.get("/me/blocked-songs", response_model=list[BlockedSongOut])

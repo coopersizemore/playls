@@ -42,6 +42,14 @@ class RotationDB(Base):
     target_size = Column(Integer, nullable=True)
     rotate_percent = Column(Integer, nullable=True)
     last_rotated_at = Column(DateTime, nullable=True)  # NULL: never yet (counts from created_at)
+    # Per-rotation overrides of the owner's preferences (0012). NULL = use the account setting
+    super_keep_multiplier = Column(Integer, nullable=True)
+    skip_hold_days = Column(Integer, nullable=True)
+    review_order = Column(String(20), nullable=True)
+    review_limit = Column(Integer, nullable=True)  # 0 = no limit
+    return_cooldown_days = Column(Integer, nullable=True)  # auto only
+    pick_percent = Column(Integer, nullable=True)  # auto only: chance per new slot of a PlayLS pick
+    bring_back_percent = Column(Integer, nullable=True)  # auto only: share of new slots that are returns
     # Lease held by the request syncing or writing this playlist (sync_service.sync_claim)
     sync_claimed_until = Column(DateTime, nullable=True)
 

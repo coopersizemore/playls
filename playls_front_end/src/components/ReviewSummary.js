@@ -53,7 +53,7 @@ const ReviewSummary = ({ rotationId, rotation, log, flushed }) => {
   const removed = byAction('remove');
   const skipped = byAction('skip');
   const interval = rotation ? formatInterval(rotation.interval_hours) : null;
-  const superInterval = rotation ? formatInterval(rotation.interval_hours * 3) : null;
+  const superInterval = rotation ? formatInterval(rotation.interval_hours * (rotation.super_keep_multiplier || 3)) : null;
 
   return (
     <Box>
@@ -100,7 +100,8 @@ const ReviewSummary = ({ rotationId, rotation, log, flushed }) => {
         <Section
           icon={<SkipNext />}
           title="Skipped"
-          subtitle="Still in the playlist and still due. They'll come back tomorrow."
+          subtitle={`Still in the playlist and still due. They'll come back ${
+            (rotation?.skip_hold_days || 1) > 1 ? `in ${rotation.skip_hold_days} days` : 'tomorrow'}.`}
           tracks={skipped}
         />
       )}

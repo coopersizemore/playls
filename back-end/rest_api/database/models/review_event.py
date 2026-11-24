@@ -5,7 +5,7 @@ from rest_api.clock import utcnow
 from rest_api.database.config import Base
 
 KEEP = "keep"
-SUPER_KEEP = "super_keep"  # comes due at SUPER_KEEP_MULTIPLIER x the interval
+SUPER_KEEP = "super_keep"  # comes due at the super keep length (default 3) x the interval
 SKIP = "skip"
 REMOVE = "remove"
 UNDO = "undo"

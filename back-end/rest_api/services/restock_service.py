@@ -33,6 +33,7 @@ from rest_api.database.models.suggestion_cache import SuggestionCacheDB
 from rest_api.database.models.restock_block import RestockBlockDB
 from rest_api.database.models.user import UserDB
 from rest_api.models.restock import CandidateOut, DeckOut, SearchOut
+from rest_api.services import preferences as prefs
 from rest_api.services import restock_logic as logic
 from rest_api.services.auth_service import SUGGESTION_SCOPES, missing_scopes
 from rest_api.services.db.rotation_service import track_out
@@ -126,6 +127,25 @@ def _row_meta(row) -> Dict[str, Any]:
     }
 
 
+# ---------- the user's restock settings ----------
+
+def deck_size(user: UserDB) -> int:
+    return prefs.account(user, "deck_size")
+
+
+def skip_factor(user: UserDB) -> float:
+    """Weight left after a fresh Not now (0.5 by default; lower is a stronger Not now)."""
+    return prefs.account(user, "not_now_percent") / 100
+
+
+def recovery_days(user: UserDB) -> int:
+    return prefs.account(user, "bring_back_recovery_days")
+
+
+def discovery_share(user: UserDB) -> float:
+    return prefs.account(user, "discovery_percent") / 100
+
+
 # ---------- 1. bring back ----------
 
 def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_minutes: int = 0) -> DeckOut:
@@ -145,12 +165,15 @@ def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offs
         .group_by(ReviewEventDB.rotation_track_id)
     }) if removed else Counter()
 
-    weights = [logic.bring_back_weight(r.removed_at, now, skips[r.track_id], keeps[r.id]) for r in removed]
+    weights = [
+        logic.bring_back_weight(r.removed_at, now, skips[r.track_id], keeps[r.id], recovery_days(user), skip_factor(user))
+        for r in removed
+    ]
     ordered = logic.weighted_order(list(zip(removed, weights)), weights, _seed(user, rotation, BRING_BACK, today))
     return DeckOut(source=BRING_BACK, items=[
         _candidate(_row_meta(r), BRING_BACK, score=round(w, 4),
                    reason=logic.bring_back_reason(r.removed_at, now, keeps[r.id]))
-        for r, w in ordered[:logic.DECK_SIZE]
+        for r, w in ordered[:deck_size(user)]
     ])
 
 
@@ -182,7 +205,7 @@ def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_mi
     picks.sort(key=lambda p: skips[p.track_id])
     return DeckOut(source=PICKS, items=[
         _candidate(_row_meta(p), PICKS, note=p.note, reason=p.note or "PlayLS pick")
-        for p in picks[:logic.DECK_SIZE]
+        for p in picks[:deck_size(user)]
     ], already_in_rotation=len(already_in))
 
 
@@ -326,7 +349,7 @@ async def suggested_deck(
         if track_id in rows or track_id in skipped_today:
             continue
         score, reason = logic.score_suggestion(
-            entry["features"], skips[track_id], track_id in elsewhere, now
+            entry["features"], skips[track_id], track_id in elsewhere, now, skip_factor(user)
         )
         if score <= 0:
             continue
@@ -335,7 +358,7 @@ async def suggested_deck(
 
     seed = _seed(user, rotation, SUGGESTED, today)
     order = lambda items, salt: [c for c, _ in logic.weighted_order(items, [s for _, s in items], seed + salt)]
-    deck = logic.blend(order(known, 0), order(discoveries, 1), logic.DECK_SIZE)
+    deck = logic.blend(order(known, 0), order(discoveries, 1), deck_size(user), discovery_share(user))
     return DeckOut(source=SUGGESTED, items=deck, missing_scopes=payload.get("missing_scopes", []))
 
 

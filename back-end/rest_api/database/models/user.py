@@ -31,6 +31,16 @@ class UserDB(Base):
     # Max songs offered for review per rotation per day; NULL = no limit
     review_limit = Column(Integer, nullable=True, default=DEFAULT_REVIEW_LIMIT, server_default=str(DEFAULT_REVIEW_LIMIT))
 
+    # Account-wide preferences (0012). NULL = the built-in default; see services/preferences.py
+    super_keep_multiplier = Column(Integer, nullable=True)
+    skip_hold_days = Column(Integer, nullable=True)
+    review_order = Column(String(20), nullable=True)
+    default_interval_hours = Column(Integer, nullable=True)
+    deck_size = Column(Integer, nullable=True)
+    discovery_percent = Column(Integer, nullable=True)
+    not_now_percent = Column(Integer, nullable=True)
+    bring_back_recovery_days = Column(Integer, nullable=True)
+
     # Space-separated OAuth scopes granted at the last login (to detect missing ones)
     granted_scopes = Column(Text, nullable=True)
 

@@ -31,6 +31,9 @@ import SwipeCard, { EXIT_MS } from './SwipeCard';
 import { ReviewSkeleton } from './Skeletons';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const TIMES = { 2: 'twice', 3: 'three times', 5: 'five times' };
+const timesWord = (n) => TIMES[n] || `${n} times`;
+const skipBack = (days) => (days > 1 ? `in ${days} days` : 'tomorrow');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const EXIT_FOR = { keep: 'right', super_keep: 'up', remove: 'left' };
 
@@ -328,7 +331,7 @@ const Review = () => {
           )}
           {moreDue === 0 && batch.due_count > 0 && tracks.length === 0 && (
             <Typography color="text.secondary" paragraph>
-              Songs you skipped today will come back tomorrow.
+              Songs you skipped will come back {skipBack(rotation?.skip_hold_days || 1)}.
             </Typography>
           )}
           {tracks.length > 0 && (
@@ -389,7 +392,8 @@ const Review = () => {
               onClick={() => decide('remove')} disabled={busy || locked} active={current?.action === 'remove'} />
             <Button variant={current?.action === 'super_keep' ? 'contained' : 'outlined'} color="warning"
               startIcon={current?.action === 'super_keep' ? <Check /> : <Star />} onClick={() => decide('super_keep')}
-              disabled={busy || locked} title="Keep, and don't ask again for three times as long" sx={{ mb: 1 }}>
+              disabled={busy || locked}
+              title={`Keep, and don't ask again for ${timesWord(rotation?.super_keep_multiplier || 3)} as long`} sx={{ mb: 1 }}>
               Super keep
             </Button>
             <Hint side="right" label={touch ? 'Swipe Right\nto Keep' : 'Keep\n(→ key)'}
@@ -398,9 +402,9 @@ const Review = () => {
           {rotation && (
             <Typography variant="caption" color="text.secondary" display="block" textAlign="center">
               {rotation.kind === 'auto'
-                ? 'Kept songs stay through the next rotation; super kept songs age three times slower. Removed songs are replaced.'
+                ? `Kept songs stay through the next rotation; super kept songs age ${timesWord(rotation.super_keep_multiplier)} slower. Removed songs are replaced.`
                 : <>Kept songs come back in {formatInterval(rotation.interval_hours)}, super kept in{' '}
-                  {formatInterval(rotation.interval_hours * 3)}.</>}
+                  {formatInterval(rotation.interval_hours * rotation.super_keep_multiplier)}.</>}
             </Typography>
           )}
 

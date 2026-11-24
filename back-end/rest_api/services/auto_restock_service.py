@@ -29,6 +29,7 @@ from rest_api.database.models.rotation_track import (
 )
 from rest_api.database.models.user import UserDB
 from rest_api.services import auto_rotation_logic as auto
+from rest_api.services import preferences as prefs
 from rest_api.services import restock_logic
 from rest_api.services import restock_service as rsv
 from rest_api.services.spotify.spotify_service import SpotifyService as ss
@@ -64,19 +65,25 @@ async def choose_additions(
     skips = rsv._skip_counts(db, user)
     rng = random.Random(restock_logic.daily_seed(user.id, rotation.id, "auto", now.isoformat()))
     taken: set = set()
+    cooldown = prefs.for_rotation(rotation, "return_cooldown_days")
 
     # Bring back: songs that left at least the cooldown ago
     removed = [
         r for r in rows.values()
         if r.status == REMOVED and r.is_playable and r.track_id not in blocked
-        and auto.cooled_down(r.removed_at, now)
+        and auto.cooled_down(r.removed_at, now, cooldown)
     ]
     keeps = Counter({
         row_id: n for row_id, n in db.query(ReviewEventDB.rotation_track_id, func.count())
         .filter(ReviewEventDB.rotation_track_id.in_([r.id for r in removed]), ReviewEventDB.action == KEEP)
         .group_by(ReviewEventDB.rotation_track_id)
     }) if removed else Counter()
-    back_weights = [restock_logic.bring_back_weight(r.removed_at, now, skips[r.track_id], keeps[r.id]) for r in removed]
+    back_weights = [
+        restock_logic.bring_back_weight(
+            r.removed_at, now, skips[r.track_id], keeps[r.id], rsv.recovery_days(user), rsv.skip_factor(user)
+        )
+        for r in removed
+    ]
     back = [rsv._row_meta(r) for r in restock_logic.weighted_order(removed, back_weights, rng.randrange(2**32))]
 
     # PlayLS picks that are live and not in (or recently out of) this rotation
@@ -85,7 +92,7 @@ async def choose_additions(
         row = rows.get(pick.track_id)
         if pick.track_id in seen or pick.track_id in blocked:
             continue
-        if row is not None and (row.status != REMOVED or not auto.cooled_down(row.removed_at, now)):
+        if row is not None and (row.status != REMOVED or not auto.cooled_down(row.removed_at, now, cooldown)):
             continue
         seen.add(pick.track_id)
         picks.append(pick)
@@ -99,20 +106,28 @@ async def choose_additions(
     for track_id, entry in payload["candidates"].items():
         if track_id in rows or track_id in blocked:
             continue
-        score, _ = restock_logic.score_suggestion(entry["features"], skips[track_id], track_id in elsewhere, now)
+        score, _ = restock_logic.score_suggestion(
+            entry["features"], skips[track_id], track_id in elsewhere, now, rsv.skip_factor(user)
+        )
         if score <= 0:
             continue
         (discoveries if restock_logic.is_discovery(entry["features"]) else known).append((entry["meta"], score))
     order = lambda items: restock_logic.weighted_order(
         [m for m, _ in items], [s for _, s in items], rng.randrange(2**32)
     )
-    for_you = restock_logic.blend(order(known), order(discoveries), len(known) + len(discoveries))
+    for_you = restock_logic.blend(
+        order(known), order(discoveries), len(known) + len(discoveries), rsv.discovery_share(user)
+    )
 
     # Picks and bring-back songs can also turn up in For you; don't double count them
     pick_ids = {m["track_id"] for m in pick_metas}
     for_you = [m for m in for_you if m["track_id"] not in pick_ids]
 
-    counts = auto.allocate(slots, len(pick_metas), len(back), len(for_you), rng)
+    counts = auto.allocate(
+        slots, len(pick_metas), len(back), len(for_you), rng,
+        pick_chance=prefs.for_rotation(rotation, "pick_percent") / 100,
+        bring_back_share=prefs.for_rotation(rotation, "bring_back_percent") / 100,
+    )
     chosen: List[Dict[str, Any]] = []
     for source, pool in ((PICKS, pick_metas), (BRING_BACK, back), (SUGGESTED, for_you)):
         want = counts["picks" if source == PICKS else "bring_back" if source == BRING_BACK else "suggested"]

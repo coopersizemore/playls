@@ -29,6 +29,18 @@ import {
 import { AutoMode, CreateNewFolder, LibraryMusic, MusicNote } from '@mui/icons-material';
 import { api, errorMessage } from '../api';
 import { ListSkeleton } from './Skeletons';
+import {
+  AUTO_SETTING_DEFAULTS,
+  BACK_OPTIONS,
+  COOLDOWN_OPTIONS,
+  MoreOptions,
+  ORDER_OPTIONS,
+  OptionChips,
+  PICK_OPTIONS,
+  SKIP_HOLD_OPTIONS,
+  SUPER_KEEP_OPTIONS,
+  labelFor,
+} from './SettingsControls';
 
 // ---------- interval (stored in hours) ----------
 
@@ -177,6 +189,7 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [intervalHours, setIntervalHours] = useState(24 * 30);
+  const [pickerKey, setPickerKey] = useState(0); // remounts the picker once the default arrives
   const [grace, setGrace] = useState(true);
   const [target, setTarget] = useState(AUTO_DEFAULTS.target);
   const [percent, setPercent] = useState(AUTO_DEFAULTS.percent);
@@ -189,6 +202,10 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
     setMode('existing'); setPlaylistId(null); setName(''); setDescription('');
     setIntervalHours(24 * 30); setGrace(true); setError(''); setPlaylists(null);
     setTarget(AUTO_DEFAULTS.target); setPercent(AUTO_DEFAULTS.percent); setAutoHours(AUTO_DEFAULTS.intervalHours);
+    // Start from the interval chosen in Settings (30 days unless changed)
+    api.settings()
+      .then((s) => { setIntervalHours(s.default_interval_hours); setPickerKey((k) => k + 1); })
+      .catch(() => {});
     // Loaded on open so Home doesn't page through every playlist on each visit
     api.playlists()
       .then(setPlaylists)
@@ -270,7 +287,7 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
           <AutoSettings target={target} percent={percent} intervalHours={autoHours}
             onTarget={setTarget} onPercent={setPercent} onInterval={setAutoHours} pickerKey="auto" />
         ) : (
-          <IntervalPicker key="manual" value={intervalHours} onChange={setIntervalHours} />
+          <IntervalPicker key={`manual-${pickerKey}`} value={intervalHours} onChange={setIntervalHours} />
         )}
         {/* A new playlist starts empty, so the grace period has nothing to apply to */}
         {mode === 'existing' && <GracePeriodSwitch checked={grace} onChange={setGrace} />}
@@ -287,12 +304,49 @@ export const CreateRotationDialog = ({ open, onClose, onCreated }) => {
 
 // ---------- edit ----------
 
+// Daily limit for one rotation: the account's, a number of its own, or none
+const LimitOverride = ({ value, onChange, accountLimit }) => {
+  const mode = value == null ? 'default' : value === 0 ? 'none' : 'custom';
+  const [amount, setAmount] = useState(String(value && value > 0 ? value : accountLimit || 20));
+  const n = Number(amount);
+  const valid = Number.isInteger(n) && n >= 1 && n <= 1000;
+  const accountText = accountLimit == null ? 'no limit' : `${accountLimit} a day`;
+  const chip = (key, label, next) => (
+    <Chip label={label} onClick={() => onChange(next)}
+      color={mode === key ? 'primary' : 'default'} variant={mode === key ? 'filled' : 'outlined'} />
+  );
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="subtitle2">Daily review limit</Typography>
+      <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1, mt: 0.75, alignItems: 'center' }}>
+        {chip('default', `Default (${accountText})`, null)}
+        {chip('custom', 'Custom', valid ? n : 20)}
+        {chip('none', 'No limit', 0)}
+      </Stack>
+      {mode === 'custom' && (
+        <TextField size="small" type="number" label="Songs per day" value={amount} sx={{ mt: 1.5, width: 160 }}
+          inputProps={{ min: 1, max: 1000, step: 1 }} error={!valid} helperText={valid ? ' ' : 'Between 1 and 1000'}
+          onChange={(e) => {
+            setAmount(e.target.value);
+            const next = Number(e.target.value);
+            if (Number.isInteger(next) && next >= 1 && next <= 1000) onChange(next);
+          }} />
+      )}
+    </Box>
+  );
+};
+
+const OVERRIDE_KEYS = ['super_keep_multiplier', 'skip_hold_days', 'review_order', 'review_limit'];
+const AUTO_KEYS = ['return_cooldown_days', 'pick_percent', 'bring_back_percent'];
+
 export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
   const [name, setName] = useState('');
   const [intervalHours, setIntervalHours] = useState(null);
   const [grace, setGrace] = useState(true);
   const [target, setTarget] = useState(AUTO_DEFAULTS.target);
   const [percent, setPercent] = useState(AUTO_DEFAULTS.percent);
+  const [overrides, setOverrides] = useState({});
+  const [account, setAccount] = useState(null); // account settings, for the "Default (…)" labels
   const [error, setError] = useState('');
   const isAuto = rotation?.kind === 'auto';
 
@@ -302,14 +356,22 @@ export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
       setGrace(rotation.grace_period); setError('');
       setTarget(rotation.target_size || AUTO_DEFAULTS.target);
       setPercent(rotation.rotate_percent || AUTO_DEFAULTS.percent);
+      setOverrides(rotation.overrides || {});
+      api.settings().then(setAccount).catch(() => setAccount(null));
     }
   }, [rotation]);
 
+  const setOverride = (key) => (value) => setOverrides((o) => ({ ...o, [key]: value }));
+  const defaultOf = (options, key) => (account ? `Default (${labelFor(options, account[key]).toLowerCase()})` : 'Default');
+
   const save = async () => {
     try {
+      const extras = Object.fromEntries(
+        [...OVERRIDE_KEYS, ...(isAuto ? AUTO_KEYS : [])].map((k) => [k, overrides[k] ?? null])
+      );
       const body = isAuto
-        ? { name: name.trim(), interval_hours: intervalHours, target_size: target, rotate_percent: percent }
-        : { name: name.trim(), interval_hours: intervalHours, grace_period: grace };
+        ? { name: name.trim(), interval_hours: intervalHours, target_size: target, rotate_percent: percent, ...extras }
+        : { name: name.trim(), interval_hours: intervalHours, grace_period: grace, ...extras };
       await api.updateRotation(rotation.id, body);
       onSaved();
     } catch (e) {
@@ -343,6 +405,37 @@ export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
               interval after you kept them.
             </Typography>
           </>
+        )}
+        {rotation && (
+          <MoreOptions>
+            <Typography variant="body2" color="text.secondary">
+              Default follows your account settings.
+            </Typography>
+            <LimitOverride key={rotation.id} value={overrides.review_limit} onChange={setOverride('review_limit')}
+              accountLimit={account ? account.review_limit : rotation.daily_limit} />
+            <OptionChips title="Super keep" options={SUPER_KEEP_OPTIONS} value={overrides.super_keep_multiplier}
+              onChange={setOverride('super_keep_multiplier')} defaultLabel={defaultOf(SUPER_KEEP_OPTIONS, 'super_keep_multiplier')} />
+            <OptionChips title="Skipped songs come back" options={SKIP_HOLD_OPTIONS} value={overrides.skip_hold_days}
+              onChange={setOverride('skip_hold_days')} defaultLabel={defaultOf(SKIP_HOLD_OPTIONS, 'skip_hold_days')} />
+            {/* Auto rotations review what's leaving next, so the order setting doesn't apply */}
+            {!isAuto && (
+              <OptionChips title="Review order" options={ORDER_OPTIONS} value={overrides.review_order}
+                onChange={setOverride('review_order')} defaultLabel={defaultOf(ORDER_OPTIONS, 'review_order')} />
+            )}
+            {isAuto && (
+              <>
+                <OptionChips title="A song that rotated out can return after" options={COOLDOWN_OPTIONS}
+                  value={overrides.return_cooldown_days} onChange={setOverride('return_cooldown_days')}
+                  defaultLabel={`Default (${labelFor(COOLDOWN_OPTIONS, AUTO_SETTING_DEFAULTS.return_cooldown_days)})`} />
+                <OptionChips title="PlayLS picks in each restock" options={PICK_OPTIONS} value={overrides.pick_percent}
+                  onChange={setOverride('pick_percent')}
+                  defaultLabel={`Default (${labelFor(PICK_OPTIONS, AUTO_SETTING_DEFAULTS.pick_percent).toLowerCase()})`} />
+                <OptionChips title="Songs coming back in each restock" options={BACK_OPTIONS}
+                  value={overrides.bring_back_percent} onChange={setOverride('bring_back_percent')}
+                  defaultLabel={`Default (${labelFor(BACK_OPTIONS, AUTO_SETTING_DEFAULTS.bring_back_percent).toLowerCase()})`} />
+              </>
+            )}
+          </MoreOptions>
         )}
       </DialogContent>
       <DialogActions>

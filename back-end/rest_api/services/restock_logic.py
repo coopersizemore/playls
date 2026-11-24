@@ -69,21 +69,26 @@ def skip_decay(skipped_at: datetime, now: datetime) -> float:
     return 0.5 ** (days / SKIP_HALF_LIFE_DAYS)
 
 
-def skip_multiplier(effective_skips: float) -> float:
-    """Weight multiplier for a (fading) skip count: 1 skip just now -> 0.5, fully faded -> 1.0."""
-    return SKIP_FACTOR ** effective_skips
+def skip_multiplier(effective_skips: float, factor: float = SKIP_FACTOR) -> float:
+    """Weight multiplier for a (fading) skip count: 1 skip just now -> `factor` (0.5 by default),
+    fully faded -> 1.0. A lower factor is a stronger Not now."""
+    return factor ** effective_skips
 
 
 # ---------- bring back ----------
 
-def bring_back_weight(removed_at: Optional[datetime], now: datetime, skips: float, keeps: int = 0) -> float:
-    """Low right after removal, full after ~90 days; lowered by (fading) "Not now"s; small boost per past keep."""
+def bring_back_weight(
+    removed_at: Optional[datetime], now: datetime, skips: float, keeps: int = 0,
+    recovery_days: float = BRING_BACK_RECOVERY_DAYS, skip_factor: float = SKIP_FACTOR,
+) -> float:
+    """Low right after removal, full after `recovery_days` (90 by default); lowered by (fading)
+    "Not now"s; small boost per past keep."""
     if removed_at is None:
         ramp = 1.0
     else:
         days = max(0.0, (now - removed_at).total_seconds() / 86400)
-        ramp = BRING_BACK_FLOOR + (1 - BRING_BACK_FLOOR) * min(1.0, days / BRING_BACK_RECOVERY_DAYS)
-    return ramp * skip_multiplier(skips) * (1 + 0.1 * min(keeps, 5))
+        ramp = BRING_BACK_FLOOR + (1 - BRING_BACK_FLOOR) * min(1.0, days / max(recovery_days, 1))
+    return ramp * skip_multiplier(skips, skip_factor) * (1 + 0.1 * min(keeps, 5))
 
 
 def bring_back_reason(removed_at: Optional[datetime], now: datetime, keeps: int) -> str:
@@ -107,6 +112,7 @@ def score_suggestion(
     skips: float = 0,
     in_other_rotation: bool = False,
     now: Optional[datetime] = None,
+    skip_factor: float = SKIP_FACTOR,
 ) -> Tuple[float, str]:
     """Score a candidate from cached listening features. Returns (score, reason).
 
@@ -163,7 +169,7 @@ def score_suggestion(
     score = sum(p[0] for p in parts)
     # The single biggest contributor explains the suggestion best
     reason = max(parts, key=lambda p: p[0])[1]
-    score *= skip_multiplier(skips)
+    score *= skip_multiplier(skips, skip_factor)
     if in_other_rotation:
         score *= 0.6
     return score, reason

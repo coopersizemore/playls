@@ -100,11 +100,12 @@ def leaving_next(tracks: Sequence, rotation, now: datetime) -> List:
 
 
 def allocate(
-    slots: int, picks_available: int, bring_back_available: int, for_you_available: int, rng: random.Random
+    slots: int, picks_available: int, bring_back_available: int, for_you_available: int, rng: random.Random,
+    pick_chance: float = PICK_CHANCE, bring_back_share: float = BRING_BACK_SHARE,
 ) -> Dict[str, int]:
     """Split new slots between sources. Shortfalls in one source spill into the others."""
-    picks = min(picks_available, sum(1 for _ in range(slots) if rng.random() < PICK_CHANCE))
-    expected_back = slots * BRING_BACK_SHARE
+    picks = min(picks_available, sum(1 for _ in range(slots) if rng.random() < pick_chance))
+    expected_back = slots * bring_back_share
     bring_back = int(expected_back) + (1 if rng.random() < expected_back - int(expected_back) else 0)
     bring_back = min(bring_back_available, bring_back, slots - picks)
     for_you = min(for_you_available, slots - picks - bring_back)
@@ -118,6 +119,7 @@ def allocate(
     return {"picks": picks, "bring_back": bring_back, "suggested": for_you}
 
 
-def cooled_down(removed_at: Optional[datetime], now: datetime) -> bool:
-    """A removed song may return once the cooldown has passed (unknown removal time: yes)."""
-    return removed_at is None or removed_at <= now - timedelta(days=RETURN_COOLDOWN_DAYS)
+def cooled_down(removed_at: Optional[datetime], now: datetime, days: int = RETURN_COOLDOWN_DAYS) -> bool:
+    """A removed song may return once the cooldown (4 weeks by default) has passed
+    (unknown removal time: yes)."""
+    return removed_at is None or removed_at <= now - timedelta(days=days)

@@ -7,6 +7,7 @@ Due date for an active song, with interval = rotation.interval_hours:
   - grace period off:         added_at + interval
                               (if Spotify didn't report added_at: due at rotation creation)
 """
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
@@ -146,6 +147,24 @@ def parse_playlist_items(entries: Iterable[Dict[str, Any]]) -> Dict[str, Playlis
     return tracks
 
 
-def sort_queue(tracks: List, rotation) -> List:
-    """Most overdue first; ties broken by title for a stable order."""
+REVIEW_ORDERS = ("overdue", "oldest", "shuffle")
+
+
+def sort_queue(tracks: List, rotation, order: str = "overdue", day_key: str = "") -> List:
+    """The review queue's order. Ties are broken by title for a stable order.
+
+    overdue: most overdue first (the default).
+    oldest:  longest in the playlist first (unknown add dates first, as the likely oldest).
+    shuffle: a random order that stays the same for the day (`day_key`), so the daily
+             batch doesn't change between page loads.
+    """
+    if order == "oldest":
+        return sorted(tracks, key=lambda t: (
+            t.added_at is not None, t.added_at or datetime.min, t.title.lower()
+        ))
+    if order == "shuffle":
+        def shuffle_key(t):
+            digest = hashlib.sha256(f"{day_key}:{t.track_id}".encode()).hexdigest()
+            return (digest, t.title.lower())
+        return sorted(tracks, key=shuffle_key)
     return sorted(tracks, key=lambda t: (due_at(t, rotation), t.title.lower()))

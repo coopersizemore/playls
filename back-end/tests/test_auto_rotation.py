@@ -8,6 +8,7 @@ import pytest
 from rest_api.clock import utcnow
 from rest_api.database.models import CuratedPickDB, ReviewEventDB, RotationDB, RotationTrackDB
 from rest_api.services import auto_rotation_logic as auto
+from rest_api.services import preferences as prefs
 from tests.conftest import track_object
 
 
@@ -184,7 +185,7 @@ def test_picks_sometimes_join(client, spotify, db, monkeypatch):
     spotify.catalog["pick1"] = pick
     db.add(CuratedPickDB(track_id="pick1", uri="spotify:track:pick1", title="Pick", created_at=utcnow()))
     db.commit()
-    monkeypatch.setattr(auto, "PICK_CHANCE", 1.0)
+    monkeypatch.setitem(prefs.AUTO, "pick_percent", (100, (100,)))  # every slot rolls a pick
     rid = create_auto(client, target_size=30)["id"]
     assert any(r.track_id == "pick1" for r in active_rows(db, rid))
 

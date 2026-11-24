@@ -367,13 +367,24 @@ def test_day_boundary_follows_client_timezone(client, spotify, db):
 
 
 def test_settings_roundtrip_and_validation(client):
-    assert client.get("/api/user/me/settings").json() == {"review_limit": 50}
-    assert client.put("/api/user/me/settings", json={"review_limit": 20}).json() == {"review_limit": 20}
-    assert client.put("/api/user/me/settings", json={"review_limit": None}).json() == {"review_limit": None}
-    assert client.get("/api/user/me/settings").json() == {"review_limit": None}
+    defaults = {
+        "review_limit": 50, "super_keep_multiplier": 3, "skip_hold_days": 1, "review_order": "overdue",
+        "default_interval_hours": 720, "deck_size": 30, "discovery_percent": 33, "not_now_percent": 50,
+        "bring_back_recovery_days": 90,
+    }
+    assert client.get("/api/user/me/settings").json() == defaults
+    assert client.put("/api/user/me/settings", json={"review_limit": 20}).json()["review_limit"] == 20
+    assert client.put("/api/user/me/settings", json={"review_limit": None}).json()["review_limit"] is None
+    assert client.get("/api/user/me/settings").json()["review_limit"] is None
     for bad in (0, 1001, "lots"):
         assert client.put("/api/user/me/settings", json={"review_limit": bad}).status_code == 422
-    assert client.put("/api/user/me/settings", json={}).status_code == 422
+    # Only the fields sent change; null puts a setting back to its default
+    r = client.put("/api/user/me/settings", json={"deck_size": 10, "review_order": "shuffle"}).json()
+    assert (r["deck_size"], r["review_order"], r["review_limit"]) == (10, "shuffle", None)
+    assert client.put("/api/user/me/settings", json={"deck_size": None}).json()["deck_size"] == 30
+    for bad in ({"deck_size": 12}, {"review_order": "random"}, {"super_keep_multiplier": 4}, {"nope": 1}):
+        assert client.put("/api/user/me/settings", json=bad).status_code == 422
+    assert client.put("/api/user/me/settings", json={}).status_code == 200  # nothing to change
 
 
 def test_rotation_carries_playlist_cover_and_refreshes_it(client, spotify):

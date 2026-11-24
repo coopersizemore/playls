@@ -38,7 +38,7 @@ import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
 import { AlbumArt, Layout, PlaylistCover, SpotifyEmbed } from './Layout';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
-import SongStage from './SongStage';
+import SongStage, { DetailsPanel, NavRow, PanelNote, PanelSection } from './SongStage';
 import { ListSkeleton, SongCardSkeleton } from './Skeletons';
 
 const TABS = [
@@ -58,7 +58,7 @@ const EXIT_FOR = { add: 'right', skip: 'left', block: 'left' };
 
 // Height left for everything but the album art (see SongStage): top bar, header, tabs,
 // and on phones the details and controls stacked under the art
-const RESERVE = { xs: 480, md: 210 };
+const RESERVE = { xs: 510, md: 210 };
 
 // One card at a time with a player; Add (→) or Not now (←). Like Review, Back and Skip/Next
 // move through the deck, picking a different answer for a card undoes the old one first, and
@@ -244,54 +244,60 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
             )}
           </SwipeCard>
         }>
-          {/* Title and artist stay small: the player below identifies the song too */}
-          <Box display="flex" alignItems="center" gap={2}>
-            <Box minWidth={0} flexGrow={1}>
-              <Typography variant="subtitle1" component="h2" noWrap title={current.title}
-                sx={{ fontWeight: 600, lineHeight: 1.3 }}>
-                {current.title}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" noWrap title={current.artists}>{current.artists}</Typography>
+          <DetailsPanel>
+            {/* Title and artist stay small: the player below identifies the song too */}
+            <Box display="flex" alignItems="center" gap={2}>
+              <Box minWidth={0} flexGrow={1}>
+                <Typography variant="subtitle1" component="h2" noWrap title={current.title}
+                  sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                  {current.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" noWrap title={current.artists}>{current.artists}</Typography>
+              </Box>
+              <Box textAlign="right" flexShrink={0}>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>{index + 1} / {items.length}</Typography>
+                {added > 0 && <Typography variant="caption" color="text.secondary">added {added}</Typography>}
+              </Box>
             </Box>
-            <Box textAlign="right" flexShrink={0}>
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>{index + 1} / {items.length}</Typography>
-              {added > 0 && <Typography variant="caption" color="text.secondary">added {added}</Typography>}
-            </Box>
-          </Box>
-          {current.reason && <Chip size="small" label={current.reason} sx={{ mt: 1, maxWidth: '100%' }} />}
-          <Box mt={1.5}><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></Box>
-          <Box display="flex" justifyContent="center" gap={2} mt={1.5}>
-            <Button variant={decided === 'skip' ? 'contained' : 'outlined'} color={decided === 'skip' ? 'inherit' : 'primary'}
-              size="large" startIcon={<Close />} onClick={() => act('skip')} disabled={busy} sx={{ flex: 1, maxWidth: 180 }}>
-              Not now
-            </Button>
-            <Button variant="contained" size="large" startIcon={decided === 'add' ? <Check /> : <Add />}
-              onClick={() => act('add')} disabled={busy} sx={{ flex: 1, maxWidth: 180 }}>
-              {decided === 'add' ? 'Added' : 'Add'}
-            </Button>
-          </Box>
+            {current.reason && <Chip size="small" variant="outlined" label={current.reason} sx={{ mt: 1, maxWidth: '100%' }} />}
 
-          {/* Back / forward through the deck */}
-          <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
-            <Button startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0} color="inherit">Back</Button>
-            {source === 'bring_back' && (
-              <Button color="inherit" size="small" startIcon={<Block />} onClick={() => act('block')}
-                disabled={busy || decided === 'block'} sx={{ color: 'text.secondary' }}
-                title="Stop suggesting this song">
-                Stop suggesting
+            <PanelSection><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></PanelSection>
+
+            <PanelSection>
+              <Box display="flex" gap={1}>
+                <Button variant={decided === 'skip' ? 'contained' : 'outlined'} color="inherit"
+                  startIcon={decided === 'skip' ? <Check /> : <Close />} onClick={() => act('skip')} disabled={busy}
+                  sx={{ flex: 1 }}>
+                  Not now
+                </Button>
+                <Button variant="contained" startIcon={decided === 'add' ? <Check /> : <Add />}
+                  onClick={() => act('add')} disabled={busy} sx={{ flex: 1 }}>
+                  {decided === 'add' ? 'Added' : 'Add'}
+                </Button>
+              </Box>
+            </PanelSection>
+
+            {/* Back / forward through the deck */}
+            <NavRow>
+              <Button size="small" startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0}>Back</Button>
+              {source === 'bring_back' && (
+                <Button size="small" startIcon={<Block />} onClick={() => act('block')}
+                  disabled={busy || decided === 'block'} title="Stop suggesting this song">
+                  Stop suggesting
+                </Button>
+              )}
+              <Button size="small" endIcon={decided ? <ArrowForward /> : <SkipNext />} onClick={forward} disabled={busy}>
+                {decided ? 'Next' : 'Skip'}
               </Button>
-            )}
-            <Button endIcon={decided ? <ArrowForward /> : <SkipNext />} onClick={forward} disabled={busy} color="inherit">
-              {decided ? 'Next' : 'Skip'}
-            </Button>
-          </Box>
-          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={0.5}
-            sx={{ lineHeight: 1.4 }}>
+            </NavRow>
+          </DetailsPanel>
+
+          <PanelNote>
             {touch
-              ? 'Swipe right to add, left for not now. '
+              ? 'Swipe the card right to add, left for not now. '
               : '← not now · → add · ↓ skip · Backspace back. '}
             Adding puts the song in your Spotify playlist right away.
-          </Typography>
+          </PanelNote>
         </SongStage>
       )}
       <Snackbar

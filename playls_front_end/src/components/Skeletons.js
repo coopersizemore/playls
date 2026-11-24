@@ -77,15 +77,20 @@ export const SongCardSkeleton = ({ reserve, stat = true }) => (
   <Box aria-busy="true" aria-label="Loading songs">
     <SongStage reserve={reserve}
       art={<Skeleton {...W} variant="rounded" sx={{ width: '100%', height: 'auto', aspectRatio: '1 / 1', borderRadius: 3 }} />}>
-      <Box display="flex" alignItems="center" gap={2}>
-        <Box flexGrow={1}>
-          <Skeleton {...W} width="70%" height={28} />
-          <Skeleton {...W} width="45%" />
+      <Card sx={{ p: { xs: 1.5, sm: 2 } }}>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Box flexGrow={1}>
+            <Skeleton {...W} width="70%" height={28} />
+            <Skeleton {...W} width="45%" />
+          </Box>
+          {stat && <Skeleton {...W} width={64} height={44} />}
         </Box>
-        {stat && <Skeleton {...W} width={64} height={44} />}
-      </Box>
-      <Skeleton {...W} variant="rounded" height={80} sx={{ mt: 1.5, borderRadius: 3 }} />
-      <Skeleton {...W} variant="rounded" height={40} sx={{ mt: 1.5, borderRadius: 2 }} />
+        <Skeleton {...W} variant="rounded" height={80} sx={{ mt: 1.5, borderRadius: '12px' }} />
+        <Skeleton {...W} variant="rounded" height={36} sx={{ mt: 1.5, borderRadius: '10px' }} />
+        <Box display="flex" justifyContent="space-between" mt={1.5} pt={1} sx={{ borderTop: 1, borderColor: 'divider' }}>
+          <Skeleton {...W} width={60} /><Skeleton {...W} width={60} />
+        </Box>
+      </Card>
     </SongStage>
   </Box>
 );

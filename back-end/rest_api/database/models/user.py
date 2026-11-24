@@ -7,6 +7,10 @@ from rest_api.database.config import Base
 from rest_api.database.encryption import EncryptedText
 
 DEFAULT_REVIEW_LIMIT = 50
+
+SPOTIFY = "spotify"
+# Public demo accounts (services/demo): no Spotify connection, deleted after a day
+DEMO = "demo"
 MAX_REVIEW_LIMIT = 1000
 
 
@@ -48,8 +52,15 @@ class UserDB(Base):
     analytics_consent = Column(Boolean, nullable=True)
     analytics_consent_at = Column(DateTime, nullable=True)
 
+    # Demo accounts only (0015): hours their requests run ahead of real time ("Skip ahead")
+    demo_clock_offset_hours = Column(Integer, nullable=True)
+
     # Space-separated OAuth scopes granted at the last login (to detect missing ones)
     granted_scopes = Column(Text, nullable=True)
+
+    @property
+    def is_demo(self) -> bool:
+        return self.provider == DEMO
 
     rotations = relationship(
         "RotationDB", back_populates="owner", cascade="all, delete-orphan", passive_deletes=True

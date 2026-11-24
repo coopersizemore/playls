@@ -26,7 +26,7 @@ from rest_api.database.models.analytics_event import (
 from rest_api.database.models.health_event import HealthEventDB
 from rest_api.database.models.rotation import AUTO, MANUAL, RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, RotationTrackDB
-from rest_api.database.models.user import UserDB
+from rest_api.database.models.user import DEMO, UserDB
 from rest_api.services import health, preferences, telemetry
 
 RANGES = (7, 30, 90, 180)
@@ -393,8 +393,11 @@ def load_stats(db: Session, admin: UserDB, days: int, kind: str = "all") -> dict
     events = [e for e in rows if e.created_at >= start]
     previous = [e for e in rows if e.created_at < start]
     health_rows = db.query(HealthEventDB).filter(HealthEventDB.created_at >= start).all()
-    users = db.query(UserDB).all()
-    rotations = db.query(RotationDB).all()
+    # Public demo accounts aren't real users
+    users = db.query(UserDB).filter(UserDB.provider != DEMO).all()
+    rotations = (
+        db.query(RotationDB).join(UserDB, RotationDB.owner_id == UserDB.id).filter(UserDB.provider != DEMO).all()
+    )
     sizes = dict(
         db.query(RotationTrackDB.rotation_id, func.count(RotationTrackDB.id))
         .filter(RotationTrackDB.status == ACTIVE)

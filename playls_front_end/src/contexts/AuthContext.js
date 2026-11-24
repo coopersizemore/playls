@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
-import { API_BASE } from '../api';
+import { API_BASE, api } from '../api';
+import { IS_DEMO } from '../demo';
 import { setTelemetryEnabled } from '../telemetry';
 
 const AuthContext = createContext();
@@ -36,7 +37,15 @@ export const AuthProvider = ({ children }) => {
       .finally(() => setLoading(false));
   }, []);
 
+  // Demo mode: start (or resume) a demo account; errors (e.g. 503 "the demo is full") propagate
+  const startDemo = async () => {
+    await api.demoStart();
+    const response = await axios.get(`${API_BASE}/auth/me`);
+    setUser(response.data);
+  };
+
   const login = async () => {
+    if (IS_DEMO) return startDemo();
     try {
       const response = await axios.get(`${API_BASE}/auth/login`);
       const authUrl = response.data.auth_url;
@@ -50,9 +59,11 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // In the demo, logging out ends the demo (its account is deleted)
   const logout = async () => {
     try {
-      await axios.post(`${API_BASE}/auth/logout`);
+      if (IS_DEMO) await api.demoEnd().catch(() => {});
+      else await axios.post(`${API_BASE}/auth/logout`);
     } finally {
       setUser(null);
     }

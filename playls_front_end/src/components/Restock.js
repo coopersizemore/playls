@@ -33,6 +33,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { startSession } from '../telemetry';
+import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
 import { AlbumArt, Layout, RotationHeader, SpotifyEmbed } from './Layout';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
@@ -354,7 +355,9 @@ const SearchView = ({ rotationId, onAdded }) => {
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {submitted && results.length === 0 && !loading && (
-        <Typography color="text.secondary">No songs found for “{submitted}”.</Typography>
+        <Typography color="text.secondary">
+          No songs found for “{submitted}”.{IS_DEMO && ' The demo only searches its own small catalog.'}
+        </Typography>
       )}
       <List>
         {results.map((t) => {

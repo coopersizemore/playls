@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from ..database.config import get_db
 from ..services import telemetry
 from ..services.auto_restock_service import run_all
+from ..services.demo import demo_service
 
 logger = logging.getLogger(__name__)
 
@@ -34,5 +35,6 @@ async def auto_restock(authorization: str | None = Header(None), db: Session = D
     _check_secret(authorization)
     stats = await run_all(db)
     stats["analytics_purged"] = telemetry.purge(db)  # 6-month retention
+    stats["demo_purged"] = demo_service.purge_expired(db)  # demo accounts last a day
     logger.info("Cron auto-restock: %s", stats)
     return stats

@@ -17,6 +17,7 @@ from collections.abc import Callable
 from sqlalchemy.orm import Session
 
 from rest_api import request_context
+from rest_api.clock import real_utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def record_request(ctx, scope, status: int, duration_ms: float, rand: float | No
             method=(scope.get("method") or "")[:8], route=route_template(scope), status=status,
             duration_ms=round(duration_ms), spotify_ms=round(ctx.spotify_ms), spotify_calls=ctx.spotify_calls,
             db_ms=round(ctx.db_ms), db_queries=ctx.db_queries, db_connects=ctx.db_connects, sampled=sampled,
+            created_at=real_utcnow(),  # never a demo account's skipped-ahead clock
             counters=json.dumps(ctx.counters, sort_keys=True) if ctx.counters else None,
         )
         factory = session_factory

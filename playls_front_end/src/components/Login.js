@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Wordmark } from './Layout';
+import { IS_DEMO } from '../demo';
 import {
   Container,
   Typography,
@@ -19,12 +20,13 @@ const Login = () => {
   const error = searchParams.get('error') ? 'Login was cancelled or failed' : null;
 
   useEffect(() => {
-    if (user) {
+    // The demo has no Spotify login; its start page is the demo landing at /
+    if (user || IS_DEMO) {
       navigate('/');
     }
   }, [user, navigate]);
 
-  if (user) {
+  if (user || IS_DEMO) {
     return null;
   }
 

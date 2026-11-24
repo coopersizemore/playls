@@ -35,6 +35,7 @@ import {
   SyncProblem,
   ViewList,
 } from '@mui/icons-material';
+import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
 import { readStored, writeStored } from '../storage';
 import { GREEN, ON_GREEN } from '../theme';
@@ -276,10 +277,13 @@ const RotationPage = () => {
         />
         <Tile icon={<AddCircleOutline sx={{ fontSize: 34 }} />} label="Restock"
           onClick={() => navigate(`/rotation/${rotation.id}/restock`)} />
-        <Tile icon={<SpotifyMark />} label="Spotify" green
-          href={rotation.is_liked
-            ? 'https://open.spotify.com/collection/tracks'
-            : `https://open.spotify.com/playlist/${encodeURIComponent(rotation.playlist_id)}`} />
+        {/* A demo playlist doesn't exist on Spotify */}
+        {!IS_DEMO && (
+          <Tile icon={<SpotifyMark />} label="Spotify" green
+            href={rotation.is_liked
+              ? 'https://open.spotify.com/collection/tracks'
+              : `https://open.spotify.com/playlist/${encodeURIComponent(rotation.playlist_id)}`} />
+        )}
         <Tile icon={<SettingsIcon sx={{ fontSize: 34 }} />} label="Settings" onClick={(e) => setMenuAnchor(e.currentTarget)} />
       </Box>
       <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mb={2}>

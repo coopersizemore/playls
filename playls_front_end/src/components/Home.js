@@ -21,6 +21,8 @@ import { CreateRotationDialog, formatInterval } from './RotationDialogs';
 import { RotationCardsSkeleton } from './Skeletons';
 import { HelpDialog, hasSeenHelp, RotationVisual } from './Help';
 import { USAGE_DATA_TEXT } from './SettingsControls';
+import { DemoLanding } from './Demo';
+import { IS_DEMO } from '../demo';
 
 const Landing = ({ login }) => (
   <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -36,6 +38,10 @@ const Landing = ({ login }) => (
       <Button variant="contained" size="large" onClick={login} sx={{ mt: 4, px: 4, py: 1.5 }}>
         Log in with Spotify
       </Button>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }}>
+        No access yet? {/* A full page load: the demo is a separate app mode (src/demo.js) */}
+        <Box component="a" href="/demo" sx={{ color: 'primary.main' }}>Try the demo</Box>
+      </Typography>
     </Container>
   </Box>
 );
@@ -174,13 +180,14 @@ const Home = () => {
     if (user) fetchRotations();
   }, [user, fetchRotations]);
 
-  // First visit of a new account: no rotations yet and the guide not seen on this device
+  // First visit of a new account (no rotations yet, or a new demo) and the guide not seen on this device
   const noRotations = rotations !== null && rotations.length === 0;
+  const isDemo = !!user?.is_demo;
   useEffect(() => {
-    if (user && noRotations && !hasSeenHelp(user.id)) setHelp(true);
-  }, [user, noRotations]);
+    if (user && (noRotations || isDemo) && !hasSeenHelp(user.id)) setHelp(true);
+  }, [user, noRotations, isDemo]);
 
-  if (!user) return <Landing login={login} />;
+  if (!user) return IS_DEMO ? <DemoLanding /> : <Landing login={login} />;
 
   const totalReady = (rotations || []).reduce((sum, r) => sum + (r.kind === 'auto' ? 0 : r.ready_today), 0);
 

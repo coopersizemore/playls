@@ -11,6 +11,7 @@ import Restock from './components/Restock';
 import AdminPicks from './components/AdminPicks';
 import { RequireAuth } from './components/Layout';
 import { AuthProvider } from './contexts/AuthContext';
+import { DEMO_BASENAME, IS_DEMO } from './demo';
 
 // Admin-only and chart-heavy: loaded on demand so other pages don't carry it
 const AdminStats = lazy(() => import('./components/AdminStats'));
@@ -21,7 +22,8 @@ function App() {
   return (
     <ColorModeProvider>
       <AuthProvider>
-        <Router>
+        {/* /demo/* serves the same pages against a demo account (src/demo.js) */}
+        <Router basename={IS_DEMO ? DEMO_BASENAME : undefined}>
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />

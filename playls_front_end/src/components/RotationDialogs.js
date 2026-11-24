@@ -27,6 +27,7 @@ import {
   Typography,
 } from '@mui/material';
 import { AutoMode, CreateNewFolder, Favorite, LibraryMusic, MusicNote } from '@mui/icons-material';
+import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { ListSkeleton } from './Skeletons';
@@ -260,13 +261,14 @@ export const CreateRotationDialog = ({ open, onClose, onCreated, rotations = [] 
         {mode === 'existing' ? (
           playlists === null ? (
             <ListSkeleton count={5} dense />
-          ) : available.length === 0 && hasLiked ? (
+          ) : available.length === 0 && (hasLiked || IS_DEMO) ? (
             <Typography color="text.secondary">
               No playlists available. You can rotate playlists you own or collaborate on that don't already have a rotation.
             </Typography>
           ) : (
             <List sx={{ maxHeight: 280, overflow: 'auto' }} dense>
-              {!hasLiked && (
+              {/* No Liked Songs rotations in the demo */}
+              {!hasLiked && !IS_DEMO && (
                 <ListItemButton selected={playlistId === LIKED} onClick={() => setPlaylistId(LIKED)}>
                   <ListItemAvatar>
                     <Avatar variant="rounded" sx={{ bgcolor: 'placeholder.main' }}>

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { DEMO_HEADER, IS_DEMO } from './demo';
 
 // The API is served from the same origin under /api (Vercel services, `vercel dev`,
 // or the CRA dev-server proxy in package.json).
@@ -6,8 +7,10 @@ export const API_BASE = '/api';
 
 // Auth is an httpOnly session cookie the browser sends automatically. The backend
 // rejects state-changing requests without this header (CSRF protection).
-const CSRF_HEADER = { 'X-Requested-With': 'XMLHttpRequest' };
+const CSRF_HEADER = { 'X-Requested-With': 'XMLHttpRequest', ...(IS_DEMO ? { [DEMO_HEADER]: '1' } : {}) };
 axios.defaults.headers.common['X-Requested-With'] = CSRF_HEADER['X-Requested-With'];
+// Demo pages use the demo session (src/demo.js)
+if (IS_DEMO) axios.defaults.headers.common[DEMO_HEADER] = '1';
 
 // How long the app has been in front of the user. The backend only reuses a recent sync of a
 // rotation if it happened after this point, so coming back from editing a playlist in Spotify
@@ -89,6 +92,10 @@ export const api = {
   searchSpotify: (q, offset = 0) =>
     data(axios.get(`${API_BASE}/spotify/search`, { params: { q, offset, type: 'track' } })),
   deleteAccount: () => data(axios.delete(`${API_BASE}/user/me`)),
+  // Demo mode: { expires_at, clock_offset_hours }
+  demoStart: () => data(axios.post(`${API_BASE}/demo/start`)),
+  demoSkipAhead: () => data(axios.post(`${API_BASE}/demo/skip-ahead`)),
+  demoEnd: () => data(axios.post(`${API_BASE}/demo/end`)),
 };
 
 // Fire-and-forget flush that survives the page closing (pagehide/visibilitychange).
@@ -118,5 +125,7 @@ export const errorMessage = (error, fallback = 'Something went wrong. Please try
       ? `Spotify is rate limiting requests. Try again in ${wait} seconds.`
       : 'Spotify is rate limiting requests. Try again in a minute.';
   }
+  // 503: the demo is full or unavailable (a deliberate, user-facing message)
+  if (status === 503 && typeof detail === 'string') return detail;
   return typeof detail === 'string' && status && status < 500 ? detail : fallback;
 };

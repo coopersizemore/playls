@@ -18,6 +18,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
 import { HelpDialog } from './Help';
+import { DemoBanner } from './Demo';
 
 // The PlayLS wordmark: "Play" in the text color, "LS" in the brand green
 export const Wordmark = () => (
@@ -75,7 +76,7 @@ const TopBar = ({ back }) => {
         </MenuItem>
         <Divider />
         <MenuItem onClick={async () => { setAnchor(null); await logout(); navigate('/'); }}>
-          <ListItemIcon><Logout fontSize="small" /></ListItemIcon>Log out
+          <ListItemIcon><Logout fontSize="small" /></ListItemIcon>{user?.is_demo ? 'End demo' : 'Log out'}
         </MenuItem>
       </Menu>
     </Box>
@@ -83,14 +84,18 @@ const TopBar = ({ back }) => {
 };
 
 // Page chrome for signed-in pages. `back`: where the back arrow goes (omit on top-level pages).
-export const Layout = ({ children, maxWidth = 'lg', back }) => (
-  <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-    <Container maxWidth={maxWidth} sx={{ pb: 6 }}>
-      <TopBar back={back} />
-      {children}
-    </Container>
-  </Box>
-);
+export const Layout = ({ children, maxWidth = 'lg', back }) => {
+  const { user } = useAuth();
+  return (
+    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+      <Container maxWidth={maxWidth} sx={{ pb: 6 }}>
+        {user?.is_demo && <DemoBanner />}
+        <TopBar back={back} />
+        {children}
+      </Container>
+    </Box>
+  );
+};
 
 // A rotation's playlist cover (falls back to an icon, e.g. for a new empty playlist)
 export const PlaylistCover = ({ rotation, size = 48, radius = 1.5, shadow = false }) => (

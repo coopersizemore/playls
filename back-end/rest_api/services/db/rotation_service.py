@@ -20,7 +20,7 @@ from rest_api.database.models.review_event import (
 )
 from rest_api.database.models.rotation import AUTO, LIKED_SONGS, RotationDB, is_liked
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, RotationTrackDB
-from rest_api.database.models.user import UserDB
+from rest_api.database.models.user import DEMO, UserDB
 from rest_api.models.rotation import (
     HistoryEventOut,
     QueueOut,
@@ -326,6 +326,8 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
     Auto rotations always start from a new playlist; the initial sync's restock fills it.
     Liked Songs rotations wrap the user's saved tracks (one per user).
     """
+    if data.liked_songs and owner.provider == DEMO:
+        raise HTTPException(status_code=400, detail="Liked Songs rotations aren't available in the demo")
     if data.liked_songs:
         name, description, playlist_id, playlist = await _check_liked_songs(db, data, owner)
     elif data.playlist_id:

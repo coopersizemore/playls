@@ -27,6 +27,7 @@ import {
 import { DarkMode, LightMode, MusicNote, SettingsBrightness } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
+import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
 import { Layout } from './Layout';
 import { IntervalPicker } from './RotationDialogs';
@@ -320,6 +321,19 @@ const Settings = () => {
       <ReviewingCard settings={settings} save={save} />
       <RestockingCard settings={settings} save={save} />
       <BlockedSongsCard />
+      {/* The demo records no usage data and has no real account to delete */}
+      {IS_DEMO ? (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Demo</Typography>
+            <Typography color="text.secondary" paragraph>
+              This is a sample account with no Spotify connection. It's deleted after 24 hours, or now if you
+              end the demo.
+            </Typography>
+            <Button variant="outlined" onClick={signOut}>End demo</Button>
+          </CardContent>
+        </Card>
+      ) : (<>
       <PrivacyCard />
 
       <Card sx={{ mb: 3 }}>
@@ -344,6 +358,7 @@ const Settings = () => {
           </Button>
         </CardContent>
       </Card>
+      </>)}
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)}>
         <DialogTitle>Delete your PlayLS account?</DialogTitle>

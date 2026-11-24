@@ -142,6 +142,14 @@ class FakeSpotify:
         self.add_playlist(new_id, [], name=name)
         return {"id": new_id, "name": name}
 
+    async def rename_playlist(self, playlist_id, name, user, db):
+        self.calls.append(("rename", playlist_id, name))
+        p = self._get(playlist_id)
+        if p["owner"] != self.owner_id:
+            raise SpotifyAPIError(403)
+        p["name"] = name
+        p["version"] += 1  # a details change gives the playlist a new snapshot
+
     # ---- restock signals ----
     catalog = {}  # track_id -> track object (for get_track / search)
     top = {}  # (type, time_range) -> list of objects
@@ -231,7 +239,7 @@ def spotify(monkeypatch):
     fake = FakeSpotify()
     fake.catalog, fake.top, fake.recent, fake.liked, fake.search_results = {}, {}, [], [], {}
     for name in ("get_playlist", "get_all_playlist_items", "remove_items_from_playlist",
-                 "create_playlist", "get_user_playlists", "get_track", "get_top_items",
+                 "create_playlist", "rename_playlist", "get_user_playlists", "get_track", "get_top_items",
                  "get_recently_played", "get_saved_tracks", "search", "add_items_to_playlist",
                  "get_saved_tracks_page", "get_all_saved_tracks", "save_to_library", "remove_from_library"):
         monkeypatch.setattr(SpotifyService, name, staticmethod(getattr(fake, name)))

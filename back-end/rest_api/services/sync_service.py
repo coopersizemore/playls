@@ -314,10 +314,14 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
 
     # The snapshot is checked before the flush, so a flush onto an unchanged playlist can
     # store its own snapshot (write_adopting_snapshot) and skip the re-read
-    meta = await SpotifyService.get_playlist(rotation.playlist_id, user, db, fields="snapshot_id,images")
+    meta = await SpotifyService.get_playlist(rotation.playlist_id, user, db, fields="snapshot_id,name,images")
     snapshot_id = meta.get("snapshot_id")
     if "images" in meta:
         rotation.image_url = playlist_image(meta)
+    # The playlist's name in Spotify wins (renames in PlayLS are pushed to Spotify first)
+    name = meta.get("name")
+    if isinstance(name, str) and name.strip() and name[:100] != rotation.name:
+        rotation.name = name[:100]
     in_sync = bool(snapshot_id) and snapshot_id == rotation.snapshot_id
     flushed = await flush_pending_removals(db, rotation, user, in_sync=in_sync)
     if not force and in_sync:

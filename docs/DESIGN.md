@@ -248,7 +248,7 @@ Tweakable behavior, kept out of the way: each area of Settings shows what it did
 ## Data model (Alembic revisions 0001–0012)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
-  - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name`, `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
+  - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name` (mirrors the Spotify playlist name: every sync copies it from Spotify, and a rename in PlayLS renames the Spotify playlist first, which only the owner can do; Liked Songs keeps its PlayLS name), `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
   - `snapshot_id`, `last_synced_at`, `created_at`
   - Auto rotations (0009): `kind` (`manual` | `auto`), `target_size`, `rotate_percent`, `last_rotated_at`
 - `rotation_track`, which replaces `song`:

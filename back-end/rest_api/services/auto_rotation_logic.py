@@ -9,11 +9,10 @@ and runs at a third of the speed after a super keep. Songs kept since the last r
 are protected from the next one. Unavailable songs leave first.
 """
 import random
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Sequence
 
 DEFAULT_TARGET_SIZE = 50
-TARGET_SIZES = (30, 50, 100, 200)
 DEFAULT_ROTATE_PERCENT = 20
 DEFAULT_INTERVAL_HOURS = 7 * 24
 
@@ -60,7 +59,7 @@ def tenure_age(track, rotation, now: datetime) -> float:
     return (now - since).total_seconds() / 3600
 
 
-def rotate_out_order(tracks: Sequence, rotation, now: datetime) -> List:
+def rotate_out_order(tracks: Sequence, rotation, now: datetime) -> list:
     """Active tracks in leaving order: unavailable first, then oldest; protected last."""
     return sorted(
         tracks,
@@ -68,13 +67,13 @@ def rotate_out_order(tracks: Sequence, rotation, now: datetime) -> List:
     )
 
 
-def choose_rotate_out(tracks: Sequence, rotation, now: datetime) -> List:
+def choose_rotate_out(tracks: Sequence, rotation, now: datetime) -> list:
     """The songs leaving at a rotation happening now (never protected ones)."""
     n = rotate_out_count(rotation.target_size, rotation.rotate_percent, len(tracks))
     return [t for t in rotate_out_order(tracks, rotation, now) if not is_protected(t, rotation)][:n]
 
 
-def leaving_schedule(tracks: Sequence, rotation, now: datetime) -> Dict[int, datetime]:
+def leaving_schedule(tracks: Sequence, rotation, now: datetime) -> dict[int, datetime]:
     """Projected leave time per track row id (an estimate: future restocks shift it).
 
     The next group leaves at the next rotation; after that, one group per interval.
@@ -93,7 +92,7 @@ def leaving_schedule(tracks: Sequence, rotation, now: datetime) -> Dict[int, dat
     return schedule
 
 
-def leaving_next(tracks: Sequence, rotation, now: datetime) -> List:
+def leaving_next(tracks: Sequence, rotation, now: datetime) -> list:
     """Songs that would leave at the next rotation, in leaving order (the review queue)."""
     first = rotate_out_count(rotation.target_size, rotation.rotate_percent, len(tracks))
     return [t for t in rotate_out_order(tracks, rotation, now) if not is_protected(t, rotation)][:first]
@@ -102,7 +101,7 @@ def leaving_next(tracks: Sequence, rotation, now: datetime) -> List:
 def allocate(
     slots: int, picks_available: int, bring_back_available: int, for_you_available: int, rng: random.Random,
     pick_chance: float = PICK_CHANCE, bring_back_share: float = BRING_BACK_SHARE,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Split new slots between sources. Shortfalls in one source spill into the others."""
     picks = min(picks_available, sum(1 for _ in range(slots) if rng.random() < pick_chance))
     expected_back = slots * bring_back_share
@@ -119,7 +118,7 @@ def allocate(
     return {"picks": picks, "bring_back": bring_back, "suggested": for_you}
 
 
-def cooled_down(removed_at: Optional[datetime], now: datetime, days: int = RETURN_COOLDOWN_DAYS) -> bool:
+def cooled_down(removed_at: datetime | None, now: datetime, days: int = RETURN_COOLDOWN_DAYS) -> bool:
     """A removed song may return once the cooldown (4 weeks by default) has passed
     (unknown removal time: yes)."""
     return removed_at is None or removed_at <= now - timedelta(days=days)

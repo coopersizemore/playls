@@ -1,18 +1,19 @@
 import logging
 import os
 import secrets
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, Request, status
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import timedelta
+
 from ..clock import utcnow
 from ..database.config import get_db
 from ..database.models.user import UserDB
 from ..models.user import User
 from ..services.auth_service import (
-    SpotifyOAuthService,
     AuthService,
+    SpotifyOAuthService,
     clear_session_cookie,
     is_admin,
     is_https,
@@ -66,8 +67,8 @@ async def spotify_login(request: Request):
 async def spotify_callback(
     request: Request,
     state: str,
-    code: Optional[str] = None,
-    error: Optional[str] = None,
+    code: str | None = None,
+    error: str | None = None,
     db: Session = Depends(get_db),
 ):
     """

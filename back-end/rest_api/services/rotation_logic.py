@@ -8,15 +8,16 @@ Due date for an active song, with interval = rotation.interval_hours:
                               (if Spotify didn't report added_at: due at rotation creation)
 """
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 from rest_api.clock import to_naive_utc
 from rest_api.database.models.rotation_track import ACTIVE
 
 
-def due_at(track, rotation) -> Optional[datetime]:
+def due_at(track, rotation) -> datetime | None:
     """When an active track comes due; None for tracks that aren't active."""
     if track.status != ACTIVE:
         return None
@@ -47,7 +48,7 @@ def local_day_start(now: datetime, tz_offset_minutes: int) -> datetime:
     return local_midnight + timedelta(minutes=tz_offset_minutes)
 
 
-def todays_batch_size(limit: Optional[int], reviewed_today: int, eligible: int, more: bool) -> int:
+def todays_batch_size(limit: int | None, reviewed_today: int, eligible: int, more: bool) -> int:
     """How many due songs to offer now under the daily review limit (None = no limit).
 
     `more` is the user's opt-in "review another batch" after finishing today's.
@@ -66,15 +67,15 @@ class PlaylistTrack:
     track_id: str
     uri: str
     title: str
-    artists: Optional[str]
-    album: Optional[str]
-    image_url: Optional[str]
-    duration_ms: Optional[int]
-    added_at: Optional[datetime]  # None for very old playlists that lack added_at
+    artists: str | None
+    album: str | None
+    image_url: str | None
+    duration_ms: int | None
+    added_at: datetime | None  # None for very old playlists that lack added_at
     is_playable: bool = True  # False: still in the playlist but unavailable (greyed out)
 
 
-def _parse_added_at(value: Optional[str]) -> Optional[datetime]:
+def _parse_added_at(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -83,7 +84,7 @@ def _parse_added_at(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _pick_image(album: Dict[str, Any]) -> Optional[str]:
+def _pick_image(album: dict[str, Any]) -> str | None:
     images = album.get("images") or []
     if not images:
         return None
@@ -95,12 +96,12 @@ def _pick_image(album: Dict[str, Any]) -> Optional[str]:
     return sized[-1].get("url")
 
 
-def playlist_image(playlist: Dict[str, Any]) -> Optional[str]:
+def playlist_image(playlist: dict[str, Any]) -> str | None:
     """Thumbnail URL from a playlist object's `images` (None for e.g. a new, empty playlist)."""
     return _pick_image({"images": playlist.get("images") or []})
 
 
-def parse_playlist_items(entries: Iterable[Dict[str, Any]]) -> Dict[str, PlaylistTrack]:
+def parse_playlist_items(entries: Iterable[dict[str, Any]]) -> dict[str, PlaylistTrack]:
     """Spotify playlist item entries -> {track_id: PlaylistTrack}.
 
     Skips local files, episodes and unavailable (null) items. Duplicate copies of a
@@ -112,7 +113,7 @@ def parse_playlist_items(entries: Iterable[Dict[str, Any]]) -> Dict[str, Playlis
     metadata comes from the relinked item. `is_playable` is only present with a market;
     missing means playable.
     """
-    tracks: Dict[str, PlaylistTrack] = {}
+    tracks: dict[str, PlaylistTrack] = {}
     for entry in entries:
         if not entry or entry.get("is_local"):
             continue
@@ -147,10 +148,7 @@ def parse_playlist_items(entries: Iterable[Dict[str, Any]]) -> Dict[str, Playlis
     return tracks
 
 
-REVIEW_ORDERS = ("overdue", "oldest", "shuffle")
-
-
-def sort_queue(tracks: List, rotation, order: str = "overdue", day_key: str = "") -> List:
+def sort_queue(tracks: list, rotation, order: str = "overdue", day_key: str = "") -> list:
     """The review queue's order. Ties are broken by title for a stable order.
 
     overdue: most overdue first (the default).

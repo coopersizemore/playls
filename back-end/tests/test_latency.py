@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import spotify_item
 from rest_api import request_context
 from rest_api.clock import utcnow
 from rest_api.database.models import RotationDB, RotationTrackDB
@@ -14,15 +13,11 @@ from rest_api.services import sync_service
 from rest_api.services.auth_service import AuthService
 from rest_api.services.spotify import spotify_service
 from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService
-from test_auto_rotation import create_auto, stock_signals
-from test_rotation_flow import make_rotation
+
+from helpers import count_calls, create_auto, make_rotation, review, spotify_item, stock_signals
 
 SHOWN_LONG_AGO = {"X-Visible-For": str(10 * 60 * 1000)}  # app shown 10 minutes ago
 JUST_SHOWN = {"X-Visible-For": "0"}
-
-
-def playlist_calls(spotify):
-    return sum(1 for c in spotify.calls if c[0] == "get_playlist")
 
 
 def test_server_timing_header(client):
@@ -129,10 +124,10 @@ def test_change_during_read_marks_nothing_removed(client, spotify, db, monkeypat
 
 def test_recent_sync_is_reused_for_manual_rotations(client, spotify):
     rid = make_rotation(client, spotify, [spotify_item("a", 5)])["id"]
-    before = playlist_calls(spotify)
+    before = count_calls(spotify, "get_playlist")
     client.get(f"/api/rotation/{rid}", headers=SHOWN_LONG_AGO)
     client.get(f"/api/rotation/{rid}/queue", headers=SHOWN_LONG_AGO)
-    assert playlist_calls(spotify) == before
+    assert count_calls(spotify, "get_playlist") == before
 
 
 def test_returning_to_the_app_always_resyncs(client, spotify):
@@ -146,9 +141,9 @@ def test_returning_to_the_app_always_resyncs(client, spotify):
 
 def test_requests_without_the_hint_always_sync(client, spotify):
     rid = make_rotation(client, spotify, [spotify_item("a", 5)])["id"]
-    before = playlist_calls(spotify)
+    before = count_calls(spotify, "get_playlist")
     client.get(f"/api/rotation/{rid}")
-    assert playlist_calls(spotify) == before + 1
+    assert count_calls(spotify, "get_playlist") == before + 1
 
 
 def test_old_sync_is_not_reused(client, spotify, db):
@@ -156,14 +151,14 @@ def test_old_sync_is_not_reused(client, spotify, db):
     rotation = db.get(RotationDB, rid)
     rotation.last_synced_at = utcnow() - timedelta(seconds=sync_service.FRESH_SYNC_SECONDS + 5)
     db.commit()
-    before = playlist_calls(spotify)
+    before = count_calls(spotify, "get_playlist")
     client.get(f"/api/rotation/{rid}", headers=SHOWN_LONG_AGO)
-    assert playlist_calls(spotify) == before + 1
+    assert count_calls(spotify, "get_playlist") == before + 1
 
 
 def test_pending_removals_still_flush_when_the_sync_is_skipped(client, spotify):
     rid = make_rotation(client, spotify, [spotify_item(t, 60) for t in ("a", "b")], grace=False)["id"]
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "remove"})
+    review(client, rid, "a", "remove")
     client.get(f"/api/rotation/{rid}", headers=SHOWN_LONG_AGO)
     assert any(c[0] == "remove" for c in spotify.calls)
 
@@ -171,6 +166,6 @@ def test_pending_removals_still_flush_when_the_sync_is_skipped(client, spotify):
 def test_auto_rotations_always_sync(client, spotify):
     stock_signals(spotify, 80)
     rid = create_auto(client, target_size=30)["id"]
-    before = playlist_calls(spotify)
+    before = count_calls(spotify, "get_playlist")
     client.get(f"/api/rotation/{rid}", headers=SHOWN_LONG_AGO)
-    assert playlist_calls(spotify) > before
+    assert count_calls(spotify, "get_playlist") > before

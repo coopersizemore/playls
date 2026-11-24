@@ -25,15 +25,13 @@ import {
 } from '@mui/icons-material';
 import { formatInterval } from './RotationDialogs';
 import { api, errorMessage, flushOnExit } from '../api';
-import { AlbumArt, Layout, SpotifyEmbed, daysSince, relativeDays } from './Layout';
+import { AlbumArt, Layout, SpotifyEmbed, daysSince, parseUtc, relativeDays } from './Layout';
 import ReviewSummary from './ReviewSummary';
+import { skipReturn, timesWord } from './SettingsControls';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
 import { ReviewSkeleton } from './Skeletons';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const TIMES = { 2: 'twice', 3: 'three times', 5: 'five times' };
-const timesWord = (n) => TIMES[n] || `${n} times`;
-const skipBack = (days) => (days > 1 ? `in ${days} days` : 'tomorrow');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const EXIT_FOR = { keep: 'right', super_keep: 'up', remove: 'left' };
 
@@ -331,7 +329,7 @@ const Review = () => {
           )}
           {moreDue === 0 && batch.due_count > 0 && tracks.length === 0 && (
             <Typography color="text.secondary" paragraph>
-              Songs you skipped will come back {skipBack(rotation?.skip_hold_days || 1)}.
+              Songs you skipped will come back {skipReturn(rotation?.skip_hold_days || 1)}.
             </Typography>
           )}
           {tracks.length > 0 && (
@@ -377,7 +375,7 @@ const Review = () => {
                 track.protected
                   ? <Chip size="small" variant="outlined" label="Kept for the next rotation" />
                   : track.due_at && <Chip size="small" variant="outlined" label={`Leaves ${relativeDays(track.due_at)}`} />
-              ) : reviewAll && track.due_at && new Date(`${track.due_at}Z`) > new Date() && (
+              ) : reviewAll && track.due_at && parseUtc(track.due_at) > new Date() && (
                 <Chip size="small" variant="outlined" label="Not due yet" />
               )}
             </Box>

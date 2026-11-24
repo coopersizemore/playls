@@ -17,6 +17,7 @@ import {
 import { MusicNote, SkipNext, Star, ThumbDown, ThumbUp } from '@mui/icons-material';
 import { formatInterval } from './RotationDialogs';
 import { PlaylistCover } from './Layout';
+import { skipReturn } from './SettingsControls';
 
 const Section = ({ icon, title, subtitle, tracks }) => (
   <Card sx={{ mb: 2 }}>
@@ -100,8 +101,7 @@ const ReviewSummary = ({ rotationId, rotation, log, flushed }) => {
         <Section
           icon={<SkipNext />}
           title="Skipped"
-          subtitle={`Still in the playlist and still due. They'll come back ${
-            (rotation?.skip_hold_days || 1) > 1 ? `in ${rotation.skip_hold_days} days` : 'tomorrow'}.`}
+          subtitle={`Still in the playlist and still due. They'll come back ${skipReturn(rotation?.skip_hold_days || 1)}.`}
           tracks={skipped}
         />
       )}

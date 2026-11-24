@@ -2,13 +2,13 @@
 from datetime import timedelta
 from types import SimpleNamespace
 
-from conftest import spotify_item
 from rest_api.clock import utcnow
-from rest_api.database.models import ReviewEventDB, RotationTrackDB, UserDB
+from rest_api.database.models import ReviewEventDB, RotationTrackDB
 from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import preferences as prefs
 from rest_api.services.rotation_logic import sort_queue
-from test_rotation_flow import make_rotation, many_old_songs
+
+from helpers import make_rotation, many_old_songs, review, set_account, spotify_item
 
 ROT = SimpleNamespace(interval_hours=24, grace_period=False, created_at=utcnow() - timedelta(days=500))
 
@@ -59,22 +59,15 @@ def test_auto_cooldown_and_mix_are_parameters():
 
 # ---------- effects ----------
 
-def set_account(db, **values):
-    user = db.query(UserDB).one()
-    for k, v in values.items():
-        setattr(user, k, v)
-    db.commit()
-
-
 def test_super_keep_length_follows_account_then_rotation(client, spotify, db):
     rid = make_rotation(client, spotify, [spotify_item(t, 60) for t in ("a", "b")], grace=False)["id"]
     set_account(db, super_keep_multiplier=5)
-    assert client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "super_keep"}).json()[
+    assert review(client, rid, "a", "super_keep").json()[
         "keep_multiplier"] == 5
     r = client.put(f"/api/rotation/{rid}", json={"super_keep_multiplier": 2})
     assert r.status_code == 200
     assert r.json()["super_keep_multiplier"] == 2 and r.json()["overrides"]["super_keep_multiplier"] == 2
-    assert client.post(f"/api/rotation/{rid}/review", json={"track_id": "b", "action": "super_keep"}).json()[
+    assert review(client, rid, "b", "super_keep").json()[
         "keep_multiplier"] == 2
     # Clearing the override goes back to the account setting
     r = client.put(f"/api/rotation/{rid}", json={"super_keep_multiplier": None}).json()
@@ -83,11 +76,12 @@ def test_super_keep_length_follows_account_then_rotation(client, spotify, db):
 
 def test_skip_hold_days(client, spotify, db):
     rid = make_rotation(client, spotify, many_old_songs(3), grace=False)["id"]
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": "s000", "action": "skip"})
+    review(client, rid, "s000", "skip")
     for e in db.query(ReviewEventDB):
         e.created_at -= timedelta(days=1, hours=1)  # skipped yesterday
     db.commit()
-    queue = lambda: [t["track_id"] for t in client.get(f"/api/rotation/{rid}/queue").json()["tracks"]]
+    def queue():
+        return [t["track_id"] for t in client.get(f"/api/rotation/{rid}/queue").json()["tracks"]]
     assert "s000" in queue()  # default: back the next day
     client.put(f"/api/rotation/{rid}", json={"skip_hold_days": 3})
     assert "s000" not in queue()  # held for 3 days
@@ -96,7 +90,8 @@ def test_skip_hold_days(client, spotify, db):
 
 def test_rotation_daily_limit_override(client, spotify, db):
     rid = make_rotation(client, spotify, many_old_songs(12), grace=False)["id"]
-    size = lambda: len(client.get(f"/api/rotation/{rid}/queue").json()["tracks"])
+    def size():
+        return len(client.get(f"/api/rotation/{rid}/queue").json()["tracks"])
     set_account(db, review_limit=10)
     assert size() == 10
     client.put(f"/api/rotation/{rid}", json={"review_limit": 3})
@@ -112,7 +107,8 @@ def test_review_order_oldest(client, spotify, db):
     row = db.query(RotationTrackDB).filter_by(rotation_id=rid, track_id="old").one()
     row.last_kept_at = utcnow() - timedelta(days=31)  # just due again
     db.commit()
-    order = lambda: [t["track_id"] for t in client.get(f"/api/rotation/{rid}/queue").json()["tracks"]]
+    def order():
+        return [t["track_id"] for t in client.get(f"/api/rotation/{rid}/queue").json()["tracks"]]
     assert order() == ["new", "old"]  # most overdue first
     client.put(f"/api/rotation/{rid}", json={"review_order": "oldest"})
     assert order() == ["old", "new"]
@@ -127,9 +123,10 @@ def test_auto_only_settings_rejected_on_manual(client, spotify):
 def test_deck_size_setting(client, spotify, db):
     rid = make_rotation(client, spotify, [spotify_item(f"s{i:02}", 10) for i in range(15)])["id"]
     for i in range(15):
-        client.post(f"/api/rotation/{rid}/review", json={"track_id": f"s{i:02}", "action": "remove"})
+        review(client, rid, f"s{i:02}", "remove")
     client.post(f"/api/rotation/{rid}/flush")
-    deck = lambda: client.get(f"/api/rotation/{rid}/restock/deck/bring_back").json()["items"]
+    def deck():
+        return client.get(f"/api/rotation/{rid}/restock/deck/bring_back").json()["items"]
     assert len(deck()) == 15
     client.put("/api/user/me/settings", json={"deck_size": 10})
     assert len(deck()) == 10

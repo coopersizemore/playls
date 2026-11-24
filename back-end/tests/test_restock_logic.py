@@ -11,7 +11,8 @@ from rest_api.services.restock_logic import (
     track_meta,
     weighted_order,
 )
-from tests.conftest import track_object
+
+from helpers import track_object
 
 NOW = datetime(2026, 11, 22)
 

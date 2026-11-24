@@ -5,7 +5,7 @@ echo "Starting PlayLS Development Environment..."
 echo ""
 echo "Starting Backend Server..."
 cd back-end
-python rest_api/app.py &
+.venv/bin/python -m rest_api.app &
 BACKEND_PID=$!
 
 echo ""
@@ -23,10 +23,10 @@ echo "Development servers started!"
 echo "Backend: http://localhost:8000"
 echo "Frontend: http://localhost:3000"
 echo ""
-echo "Don't forget to:"
-echo "1. Set up your Spotify app credentials in back-end/.env"
-echo "2. Start ngrok for OAuth redirects: ngrok http 8000"
-echo "3. Update your Spotify app redirect URI with the ngrok URL"
+echo "This mode needs, in back-end/.env:"
+echo "  FRONTEND_URL=http://127.0.0.1:3000"
+echo "  SPOTIFY_REDIRECT_URI=http://127.0.0.1:8000/api/auth/callback (also in the Spotify dashboard)"
+echo "Open http://127.0.0.1:3000, not localhost. 'vercel dev' from the repo root is the simpler option."
 echo ""
 echo "Press Ctrl+C to stop all servers"
 

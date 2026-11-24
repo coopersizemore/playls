@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from ..database.config import get_db
@@ -10,12 +10,12 @@ from ..models.rotation import (
     HistoryEventOut,
     QueueOut,
     RemoveUnplayableOut,
-    UnplayableOut,
     ReviewIn,
     RotationCreate,
     RotationOut,
     RotationUpdate,
     TrackOut,
+    UnplayableOut,
 )
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
@@ -29,14 +29,6 @@ router = APIRouter(
 )
 
 current_user_dep = Depends(AuthService.get_current_user_from_token)
-
-
-def _get_owned_or_404(db: Session, rotation_id: int, user: UserDB):
-    # 404 (not 403) for other users' rotations so ids don't leak
-    rotation = rs.get_owned_rotation(db, rotation_id, user.id)
-    if not rotation:
-        raise HTTPException(status_code=404, detail="Rotation not found")
-    return rotation
 
 
 @router.post("/", response_model=RotationOut, status_code=201)
@@ -53,7 +45,7 @@ async def get_rotation(
     db: Session = Depends(get_db),
     user: UserDB = current_user_dep,
 ):
-    rotation = _get_owned_or_404(db, rotation_id, user)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
     sync_ok = await rs.try_sync(db, rotation, user) if sync else True
     return rs.summarize_one(db, rotation, sync_ok, tz_offset)
 
@@ -62,13 +54,13 @@ async def get_rotation(
 async def update_rotation(
     rotation_id: int, data: RotationUpdate, db: Session = Depends(get_db), user: UserDB = current_user_dep
 ):
-    rotation = rs.update_rotation(db, _get_owned_or_404(db, rotation_id, user), data)
+    rotation = rs.update_rotation(db, rs.get_owned_or_404(db, rotation_id, user), data)
     return rs.summarize_one(db, rotation)
 
 
 @router.delete("/{rotation_id}")
 async def delete_rotation(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
-    rs.delete_rotation(db, _get_owned_or_404(db, rotation_id, user))
+    rs.delete_rotation(db, rs.get_owned_or_404(db, rotation_id, user))
     return {"message": "Rotation deleted"}
 
 
@@ -83,7 +75,7 @@ async def get_queue(
 ):
     """Today's batch of due songs (most overdue first, capped by the daily review limit).
     Syncs with Spotify first (best effort)."""
-    rotation = _get_owned_or_404(db, rotation_id, user)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
     await rs.try_sync(db, rotation, user)
     if all:
         return rs.all_songs_queue(db, rotation, tz_offset)
@@ -93,7 +85,7 @@ async def get_queue(
 @router.post("/{rotation_id}/reset-due", response_model=RotationOut)
 async def reset_due_dates(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """Mark every song as not due: each comes due one interval from now."""
-    rotation = _get_owned_or_404(db, rotation_id, user)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
     rs.reset_due_dates(db, rotation)
     return rs.summarize_one(db, rotation)
 
@@ -102,7 +94,7 @@ async def reset_due_dates(rotation_id: int, db: Session = Depends(get_db), user:
 async def get_unplayable(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """Songs still in the playlist but unavailable on Spotify. Re-reads the whole playlist
     first, since availability can change without the playlist changing."""
-    rotation = _get_owned_or_404(db, rotation_id, user)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
     async with sync_claim(db, rotation) as held:
         if held:
             await sync_rotation(db, rotation, user, force=True)
@@ -113,7 +105,7 @@ async def get_unplayable(rotation_id: int, db: Session = Depends(get_db), user: 
 @router.post("/{rotation_id}/remove-unplayable", response_model=RemoveUnplayableOut)
 async def remove_unplayable(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """Remove every unavailable song from the rotation and the Spotify playlist now."""
-    rotation = _get_owned_or_404(db, rotation_id, user)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
     removed = rs.queue_unplayable_removals(db, rotation)
     flushed = True
     async with sync_claim(db, rotation) as held:
@@ -131,7 +123,7 @@ async def remove_unplayable(rotation_id: int, db: Session = Depends(get_db), use
 @router.get("/{rotation_id}/tracks", response_model=list[TrackOut])
 async def get_tracks(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """Every track currently in rotation (active, then pending removal), with due dates."""
-    return rs.all_tracks(db, _get_owned_or_404(db, rotation_id, user))
+    return rs.all_tracks(db, rs.get_owned_or_404(db, rotation_id, user))
 
 
 @router.post("/{rotation_id}/review", response_model=TrackOut)
@@ -139,13 +131,13 @@ async def review_track(
     rotation_id: int, data: ReviewIn, db: Session = Depends(get_db), user: UserDB = current_user_dep
 ):
     """Record one swipe (keep / skip / remove / undo). Removals are applied on flush."""
-    return rs.apply_review(db, _get_owned_or_404(db, rotation_id, user), data.track_id, data.action)
+    return rs.apply_review(db, rs.get_owned_or_404(db, rotation_id, user), data.track_id, data.action)
 
 
 @router.post("/{rotation_id}/flush", response_model=FlushOut)
 async def flush_removals(rotation_id: int, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """Apply pending removals to the Spotify playlist (called when leaving Review)."""
-    rotation = _get_owned_or_404(db, rotation_id, user)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
     removed = 0
     async with sync_claim(db, rotation) as held:
         # Not held: another request is syncing it, and the removals stay pending for it (or the next sync)
@@ -169,6 +161,6 @@ async def get_history(
     user: UserDB = current_user_dep,
 ):
     """Newest first. X-Total-Count gives how many events match the filter (for paging)."""
-    events, total = rs.history(db, _get_owned_or_404(db, rotation_id, user), limit, offset, filter)
+    events, total = rs.history(db, rs.get_owned_or_404(db, rotation_id, user), limit, offset, filter)
     response.headers["X-Total-Count"] = str(total)
     return events

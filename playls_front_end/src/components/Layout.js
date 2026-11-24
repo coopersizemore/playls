@@ -147,10 +147,6 @@ export const RequireAuth = ({ children }) => {
 
 export const parseUtc = (iso) => new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
 
-export const formatDate = (iso) =>
-  // API timestamps are naive UTC
-  iso ? parseUtc(iso).toLocaleDateString() : '';
-
 export const relativeDays = (iso) => {
   if (!iso) return '';
   const days = Math.round((parseUtc(iso) - new Date()) / 86400000);

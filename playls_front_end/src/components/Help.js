@@ -12,6 +12,7 @@ import {
 } from '@mui/material';
 import { Add, ArrowBack, ArrowForward, Close, QueueMusic } from '@mui/icons-material';
 import { keyframes } from '@mui/system';
+import { readStored, writeStored } from '../storage';
 import { ON_GREEN } from '../theme';
 
 // A short first-run guide: what a rotation is, reviewing, restocking, history, and one warning.
@@ -19,21 +20,10 @@ import { ON_GREEN } from '../theme';
 
 const SEEN_KEY = (userId) => `playls.helpSeen.${userId}`;
 
-export const hasSeenHelp = (userId) => {
-  try {
-    return localStorage.getItem(SEEN_KEY(userId)) === '1';
-  } catch (e) {
-    return true; // storage blocked: don't pop up on every visit
-  }
-};
+// Blocked storage counts as seen, so the guide doesn't pop up on every visit
+export const hasSeenHelp = (userId) => readStored(SEEN_KEY(userId), null, '1') === '1';
 
-export const markHelpSeen = (userId) => {
-  try {
-    localStorage.setItem(SEEN_KEY(userId), '1');
-  } catch (e) {
-    // private window or blocked storage: nothing to remember
-  }
-};
+const markHelpSeen = (userId) => writeStored(SEEN_KEY(userId), '1');
 
 const noMotion = '@media (prefers-reduced-motion: reduce)';
 const spin = keyframes`from { transform: rotate(0deg); } to { transform: rotate(360deg); }`;

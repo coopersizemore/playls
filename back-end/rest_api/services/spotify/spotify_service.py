@@ -6,14 +6,14 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ...database.models.user import UserDB
 from ... import request_context
+from ...database.models.user import UserDB
 from ..auth_service import AuthService
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ RATE_LIMIT_DEFAULT_WAIT = 1.0  # when Spotify sends no Retry-After
 class SpotifyAPIError(HTTPException):
     """A failed Spotify call. `upstream_status` lets callers react (e.g. 403/404 playlist)."""
 
-    def __init__(self, upstream_status: int, retry_after: Optional[int] = None, quota: bool = False):
+    def __init__(self, upstream_status: int, retry_after: int | None = None, quota: bool = False):
         self.upstream_status = upstream_status
         self.retry_after = retry_after
         if upstream_status == 429:
@@ -72,7 +72,7 @@ async def _refresh_after_401(user: UserDB, db: Session, rejected_token: str) -> 
         return await AuthService.ensure_valid_spotify_token(user, db, force_refresh=True)
 
 
-def _retry_after_seconds(response: httpx.Response) -> Optional[int]:
+def _retry_after_seconds(response: httpx.Response) -> int | None:
     value = response.headers.get("Retry-After")
     try:
         return max(0, int(float(value))) if value is not None else None
@@ -85,7 +85,7 @@ def _is_quota_error(response: httpx.Response) -> bool:
     return "QUOTA_EXCEEDED" in response.text
 
 
-def _rate_limit_wait(response: httpx.Response, waited: float) -> Optional[float]:
+def _rate_limit_wait(response: httpx.Response, waited: float) -> float | None:
     """Seconds to wait before retrying a 429, or None to give up."""
     if _is_quota_error(response):
         return None
@@ -96,7 +96,7 @@ def _rate_limit_wait(response: httpx.Response, waited: float) -> Optional[float]
     return wait
 
 
-def _chunks(values: List[str], size: int):
+def _chunks(values: list[str], size: int):
     for i in range(0, len(values), size):
         yield values[i:i + size]
 
@@ -108,9 +108,9 @@ class SpotifyService:
         user: UserDB,
         db: Session,
         method: str = "GET",
-        data: Optional[Dict] = None,
-        params: Optional[Dict] = None,
-    ) -> Dict[str, Any]:
+        data: dict | None = None,
+        params: dict | None = None,
+    ) -> dict[str, Any]:
         """Authenticated request; refreshes the Spotify token when expired or rejected once."""
         method = method.upper()
         url = f"{API_BASE}{endpoint}"
@@ -161,22 +161,22 @@ class SpotifyService:
         return response.json() if response.content else {}
 
     @staticmethod
-    async def get_user_playlists(user: UserDB, db: Session, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+    async def get_user_playlists(user: UserDB, db: Session, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         return await SpotifyService.make_spotify_request(
             "/me/playlists", user, db, params={"limit": limit, "offset": offset}
         )
 
     @staticmethod
     async def get_playlist(
-        playlist_id: str, user: UserDB, db: Session, fields: Optional[str] = None
-    ) -> Dict[str, Any]:
+        playlist_id: str, user: UserDB, db: Session, fields: str | None = None
+    ) -> dict[str, Any]:
         params = {"fields": fields} if fields else None
         return await SpotifyService.make_spotify_request(f"/playlists/{playlist_id}", user, db, params=params)
 
     @staticmethod
     async def get_playlist_items_page(
         playlist_id: str, user: UserDB, db: Session, limit: int = PLAYLIST_ITEMS_PAGE_SIZE, offset: int = 0
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """One page of playlist items (only for playlists the user owns or collaborates on)."""
         return await SpotifyService.make_spotify_request(
             f"/playlists/{playlist_id}/items",
@@ -187,7 +187,7 @@ class SpotifyService:
         )
 
     @staticmethod
-    async def get_all_playlist_items(playlist_id: str, user: UserDB, db: Session) -> List[Dict[str, Any]]:
+    async def get_all_playlist_items(playlist_id: str, user: UserDB, db: Session) -> list[dict[str, Any]]:
         """Every item, in playlist order. The first page gives the total, then the rest are fetched
         a few at a time. (The first call also refreshes the token if needed, so the concurrent
         ones don't race to refresh it.)
@@ -196,7 +196,7 @@ class SpotifyService:
         an item; sync_service re-checks the snapshot afterwards for that reason.
         """
         first = await SpotifyService.get_playlist_items_page(playlist_id, user, db, offset=0)
-        items: List[Dict[str, Any]] = list(first.get("items") or [])
+        items: list[dict[str, Any]] = list(first.get("items") or [])
         total = first.get("total")
         if not first.get("next") or not items:
             return items
@@ -213,7 +213,7 @@ class SpotifyService:
 
         limit = asyncio.Semaphore(PLAYLIST_PAGE_CONCURRENCY)
 
-        async def fetch(offset: int) -> List[Dict[str, Any]]:
+        async def fetch(offset: int) -> list[dict[str, Any]]:
             async with limit:
                 page = await SpotifyService.get_playlist_items_page(playlist_id, user, db, offset=offset)
                 return page.get("items") or []
@@ -234,12 +234,12 @@ class SpotifyService:
 
     @staticmethod
     async def add_items_to_playlist(
-        playlist_id: str, uris: List[str], user: UserDB, db: Session, position: Optional[int] = None
-    ) -> Optional[str]:
+        playlist_id: str, uris: list[str], user: UserDB, db: Session, position: int | None = None
+    ) -> str | None:
         """Add URIs (batched by 100). Returns the final snapshot_id."""
         snapshot_id = None
         for i, batch in enumerate(_chunks(uris, PLAYLIST_MUTATION_BATCH)):
-            data: Dict[str, Any] = {"uris": batch}
+            data: dict[str, Any] = {"uris": batch}
             if position is not None:
                 data["position"] = position + i * PLAYLIST_MUTATION_BATCH
             result = await SpotifyService.make_spotify_request(
@@ -250,8 +250,8 @@ class SpotifyService:
 
     @staticmethod
     async def remove_items_from_playlist(
-        playlist_id: str, uris: List[str], user: UserDB, db: Session
-    ) -> Optional[str]:
+        playlist_id: str, uris: list[str], user: UserDB, db: Session
+    ) -> str | None:
         """Remove every occurrence of each URI (batched by 100). Returns the final snapshot_id."""
         snapshot_id = None
         for batch in _chunks(uris, PLAYLIST_MUTATION_BATCH):
@@ -267,23 +267,23 @@ class SpotifyService:
 
     @staticmethod
     async def create_playlist(
-        name: str, user: UserDB, db: Session, description: Optional[str] = None, public: bool = False
-    ) -> Dict[str, Any]:
+        name: str, user: UserDB, db: Session, description: str | None = None, public: bool = False
+    ) -> dict[str, Any]:
         # Always send a description: playlists created without one can show "null" in Spotify
-        data: Dict[str, Any] = {"name": name, "public": public, "description": description or ""}
+        data: dict[str, Any] = {"name": name, "public": public, "description": description or ""}
         return await SpotifyService.make_spotify_request("/me/playlists", user, db, method="POST", data=data)
 
     # ---------- listening signals (restock) ----------
 
     @staticmethod
-    async def get_track(track_id: str, user: UserDB, db: Session) -> Dict[str, Any]:
+    async def get_track(track_id: str, user: UserDB, db: Session) -> dict[str, Any]:
         """One track (the batch GET /tracks endpoint was removed in Feb 2026)."""
         return await SpotifyService.make_spotify_request(f"/tracks/{track_id}", user, db)
 
     @staticmethod
     async def get_top_items(
         item_type: str, user: UserDB, db: Session, time_range: str = "medium_term", limit: int = 50
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Top "tracks" or "artists". time_range: short_term (~4 weeks), medium_term (~6 months),
         long_term (~1 year). Scope: user-top-read."""
         return await SpotifyService.make_spotify_request(
@@ -291,14 +291,14 @@ class SpotifyService:
         )
 
     @staticmethod
-    async def get_recently_played(user: UserDB, db: Session, limit: int = 50) -> Dict[str, Any]:
+    async def get_recently_played(user: UserDB, db: Session, limit: int = 50) -> dict[str, Any]:
         """Last (up to) 50 plays. Scope: user-read-recently-played."""
         return await SpotifyService.make_spotify_request(
             "/me/player/recently-played", user, db, params={"limit": min(limit, 50)}
         )
 
     @staticmethod
-    async def get_saved_tracks(user: UserDB, db: Session, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    async def get_saved_tracks(user: UserDB, db: Session, limit: int = 50, offset: int = 0) -> dict[str, Any]:
         """Liked Songs, newest first. Scope: user-library-read."""
         return await SpotifyService.make_spotify_request(
             "/me/tracks", user, db, params={"limit": min(limit, 50), "offset": offset}
@@ -312,6 +312,6 @@ class SpotifyService:
         search_type: str = "track",
         limit: int = SEARCH_LIMIT_MAX,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         params = {"q": query, "type": search_type, "limit": min(limit, SEARCH_LIMIT_MAX), "offset": offset}
         return await SpotifyService.make_spotify_request("/search", user, db, params=params)

@@ -5,8 +5,9 @@ Tests for the authentication system
 # Env setup lives in conftest.py
 import pytest
 from fastapi.testclient import TestClient
+
 from rest_api.app import app
-from rest_api.services.auth_service import AuthService, SESSION_COOKIE
+from rest_api.services.auth_service import SESSION_COOKIE, AuthService
 
 client = TestClient(app)
 

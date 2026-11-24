@@ -1,5 +1,6 @@
 """Per-user cache of the listening signals behind "Suggested for you" (refreshed every few hours)."""
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer
+
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 

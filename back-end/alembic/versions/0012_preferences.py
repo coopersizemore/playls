@@ -8,15 +8,15 @@ Revision ID: 0012
 Revises: 0011
 Create Date: 2026-11-24
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision: str = "0012"
-down_revision: Union[str, None] = "0011"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0011"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 USER_COLUMNS = [
     ("super_keep_multiplier", sa.Integer()),

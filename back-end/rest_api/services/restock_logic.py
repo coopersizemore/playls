@@ -11,14 +11,14 @@ Sources (see docs/DESIGN.md, "Restock"):
 import hashlib
 import math
 import random
+from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
 
 BRING_BACK_FLOOR = 0.1  # weight right after removal
 BRING_BACK_RECOVERY_DAYS = 90  # days until full weight
 SKIP_FACTOR = 0.5  # a fresh "Not now" halves the weight...
 SKIP_HALF_LIFE_DAYS = 30  # ...and its effect halves every 30 days after that
-DECK_SIZE = 30
 DISCOVERY_SHARE = 1 / 3  # target share of "new to you" songs in the suggested deck
 
 TOP_WINDOW_WEIGHTS = {"short_term": 3.0, "medium_term": 2.0, "long_term": 1.0}
@@ -31,7 +31,7 @@ TOP_WINDOW_REASONS = {
 
 # ---------- track metadata ----------
 
-def _pick_image(album: Dict[str, Any]) -> Optional[str]:
+def _pick_image(album: dict[str, Any]) -> str | None:
     images = album.get("images") or []
     if not images:
         return None
@@ -42,7 +42,7 @@ def _pick_image(album: Dict[str, Any]) -> Optional[str]:
     return sized[-1].get("url")
 
 
-def track_meta(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def track_meta(item: dict[str, Any] | None) -> dict[str, Any] | None:
     """Spotify track object -> compact, JSON-safe dict. None for local files/episodes/nulls."""
     if not item or item.get("type", "track") != "track" or not item.get("id") or item.get("is_local"):
         return None
@@ -78,7 +78,7 @@ def skip_multiplier(effective_skips: float, factor: float = SKIP_FACTOR) -> floa
 # ---------- bring back ----------
 
 def bring_back_weight(
-    removed_at: Optional[datetime], now: datetime, skips: float, keeps: int = 0,
+    removed_at: datetime | None, now: datetime, skips: float, keeps: int = 0,
     recovery_days: float = BRING_BACK_RECOVERY_DAYS, skip_factor: float = SKIP_FACTOR,
 ) -> float:
     """Low right after removal, full after `recovery_days` (90 by default); lowered by (fading)
@@ -91,7 +91,7 @@ def bring_back_weight(
     return ramp * skip_multiplier(skips, skip_factor) * (1 + 0.1 * min(keeps, 5))
 
 
-def bring_back_reason(removed_at: Optional[datetime], now: datetime, keeps: int) -> str:
+def bring_back_reason(removed_at: datetime | None, now: datetime, keeps: int) -> str:
     if removed_at is None:
         return "Previously in this rotation"
     days = (now - removed_at).days
@@ -108,12 +108,12 @@ def bring_back_reason(removed_at: Optional[datetime], now: datetime, keeps: int)
 # ---------- suggestions ----------
 
 def score_suggestion(
-    features: Dict[str, Any],
+    features: dict[str, Any],
     skips: float = 0,
     in_other_rotation: bool = False,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
     skip_factor: float = SKIP_FACTOR,
-) -> Tuple[float, str]:
+) -> tuple[float, str]:
     """Score a candidate from cached listening features. Returns (score, reason).
 
     features keys (all optional):
@@ -125,7 +125,7 @@ def score_suggestion(
       discovery: "artist" | "album" | "genre"   found by searching from a seed
       seed: str                the artist/album/genre name the search started from
     """
-    parts: List[Tuple[float, str]] = []
+    parts: list[tuple[float, str]] = []
 
     for window, rank in (features.get("top") or {}).items():
         weight = TOP_WINDOW_WEIGHTS.get(window)
@@ -175,7 +175,7 @@ def score_suggestion(
     return score, reason
 
 
-def is_discovery(features: Dict[str, Any]) -> bool:
+def is_discovery(features: dict[str, Any]) -> bool:
     """True when the user hasn't engaged with the song itself (found only via a search seed)."""
     return bool(features.get("discovery")) and not (
         features.get("top") or features.get("recent_plays") or features.get("liked_at")
@@ -190,7 +190,7 @@ def daily_seed(*parts: Any) -> int:
     return int(digest[:16], 16)
 
 
-def weighted_order(items: Sequence[Any], weights: Sequence[float], seed: int) -> List[Any]:
+def weighted_order(items: Sequence[Any], weights: Sequence[float], seed: int) -> list[Any]:
     """Weighted random order without replacement (Efraimidis–Spirakis).
 
     Higher weights tend to come first, but low-weight items still surface sometimes.
@@ -198,7 +198,7 @@ def weighted_order(items: Sequence[Any], weights: Sequence[float], seed: int) ->
     """
     rng = random.Random(seed)
     keyed = []
-    for item, w in zip(items, weights):
+    for item, w in zip(items, weights, strict=True):
         u = rng.random() or 1e-12
         key = math.log(u) / w if w > 0 else float("-inf")
         keyed.append((key, item))
@@ -206,9 +206,9 @@ def weighted_order(items: Sequence[Any], weights: Sequence[float], seed: int) ->
     return [item for _, item in keyed]
 
 
-def blend(known: List[Any], discoveries: List[Any], size: int, discovery_share: float = DISCOVERY_SHARE) -> List[Any]:
+def blend(known: list[Any], discoveries: list[Any], size: int, discovery_share: float = DISCOVERY_SHARE) -> list[Any]:
     """Interleave two ordered lists so about `discovery_share` of the deck is discoveries."""
-    out: List[Any] = []
+    out: list[Any] = []
     k = d = 0
     while len(out) < size and (k < len(known) or d < len(discoveries)):
         want_discovery = d < len(discoveries) and (
@@ -223,7 +223,7 @@ def blend(known: List[Any], discoveries: List[Any], size: int, discovery_share: 
     return out
 
 
-def dedupe(values: Iterable[str]) -> List[str]:
+def dedupe(values: Iterable[str]) -> list[str]:
     seen, out = set(), []
     for v in values:
         if v and v not in seen:

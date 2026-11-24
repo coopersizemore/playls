@@ -4,9 +4,15 @@ from types import SimpleNamespace
 
 from rest_api.clock import utcnow
 from rest_api.services.rotation_logic import (
-    due_at, is_due, local_day_start, parse_playlist_items, sort_queue, todays_batch_size,
+    due_at,
+    is_due,
+    local_day_start,
+    parse_playlist_items,
+    sort_queue,
+    todays_batch_size,
 )
-from tests.conftest import spotify_item
+
+from helpers import spotify_item
 
 CREATED = datetime(2026, 1, 1)
 ROTATION = SimpleNamespace(created_at=CREATED, interval_hours=30 * 24, grace_period=True)
@@ -34,7 +40,8 @@ def test_keep_resets_anchor_to_keep_date():
 
 def test_interval_change_applies_immediately():
     t = track(datetime(2026, 2, 1))
-    assert due_at(t, SimpleNamespace(created_at=CREATED, interval_hours=7 * 24, grace_period=True)) == datetime(2026, 2, 8)
+    weekly = SimpleNamespace(created_at=CREATED, interval_hours=7 * 24, grace_period=True)
+    assert due_at(t, weekly) == datetime(2026, 2, 8)
 
 
 def test_non_active_tracks_are_never_due():

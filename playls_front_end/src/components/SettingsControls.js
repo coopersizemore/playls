@@ -54,6 +54,11 @@ export const BACK_OPTIONS = [
 // Built-in defaults for auto rotations (no account-wide setting)
 export const AUTO_SETTING_DEFAULTS = { return_cooldown_days: 28, pick_percent: 10, bring_back_percent: 20 };
 
+// Wording for the review screens
+const TIMES = { 2: 'twice', 3: 'three times', 5: 'five times' };
+export const timesWord = (n) => TIMES[n] || `${n} times`;
+export const skipReturn = (days) => (days > 1 ? `in ${days} days` : 'tomorrow');
+
 export const labelFor = (options, value) => options.find((o) => o.value === value)?.label ?? String(value);
 
 // A row of choice chips. With `defaultLabel`, a first chip ("Default (…)") stands for null:

@@ -10,15 +10,14 @@ import logging
 import random
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any
 
 import sqlalchemy.orm as orm
-from sqlalchemy import func
 
 from rest_api.clock import utcnow
 from rest_api.database.models.curated_pick import CuratedPickDB
 from rest_api.database.models.restock_feedback import ADD, BRING_BACK, PICKS, SUGGESTED, RestockFeedbackDB
-from rest_api.database.models.review_event import AUTO_ADDED, KEEP, ROTATED_OUT, ReviewEventDB
+from rest_api.database.models.review_event import AUTO_ADDED, ROTATED_OUT, ReviewEventDB
 from rest_api.database.models.rotation import AUTO, RotationDB
 from rest_api.database.models.rotation_track import (
     ACTIVE,
@@ -43,10 +42,10 @@ class MaintainResult:
     rotated_out: int = 0
     added: int = 0
     short_by: int = 0  # slots that couldn't be filled (not enough candidates)
-    sources: Dict[str, int] = field(default_factory=dict)
+    sources: dict[str, int] = field(default_factory=dict)
 
 
-def _active(db: orm.Session, rotation: RotationDB) -> List[RotationTrackDB]:
+def _active(db: orm.Session, rotation: RotationDB) -> list[RotationTrackDB]:
     return db.query(RotationTrackDB).filter(
         RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.status == ACTIVE
     ).all()
@@ -56,13 +55,13 @@ def _active(db: orm.Session, rotation: RotationDB) -> List[RotationTrackDB]:
 
 async def choose_additions(
     db: orm.Session, rotation: RotationDB, user: UserDB, slots: int, now
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Up to `slots` new songs as [{meta, source}], mixed across the three sources."""
     if slots <= 0:
         return []
-    rows = rsv._rotation_rows(db, rotation)
-    blocked = rsv._blocked(db, user)
-    skips = rsv._skip_counts(db, user)
+    rows = rsv.rotation_rows(db, rotation)
+    blocked = rsv.blocked_ids(db, user)
+    skips = rsv.skip_counts(db, user)
     rng = random.Random(restock_logic.daily_seed(user.id, rotation.id, "auto", now.isoformat()))
     taken: set = set()
     cooldown = prefs.for_rotation(rotation, "return_cooldown_days")
@@ -73,18 +72,14 @@ async def choose_additions(
         if r.status == REMOVED and r.is_playable and r.track_id not in blocked
         and auto.cooled_down(r.removed_at, now, cooldown)
     ]
-    keeps = Counter({
-        row_id: n for row_id, n in db.query(ReviewEventDB.rotation_track_id, func.count())
-        .filter(ReviewEventDB.rotation_track_id.in_([r.id for r in removed]), ReviewEventDB.action == KEEP)
-        .group_by(ReviewEventDB.rotation_track_id)
-    }) if removed else Counter()
+    keeps = rsv.keep_counts(db, removed)
     back_weights = [
         restock_logic.bring_back_weight(
             r.removed_at, now, skips[r.track_id], keeps[r.id], rsv.recovery_days(user), rsv.skip_factor(user)
         )
         for r in removed
     ]
-    back = [rsv._row_meta(r) for r in restock_logic.weighted_order(removed, back_weights, rng.randrange(2**32))]
+    back = [rsv.row_meta(r) for r in restock_logic.weighted_order(removed, back_weights, rng.randrange(2**32))]
 
     # PlayLS picks that are live and not in (or recently out of) this rotation
     picks, seen = [], set()
@@ -97,11 +92,11 @@ async def choose_additions(
         seen.add(pick.track_id)
         picks.append(pick)
     picks.sort(key=lambda p: skips[p.track_id])
-    pick_metas = [rsv._row_meta(p) for p in picks]
+    pick_metas = [rsv.row_meta(p) for p in picks]
 
     # For you: scored listening signals (anything this rotation ever held is handled above)
     payload = await rsv.suggestion_signals(db, user)
-    elsewhere = rsv._in_other_rotations(db, user, rotation)
+    elsewhere = rsv.in_other_rotations(db, user, rotation)
     known, discoveries = [], []
     for track_id, entry in payload["candidates"].items():
         if track_id in rows or track_id in blocked:
@@ -112,9 +107,9 @@ async def choose_additions(
         if score <= 0:
             continue
         (discoveries if restock_logic.is_discovery(entry["features"]) else known).append((entry["meta"], score))
-    order = lambda items: restock_logic.weighted_order(
-        [m for m, _ in items], [s for _, s in items], rng.randrange(2**32)
-    )
+    def order(items):
+        return restock_logic.weighted_order([m for m, _ in items], [s for _, s in items], rng.randrange(2**32))
+
     for_you = restock_logic.blend(
         order(known), order(discoveries), len(known) + len(discoveries), rsv.discovery_share(user)
     )
@@ -128,7 +123,7 @@ async def choose_additions(
         pick_chance=prefs.for_rotation(rotation, "pick_percent") / 100,
         bring_back_share=prefs.for_rotation(rotation, "bring_back_percent") / 100,
     )
-    chosen: List[Dict[str, Any]] = []
+    chosen: list[dict[str, Any]] = []
     for source, pool in ((PICKS, pick_metas), (BRING_BACK, back), (SUGGESTED, for_you)):
         want = counts["picks" if source == PICKS else "bring_back" if source == BRING_BACK else "suggested"]
         for meta in pool:
@@ -146,7 +141,7 @@ async def choose_additions(
 
 # ---------- applying ----------
 
-async def _rotate_out(db: orm.Session, rotation: RotationDB, user: UserDB, leaving: List[RotationTrackDB], now) -> None:
+async def _rotate_out(db: orm.Session, rotation: RotationDB, user: UserDB, leaving: list[RotationTrackDB], now) -> None:
     if not leaving:
         return
     uris = [t.uri for t in leaving]
@@ -161,14 +156,14 @@ async def _rotate_out(db: orm.Session, rotation: RotationDB, user: UserDB, leavi
     db.commit()
 
 
-async def _add(db: orm.Session, rotation: RotationDB, user: UserDB, chosen: List[Dict[str, Any]], now) -> None:
+async def _add(db: orm.Session, rotation: RotationDB, user: UserDB, chosen: list[dict[str, Any]], now) -> None:
     if not chosen:
         return
     uris = [c["meta"]["uri"] for c in chosen]
     await write_adopting_snapshot(
         db, rotation, user, lambda: ss.add_items_to_playlist(rotation.playlist_id, uris, user, db)
     )
-    rows = rsv._rotation_rows(db, rotation)
+    rows = rsv.rotation_rows(db, rotation)
     for c in chosen:
         meta = c["meta"]
         row = rows.get(meta["track_id"])
@@ -253,7 +248,7 @@ async def maintain(db: orm.Session, rotation: RotationDB, user: UserDB, now=None
     return result
 
 
-async def run_all(db: orm.Session) -> Dict[str, int]:
+async def run_all(db: orm.Session) -> dict[str, int]:
     """Cron entry point: sync and maintain every auto rotation. One failure doesn't stop the rest."""
     from rest_api.services.db.rotation_service import try_sync
 

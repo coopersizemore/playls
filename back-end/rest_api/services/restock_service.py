@@ -9,7 +9,7 @@ import logging
 import random
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 import sqlalchemy.orm as orm
@@ -18,6 +18,7 @@ from sqlalchemy import func
 
 from rest_api.clock import to_naive_utc, utcnow
 from rest_api.database.models.curated_pick import CuratedPickDB
+from rest_api.database.models.restock_block import RestockBlockDB
 from rest_api.database.models.restock_feedback import (
     ADD,
     BRING_BACK,
@@ -30,7 +31,6 @@ from rest_api.database.models.review_event import KEEP, ReviewEventDB
 from rest_api.database.models.rotation import RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, REMOVED, RotationTrackDB
 from rest_api.database.models.suggestion_cache import SuggestionCacheDB
-from rest_api.database.models.restock_block import RestockBlockDB
 from rest_api.database.models.user import UserDB
 from rest_api.models.restock import CandidateOut, DeckOut, SearchOut
 from rest_api.services import preferences as prefs
@@ -38,7 +38,8 @@ from rest_api.services import restock_logic as logic
 from rest_api.services.auth_service import SUGGESTION_SCOPES, missing_scopes
 from rest_api.services.db.rotation_service import track_out
 from rest_api.services.rotation_logic import local_day_start
-from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService as ss
+from rest_api.services.spotify.spotify_service import SpotifyAPIError
+from rest_api.services.spotify.spotify_service import SpotifyService as ss
 from rest_api.services.sync_service import write_adopting_snapshot
 
 logger = logging.getLogger(__name__)
@@ -55,11 +56,11 @@ def _today(tz_offset_minutes: int):
     return local_day_start(utcnow(), tz_offset_minutes)
 
 
-def _rotation_rows(db: orm.Session, rotation: RotationDB) -> Dict[str, RotationTrackDB]:
+def rotation_rows(db: orm.Session, rotation: RotationDB) -> dict[str, RotationTrackDB]:
     return {r.track_id: r for r in db.query(RotationTrackDB).filter(RotationTrackDB.rotation_id == rotation.id)}
 
 
-def _in_other_rotations(db: orm.Session, user: UserDB, rotation: RotationDB) -> set:
+def in_other_rotations(db: orm.Session, user: UserDB, rotation: RotationDB) -> set:
     rows = (
         db.query(RotationTrackDB.track_id)
         .join(RotationDB, RotationTrackDB.rotation_id == RotationDB.id)
@@ -72,7 +73,7 @@ def _in_other_rotations(db: orm.Session, user: UserDB, rotation: RotationDB) -> 
     return {track_id for (track_id,) in rows}
 
 
-def _skip_counts(db: orm.Session, user: UserDB) -> Counter:
+def skip_counts(db: orm.Session, user: UserDB) -> Counter:
     """Fading "Not now" count per track for this user (any source, any rotation).
 
     Each skip counts 1.0 when fresh and halves every SKIP_HALF_LIFE_DAYS, so the
@@ -97,7 +98,7 @@ def _skipped_since(db: orm.Session, user: UserDB, since) -> set:
     return {track_id for (track_id,) in rows}
 
 
-def _blocked(db: orm.Session, user: UserDB) -> set:
+def blocked_ids(db: orm.Session, user: UserDB) -> set:
     """Songs the user asked to stop suggesting (excluded from every deck)."""
     return {t for (t,) in db.query(RestockBlockDB.track_id).filter(RestockBlockDB.user_id == user.id)}
 
@@ -106,7 +107,7 @@ def _seed(user: UserDB, rotation: RotationDB, source: str, day_start) -> int:
     return logic.daily_seed(user.id, rotation.id, source, day_start.date().isoformat())
 
 
-def _candidate(meta: Dict[str, Any], source: str, **extra) -> CandidateOut:
+def _candidate(meta: dict[str, Any], source: str, **extra) -> CandidateOut:
     return CandidateOut(
         track_id=meta["track_id"],
         uri=meta["uri"],
@@ -120,7 +121,7 @@ def _candidate(meta: Dict[str, Any], source: str, **extra) -> CandidateOut:
     )
 
 
-def _row_meta(row) -> Dict[str, Any]:
+def row_meta(row) -> dict[str, Any]:
     return {
         "track_id": row.track_id, "uri": row.uri, "title": row.title, "artists": row.artists,
         "album": row.album, "image_url": row.image_url, "duration_ms": row.duration_ms,
@@ -146,32 +147,42 @@ def discovery_share(user: UserDB) -> float:
     return prefs.account(user, "discovery_percent") / 100
 
 
+def keep_counts(db: orm.Session, rows: list[RotationTrackDB]) -> Counter:
+    """{rotation_track id: plain keeps} for these rows (a past keep boosts a song's bring-back weight)."""
+    if not rows:
+        return Counter()
+    return Counter({
+        row_id: n for row_id, n in db.query(ReviewEventDB.rotation_track_id, func.count())
+        .filter(ReviewEventDB.rotation_track_id.in_([r.id for r in rows]), ReviewEventDB.action == KEEP)
+        .group_by(ReviewEventDB.rotation_track_id)
+    })
+
+
 # ---------- 1. bring back ----------
 
 def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_minutes: int = 0) -> DeckOut:
     now = utcnow()
     today = _today(tz_offset_minutes)
-    hidden = _skipped_since(db, user, today) | _blocked(db, user)
-    skips = _skip_counts(db, user)
+    hidden = _skipped_since(db, user, today) | blocked_ids(db, user)
+    skips = skip_counts(db, user)
     removed = [
         r for r in db.query(RotationTrackDB).filter(
             RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.status == REMOVED
         )
         if r.track_id not in hidden and r.is_playable
     ]
-    keeps = Counter({
-        row_id: n for row_id, n in db.query(ReviewEventDB.rotation_track_id, func.count())
-        .filter(ReviewEventDB.rotation_track_id.in_([r.id for r in removed]), ReviewEventDB.action == KEEP)
-        .group_by(ReviewEventDB.rotation_track_id)
-    }) if removed else Counter()
-
+    keeps = keep_counts(db, removed)
     weights = [
-        logic.bring_back_weight(r.removed_at, now, skips[r.track_id], keeps[r.id], recovery_days(user), skip_factor(user))
+        logic.bring_back_weight(
+            r.removed_at, now, skips[r.track_id], keeps[r.id], recovery_days(user), skip_factor(user)
+        )
         for r in removed
     ]
-    ordered = logic.weighted_order(list(zip(removed, weights)), weights, _seed(user, rotation, BRING_BACK, today))
+    ordered = logic.weighted_order(
+        list(zip(removed, weights, strict=True)), weights, _seed(user, rotation, BRING_BACK, today)
+    )
     return DeckOut(source=BRING_BACK, items=[
-        _candidate(_row_meta(r), BRING_BACK, score=round(w, 4),
+        _candidate(row_meta(r), BRING_BACK, score=round(w, 4),
                    reason=logic.bring_back_reason(r.removed_at, now, keeps[r.id]))
         for r, w in ordered[:deck_size(user)]
     ])
@@ -188,9 +199,9 @@ def active_picks_query(db: orm.Session, now):
 
 def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_minutes: int = 0) -> DeckOut:
     now = utcnow()
-    rows = _rotation_rows(db, rotation)
-    skipped_today = _skipped_since(db, user, _today(tz_offset_minutes)) | _blocked(db, user)
-    skips = _skip_counts(db, user)
+    rows = rotation_rows(db, rotation)
+    skipped_today = _skipped_since(db, user, _today(tz_offset_minutes)) | blocked_ids(db, user)
+    skips = skip_counts(db, user)
     seen, picks, already_in = set(), [], set()
     for pick in active_picks_query(db, now).order_by(CuratedPickDB.created_at.desc(), CuratedPickDB.id.desc()):
         row = rows.get(pick.track_id)
@@ -204,7 +215,7 @@ def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_mi
     # Newest first, but songs the user has passed on before sink to the back
     picks.sort(key=lambda p: skips[p.track_id])
     return DeckOut(source=PICKS, items=[
-        _candidate(_row_meta(p), PICKS, note=p.note, reason=p.note or "PlayLS pick")
+        _candidate(row_meta(p), PICKS, note=p.note, reason=p.note or "PlayLS pick")
         for p in picks[:deck_size(user)]
     ], already_in_rotation=len(already_in))
 
@@ -220,10 +231,10 @@ async def _safe(label: str, coro):
         return None
 
 
-async def _gather_signals(db: orm.Session, user: UserDB) -> Dict[str, Any]:
+async def _gather_signals(db: orm.Session, user: UserDB) -> dict[str, Any]:
     """Collect listening signals from Spotify into {track_id: {meta, features}} (about 15–20 calls)."""
     missing = missing_scopes(user, SUGGESTION_SCOPES)
-    candidates: Dict[str, Dict[str, Any]] = {}
+    candidates: dict[str, dict[str, Any]] = {}
 
     def add(item, **features):
         meta = logic.track_meta(item)
@@ -242,9 +253,9 @@ async def _gather_signals(db: orm.Session, user: UserDB) -> Dict[str, Any]:
                 f[key] = value
         return meta
 
-    top_tracks: Dict[str, List[Dict]] = {}
-    artist_rank: Dict[str, int] = {}
-    artist_names: List[str] = []
+    top_tracks: dict[str, list[dict]] = {}
+    artist_rank: dict[str, int] = {}
+    artist_names: list[str] = []
 
     if "user-top-read" not in missing:
         for window in ("short_term", "medium_term", "long_term"):
@@ -285,14 +296,16 @@ async def _gather_signals(db: orm.Session, user: UserDB) -> Dict[str, Any]:
                 add(entry.get("track"), liked_at=entry.get("added_at"))
 
     # Discoveries: search from the user's favorite artists and most-played albums
-    clean = lambda s: s.replace('"', "").strip()
+    def clean(s: str) -> str:
+        return s.replace('"', "").strip()
+
     for name in logic.dedupe(artist_names)[:SEED_ARTISTS]:
         result = await _safe(f"search:artist:{name}", ss.search(f'artist:"{clean(name)}"', user, db, "track", 10))
         for item in ((result or {}).get("tracks") or {}).get("items") or []:
             add(item, discovery="artist", seed=name)
 
     album_counts: Counter = Counter()
-    album_info: Dict[str, tuple] = {}
+    album_info: dict[str, tuple] = {}
     for window in ("short_term", "medium_term"):
         for item in top_tracks.get(window, []):
             album = item.get("album") or {}
@@ -316,7 +329,7 @@ async def _gather_signals(db: orm.Session, user: UserDB) -> Dict[str, Any]:
     return {"candidates": candidates, "missing_scopes": missing}
 
 
-async def suggestion_signals(db: orm.Session, user: UserDB, refresh: bool = False) -> Dict[str, Any]:
+async def suggestion_signals(db: orm.Session, user: UserDB, refresh: bool = False) -> dict[str, Any]:
     """Cached listening signals (refreshed every few hours, or on demand)."""
     cache = db.get(SuggestionCacheDB, user.id)
     fresh = cache and cache.created_at > utcnow() - timedelta(hours=SUGGESTION_CACHE_HOURS)
@@ -339,10 +352,10 @@ async def suggested_deck(
     payload = await suggestion_signals(db, user, refresh)
     now = utcnow()
     today = _today(tz_offset_minutes)
-    rows = _rotation_rows(db, rotation)  # in rotation, or removed from it (that's "bring back")
-    skipped_today = _skipped_since(db, user, today) | _blocked(db, user)
-    skips = _skip_counts(db, user)
-    elsewhere = _in_other_rotations(db, user, rotation)
+    rows = rotation_rows(db, rotation)  # in rotation, or removed from it (that's "bring back")
+    skipped_today = _skipped_since(db, user, today) | blocked_ids(db, user)
+    skips = skip_counts(db, user)
+    elsewhere = in_other_rotations(db, user, rotation)
 
     known, discoveries = [], []
     for track_id, entry in payload["candidates"].items():
@@ -357,7 +370,10 @@ async def suggested_deck(
         (discoveries if logic.is_discovery(entry["features"]) else known).append(item)
 
     seed = _seed(user, rotation, SUGGESTED, today)
-    order = lambda items, salt: [c for c, _ in logic.weighted_order(items, [s for _, s in items], seed + salt)]
+
+    def order(items, salt):
+        return [c for c, _ in logic.weighted_order(items, [s for _, s in items], seed + salt)]
+
     deck = logic.blend(order(known, 0), order(discoveries, 1), deck_size(user), discovery_share(user))
     return DeckOut(source=SUGGESTED, items=deck, missing_scopes=payload.get("missing_scopes", []))
 
@@ -367,7 +383,7 @@ async def suggested_deck(
 async def search(db: orm.Session, rotation: RotationDB, user: UserDB, q: str, offset: int = 0) -> SearchOut:
     result = await ss.search(q, user, db, "track", 10, offset)
     page = (result or {}).get("tracks") or {}
-    rows = _rotation_rows(db, rotation)
+    rows = rotation_rows(db, rotation)
     items = []
     for item in page.get("items") or []:
         meta = logic.track_meta(item)
@@ -381,22 +397,27 @@ async def search(db: orm.Session, rotation: RotationDB, user: UserDB, q: str, of
 
 # ---------- actions ----------
 
-async def _resolve_meta(db: orm.Session, user: UserDB, track_id: str, row: Optional[RotationTrackDB]):
+async def _spotify_track_meta(db: orm.Session, user: UserDB, track_id: str) -> dict[str, Any] | None:
+    """A track's metadata from Spotify (None if it isn't a track); an unknown id is a 404."""
+    try:
+        return logic.track_meta(await ss.get_track(track_id, user, db))
+    except SpotifyAPIError as e:
+        if e.upstream_status in (400, 404):
+            raise HTTPException(status_code=404, detail="Track not found") from e
+        raise
+
+
+async def _resolve_meta(db: orm.Session, user: UserDB, track_id: str, row: RotationTrackDB | None):
     if row is not None:
-        return _row_meta(row)
+        return row_meta(row)
     pick = db.query(CuratedPickDB).filter(CuratedPickDB.track_id == track_id).first()
     if pick is not None:
-        return _row_meta(pick)
+        return row_meta(pick)
     cache = db.get(SuggestionCacheDB, user.id)
     cached = ((cache.payload if cache else {}) or {}).get("candidates", {}).get(track_id)
     if cached:
         return cached["meta"]
-    try:
-        meta = logic.track_meta(await ss.get_track(track_id, user, db))
-    except SpotifyAPIError as e:
-        if e.upstream_status in (400, 404):
-            raise HTTPException(status_code=404, detail="Track not found")
-        raise
+    meta = await _spotify_track_meta(db, user, track_id)
     if meta is None:
         raise HTTPException(status_code=400, detail="Only Spotify tracks can be added")
     return meta
@@ -439,7 +460,7 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
 _UNDO_FIELDS = ("status", "added_at", "last_kept_at", "keep_multiplier", "removed_at", "removed_by")
 
 
-def _row_state(row: Optional[RotationTrackDB]) -> Dict[str, Any]:
+def _row_state(row: RotationTrackDB | None) -> dict[str, Any]:
     if row is None or row.id is None:
         return {"created": True}
     return {
@@ -448,7 +469,7 @@ def _row_state(row: Optional[RotationTrackDB]) -> Dict[str, Any]:
     }
 
 
-def _restore_row(row: RotationTrackDB, state: Dict[str, Any]) -> None:
+def _restore_row(row: RotationTrackDB, state: dict[str, Any]) -> None:
     for f in _UNDO_FIELDS:
         value = state.get(f)
         if f in ("added_at", "last_kept_at", "removed_at") and value is not None:
@@ -547,12 +568,7 @@ def unblock(db: orm.Session, user: UserDB, track_id: str) -> bool:
 # ---------- curation (admin) ----------
 
 async def create_pick(db: orm.Session, admin: UserDB, track_id: str, note, starts_at, ends_at) -> CuratedPickDB:
-    try:
-        meta = logic.track_meta(await ss.get_track(track_id, admin, db))
-    except SpotifyAPIError as e:
-        if e.upstream_status in (400, 404):
-            raise HTTPException(status_code=404, detail="Track not found")
-        raise
+    meta = await _spotify_track_meta(db, admin, track_id)
     if meta is None:
         raise HTTPException(status_code=400, detail="Only Spotify tracks can be picks")
     starts_at = to_naive_utc(starts_at) if starts_at else None
@@ -570,7 +586,7 @@ async def create_pick(db: orm.Session, admin: UserDB, track_id: str, note, start
     return pick
 
 
-def update_pick(db: orm.Session, pick: CuratedPickDB, changes: Dict[str, Any]) -> CuratedPickDB:
+def update_pick(db: orm.Session, pick: CuratedPickDB, changes: dict[str, Any]) -> CuratedPickDB:
     """Apply an admin's edits (note and/or active window). `changes` holds only fields sent."""
     if "note" in changes:
         pick.note = (changes["note"] or "").strip() or None

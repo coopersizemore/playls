@@ -1,5 +1,6 @@
 """Transparent encryption for sensitive columns (Spotify tokens)."""
 import os
+
 from cryptography.fernet import Fernet
 from sqlalchemy.types import Text, TypeDecorator
 

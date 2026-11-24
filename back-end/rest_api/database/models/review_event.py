@@ -1,6 +1,7 @@
 """Append-only log of review decisions (feeds History, and Phase 2 "bring back")."""
 from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
+
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 

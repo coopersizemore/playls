@@ -1,5 +1,6 @@
 """What the user did with a restock suggestion. "skip" (Not now) lowers that song's weight."""
 from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text
+
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 

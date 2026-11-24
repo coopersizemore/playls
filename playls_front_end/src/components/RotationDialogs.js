@@ -127,7 +127,7 @@ export const IntervalPicker = ({ value, onChange, label = 'Review each song ever
 
 // ---------- grace period ----------
 
-export const GracePeriodSwitch = ({ checked, onChange }) => (
+const GracePeriodSwitch = ({ checked, onChange }) => (
   <Box sx={{ mt: 1 }}>
     <FormControlLabel
       control={<Switch checked={checked} onChange={(e) => onChange(e.target.checked)} />}
@@ -143,33 +143,19 @@ export const GracePeriodSwitch = ({ checked, onChange }) => (
 
 // ---------- auto rotation settings ----------
 
-export const TARGET_SIZES = [30, 50, 100, 200];
-export const ROTATE_PERCENTS = [10, 20, 30, 50];
-export const AUTO_DEFAULTS = { target: 50, percent: 20, intervalHours: 24 * 7 };
+const TARGET_OPTIONS = [30, 50, 100, 200].map((n) => ({ value: n, label: `${n} songs` }));
+const PERCENT_OPTIONS = [10, 20, 30, 50].map((p) => ({ value: p, label: `${p}%` }));
+const AUTO_DEFAULTS = { target: 50, percent: 20, intervalHours: 24 * 7 };
 
-export const describeAuto = (target, percent, hours) => {
+const describeAuto = (target, percent, hours) => {
   const n = Math.max(1, Math.round((target * percent) / 100));
   return `Every ${formatInterval(hours)}, the ${n} oldest of ${target} songs rotate out and are replaced.`;
 };
 
-const ChoiceChips = ({ title, options, value, onChange, format }) => (
-  <Box sx={{ mt: 2 }}>
-    <Typography variant="subtitle2" gutterBottom>{title}</Typography>
-    <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-      {options.map((o) => (
-        <Chip key={o} label={format(o)} onClick={() => onChange(o)}
-          color={value === o ? 'primary' : 'default'} variant={value === o ? 'filled' : 'outlined'} />
-      ))}
-    </Stack>
-  </Box>
-);
-
-export const AutoSettings = ({ target, percent, intervalHours, onTarget, onPercent, onInterval, pickerKey }) => (
+const AutoSettings = ({ target, percent, intervalHours, onTarget, onPercent, onInterval, pickerKey }) => (
   <>
-    <ChoiceChips title="Keep the playlist at" options={TARGET_SIZES} value={target} onChange={onTarget}
-      format={(n) => `${n} songs`} />
-    <ChoiceChips title="Rotate out" options={ROTATE_PERCENTS} value={percent} onChange={onPercent}
-      format={(p) => `${p}%`} />
+    <OptionChips title="Keep the playlist at" options={TARGET_OPTIONS} value={target} onChange={onTarget} />
+    <OptionChips title="Rotate out" options={PERCENT_OPTIONS} value={percent} onChange={onPercent} />
     <IntervalPicker key={pickerKey} value={intervalHours} onChange={onInterval} label="Rotate every" />
     {intervalHours !== null && (
       <Typography variant="body2" color="text.secondary">

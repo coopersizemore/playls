@@ -1,16 +1,16 @@
 import os
-import httpx
 import secrets
+from datetime import timedelta
 from urllib.parse import urlencode
-from datetime import datetime, timedelta
-from typing import Optional
-from fastapi import HTTPException, Depends, Request, Response, status
+
+import httpx
+from fastapi import Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+
+from ..clock import utcnow
 from ..database.config import get_db
 from ..database.models.user import UserDB
-from ..models.user import User
-from ..clock import utcnow
 
 # JWT Configuration
 # No fallback: a known default key would let anyone forge tokens for any user.
@@ -96,12 +96,12 @@ def is_admin(user) -> bool:
 
 class SpotifyOAuthService:
     """Service for handling Spotify OAuth authentication"""
-    
+
     @staticmethod
     def get_auth_url() -> tuple[str, str]:
         """Generate Spotify OAuth authorization URL with state parameter"""
         state = secrets.token_urlsafe(32)
-        
+
         scopes = REQUESTED_SCOPES
         query = urlencode({
             "response_type": "code",
@@ -111,9 +111,9 @@ class SpotifyOAuthService:
             "state": state,
         })
         auth_url = f"https://accounts.spotify.com/authorize?{query}"
-        
+
         return auth_url, state
-    
+
     @staticmethod
     async def exchange_code_for_tokens(code: str) -> dict:
         """Exchange authorization code for access and refresh tokens"""
@@ -129,15 +129,15 @@ class SpotifyOAuthService:
                 },
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
-            
+
             if response.status_code != 200:
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=400,
                     detail="Failed to exchange code for tokens"
                 )
-            
+
             return response.json()
-    
+
     @staticmethod
     async def get_spotify_user_info(access_token: str) -> dict:
         """Get user information from Spotify API"""
@@ -146,15 +146,15 @@ class SpotifyOAuthService:
                 "https://api.spotify.com/v1/me",
                 headers={"Authorization": f"Bearer {access_token}"}
             )
-            
+
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=400,
                     detail="Failed to get user info from Spotify"
                 )
-            
+
             return response.json()
-    
+
     @staticmethod
     async def refresh_access_token(refresh_token: str) -> dict:
         """Refresh Spotify access token using refresh token"""
@@ -169,32 +169,32 @@ class SpotifyOAuthService:
                 },
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
-            
+
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=400,
                     detail="Failed to refresh access token"
                 )
-            
+
             return response.json()
 
 
 class AuthService:
     """Service for JWT token management and user authentication"""
-    
+
     @staticmethod
-    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
         """Create JWT access token"""
         to_encode = data.copy()
         if expires_delta:
             expire = utcnow() + expires_delta
         else:
             expire = utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        
+
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt
-    
+
     @staticmethod
     def verify_token(token: str) -> dict:
         """Verify and decode JWT token"""
@@ -207,12 +207,12 @@ class AuthService:
                     detail="Could not validate credentials",
                 )
             return payload
-        except JWTError:
+        except JWTError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Could not validate credentials",
-            )
-    
+            ) from e
+
     @staticmethod
     def get_current_user_from_token(
         request: Request,
@@ -234,11 +234,11 @@ class AuthService:
         # JWT "sub" is a string; users.id is an integer (Postgres won't compare them implicitly)
         try:
             user_id = int(payload["sub"])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Could not validate credentials",
-            )
+            ) from e
 
         user = db.query(UserDB).filter(UserDB.id == user_id).first()
         if user is None:
@@ -246,9 +246,9 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
             )
-        
+
         return user
-    
+
     @staticmethod
     async def ensure_valid_spotify_token(user: UserDB, db: Session, force_refresh: bool = False) -> str:
         """Return a valid Spotify access token, refreshing it if expired (or if force_refresh)"""
@@ -257,7 +257,7 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="No Spotify access token available"
             )
-        
+
         # Check if token is expired (with 5 minute buffer)
         expired = user.token_expires_at is not None and user.token_expires_at <= utcnow() + timedelta(minutes=5)
         if force_refresh or expired:
@@ -266,23 +266,23 @@ class AuthService:
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Access token expired and no refresh token available"
                 )
-            
+
             # Refresh the token
             token_data = await SpotifyOAuthService.refresh_access_token(user.refresh_token)
-            
+
             # Update user with new token
             user.access_token = token_data["access_token"]
             user.token_expires_at = utcnow() + timedelta(seconds=token_data["expires_in"])
-            
+
             # Update refresh token if provided
             if "refresh_token" in token_data:
                 user.refresh_token = token_data["refresh_token"]
             if token_data.get("scope"):
                 user.granted_scopes = token_data["scope"]
-            
+
             db.commit()
             db.refresh(user)
-        
+
         return user.access_token
 
 def require_admin(user: UserDB = Depends(AuthService.get_current_user_from_token)) -> UserDB:

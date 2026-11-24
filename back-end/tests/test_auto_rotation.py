@@ -3,14 +3,12 @@ import random
 from datetime import timedelta
 from types import SimpleNamespace
 
-import pytest
-
 from rest_api.clock import utcnow
 from rest_api.database.models import CuratedPickDB, ReviewEventDB, RotationDB, RotationTrackDB
 from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import preferences as prefs
-from tests.conftest import track_object
 
+from helpers import active_rows, create_auto, make_due, review, stock_signals, track_object
 
 # ---------- pure rules ----------
 
@@ -83,34 +81,6 @@ def test_cooldown():
 
 # ---------- end to end ----------
 
-def stock_signals(spotify, n, prefix="s"):
-    tracks = [track_object(f"{prefix}{i:03}", artists=((f"Artist{i}", f"ar{i}"),)) for i in range(n)]
-    for t in tracks:
-        spotify.catalog[t["id"]] = t
-    spotify.top[("tracks", "short_term")] = tracks[:50]
-    spotify.top[("tracks", "medium_term")] = tracks[50:100]
-    spotify.top[("tracks", "long_term")] = tracks[100:150]
-    return tracks
-
-
-def create_auto(client, **body):
-    r = client.post("/api/rotation/", json={"kind": "auto", "name": "Fresh", **body})
-    assert r.status_code == 201, r.text
-    return r.json()
-
-
-def active_rows(db, rid):
-    return db.query(RotationTrackDB).filter_by(rotation_id=rid, status="active").all()
-
-
-def make_due(db, rid, days=8):
-    rotation = db.get(RotationDB, rid)
-    rotation.created_at -= timedelta(days=days)
-    if rotation.last_rotated_at:
-        rotation.last_rotated_at -= timedelta(days=days)
-    db.commit()
-
-
 def test_create_auto_fills_to_target_with_defaults(client, spotify, db):
     stock_signals(spotify, 80)
     summary = create_auto(client, target_size=30)
@@ -149,7 +119,7 @@ def test_rotation_swaps_oldest_out_and_restocks(client, spotify, db):
         row.added_at = utcnow() - timedelta(days=100 - i)  # rows[0] is oldest
     db.commit()
     # Keep the oldest song during this period: it's protected
-    assert client.post(f"/api/rotation/{rid}/review", json={"track_id": rows[0].track_id, "action": "keep"}).status_code == 200
+    assert review(client, rid, rows[0].track_id, "keep").status_code == 200
     make_due(db, rid)
 
     summary = client.get(f"/api/rotation/{rid}").json()
@@ -196,13 +166,13 @@ def test_review_queue_is_whats_leaving_next_and_remove_refills(client, spotify, 
     queue = client.get(f"/api/rotation/{rid}/queue").json()
     assert queue["due_count"] == 6 and len(queue["tracks"]) == 6
     first = queue["tracks"][0]["track_id"]
-    kept = client.post(f"/api/rotation/{rid}/review", json={"track_id": first, "action": "keep"}).json()
+    kept = review(client, rid, first, "keep").json()
     assert kept["protected"] is True
     queue = client.get(f"/api/rotation/{rid}/queue").json()
     assert first not in [t["track_id"] for t in queue["tracks"]]
 
     victim = queue["tracks"][0]["track_id"]
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": victim, "action": "remove"})
+    review(client, rid, victim, "remove")
     client.post(f"/api/rotation/{rid}/flush")
     assert len(active_rows(db, rid)) == 30  # the freed slot was refilled
     assert victim not in {r.track_id for r in active_rows(db, rid)}

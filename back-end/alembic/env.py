@@ -3,8 +3,8 @@ from logging.config import fileConfig
 
 from alembic import context
 
-from rest_api.database.config import Base, engine
 import rest_api.database.models  # noqa: F401  (registers every model on Base.metadata)
+from rest_api.database.config import Base, engine
 
 config = context.config
 if config.config_file_name is not None:

@@ -12,7 +12,6 @@ import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional
 
 import httpx
 
@@ -39,11 +38,11 @@ class RequestContext:
     db_connect_ms: float = 0.0
     rate_limit_waited: float = 0.0  # seconds spent waiting out Spotify 429s
     db_connects: int = 0
-    _connect_started: Optional[float] = None
+    _connect_started: float | None = None
     # When the client was last shown (UTC, naive); None if the client didn't say
-    visible_since: Optional[datetime] = None
-    _client: Optional[httpx.AsyncClient] = None
-    _refresh_lock: Optional[asyncio.Lock] = None
+    visible_since: datetime | None = None
+    _client: httpx.AsyncClient | None = None
+    _refresh_lock: asyncio.Lock | None = None
 
     def spotify_client(self) -> httpx.AsyncClient:
         """One client per request, so Spotify calls reuse the TLS connection."""
@@ -72,14 +71,14 @@ class RequestContext:
             self._client = None
 
 
-_current: ContextVar[Optional[RequestContext]] = ContextVar("playls_request_context", default=None)
+_current: ContextVar[RequestContext | None] = ContextVar("playls_request_context", default=None)
 
 
-def current() -> Optional[RequestContext]:
+def current() -> RequestContext | None:
     return _current.get()
 
 
-def _visible_since(headers) -> Optional[datetime]:
+def _visible_since(headers) -> datetime | None:
     for name, value in headers:
         if name == VISIBLE_FOR_HEADER:
             try:

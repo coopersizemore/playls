@@ -1,6 +1,7 @@
 """User model. Rows hold Spotify tokens, so never return them from a route."""
-from sqlalchemy import CheckConstraint, Column, Integer, String, DateTime, Text
+from sqlalchemy import CheckConstraint, Column, DateTime, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 from rest_api.database.encryption import EncryptedText
@@ -29,7 +30,9 @@ class UserDB(Base):
     token_expires_at = Column(DateTime, nullable=True)  # naive UTC
     created_at = Column(DateTime, nullable=False, default=utcnow)
     # Max songs offered for review per rotation per day; NULL = no limit
-    review_limit = Column(Integer, nullable=True, default=DEFAULT_REVIEW_LIMIT, server_default=str(DEFAULT_REVIEW_LIMIT))
+    review_limit = Column(
+        Integer, nullable=True, default=DEFAULT_REVIEW_LIMIT, server_default=str(DEFAULT_REVIEW_LIMIT)
+    )
 
     # Account-wide preferences (0012). NULL = the built-in default; see services/preferences.py
     super_keep_multiplier = Column(Integer, nullable=True)

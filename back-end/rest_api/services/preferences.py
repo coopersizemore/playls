@@ -5,10 +5,10 @@ a rotation falls back to its owner's account setting, which falls back to the de
 Stored values outside the allowed choices (none should exist; the API validates) also fall
 back, so a bad row can't break reviewing. Pure: no DB or network.
 """
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 # name -> (default, allowed choices)
-ACCOUNT: Dict[str, Tuple[Any, Tuple[Any, ...]]] = {
+ACCOUNT: dict[str, tuple[Any, tuple[Any, ...]]] = {
     # Reviewing
     "super_keep_multiplier": (3, (2, 3, 5)),  # a super keep waits this many intervals
     "skip_hold_days": (1, (1, 3, 7)),  # a skipped song is held back this many days (1 = until tomorrow)
@@ -25,7 +25,7 @@ ACCOUNT: Dict[str, Tuple[Any, Tuple[Any, ...]]] = {
 ROTATION_OVERRIDES = ("super_keep_multiplier", "skip_hold_days", "review_order")
 
 # Auto rotations only (no account-wide equivalent)
-AUTO: Dict[str, Tuple[Any, Tuple[Any, ...]]] = {
+AUTO: dict[str, tuple[Any, tuple[Any, ...]]] = {
     "return_cooldown_days": (28, (14, 28, 56)),
     "pick_percent": (10, (0, 10, 25)),
     "bring_back_percent": (20, (0, 20, 40)),
@@ -34,7 +34,7 @@ AUTO: Dict[str, Tuple[Any, Tuple[Any, ...]]] = {
 NO_LIMIT = 0  # rotation.review_limit: 0 = no daily limit for this rotation
 
 
-def _valid(value: Any, choices: Optional[Tuple[Any, ...]]) -> bool:
+def _valid(value: Any, choices: tuple[Any, ...] | None) -> bool:
     if value is None:
         return False
     return choices is None or value in choices
@@ -46,7 +46,7 @@ def account(user: Any, name: str) -> Any:
     return value if _valid(value, choices) else default
 
 
-def account_settings(user: Any) -> Dict[str, Any]:
+def account_settings(user: Any) -> dict[str, Any]:
     return {name: account(user, name) for name in ACCOUNT}
 
 
@@ -64,7 +64,7 @@ def for_rotation(rotation: Any, name: str) -> Any:
     return account(rotation.owner, name)
 
 
-def review_limit(rotation: Any) -> Optional[int]:
+def review_limit(rotation: Any) -> int | None:
     """Songs offered per day for this rotation (None = no limit): its override, else the account's."""
     override = getattr(rotation, "review_limit", None)
     if override is not None:
@@ -72,7 +72,7 @@ def review_limit(rotation: Any) -> Optional[int]:
     return rotation.owner.review_limit
 
 
-def overrides(rotation: Any) -> Dict[str, Any]:
+def overrides(rotation: Any) -> dict[str, Any]:
     """The rotation's raw overrides (None = uses the account setting / default), for its edit dialog."""
     names = (*ROTATION_OVERRIDES, "review_limit", *AUTO)
     return {name: getattr(rotation, name, None) for name in names}

@@ -9,11 +9,12 @@ sync_rotation:          check the snapshot, flush, then re-read the playlist if 
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
-from typing import Awaitable, Callable, Optional
 
+from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -50,7 +51,7 @@ _held_claims: ContextVar[frozenset] = ContextVar("playls_held_sync_claims", defa
 
 # ---------- the sync claim ----------
 
-def _try_claim(db: Session, rotation_id: int) -> Optional[datetime]:
+def _try_claim(db: Session, rotation_id: int) -> datetime | None:
     now = utcnow()
     until = now + timedelta(seconds=SYNC_CLAIM_SECONDS)
     claimed = db.query(RotationDB).filter(
@@ -78,7 +79,7 @@ def _release(db: Session, rotation_id: int, until: datetime) -> None:
 
 
 @asynccontextmanager
-async def sync_claim(db: Session, rotation: RotationDB, wait_seconds: Optional[float] = None):
+async def sync_claim(db: Session, rotation: RotationDB, wait_seconds: float | None = None):
     """Hold the rotation's sync lease for the block. Yields True if held, False if another
     request kept it for longer than `wait_seconds` (default SYNC_CLAIM_WAIT_SECONDS).
 
@@ -108,17 +109,26 @@ async def sync_claim(db: Session, rotation: RotationDB, wait_seconds: Optional[f
         _release(db, rotation_id, until)
 
 
+@asynccontextmanager
+async def claim_or_409(db: Session, rotation: RotationDB):
+    """sync_claim for a user action that can't just fall back to stored data: 409 if it's busy."""
+    async with sync_claim(db, rotation) as held:
+        if not held:
+            raise HTTPException(status_code=409, detail="This playlist is being updated. Try again in a moment.")
+        yield
+
+
 # ---------- writes ----------
 
-async def _current_snapshot(db: Session, rotation: RotationDB, user: UserDB) -> Optional[str]:
+async def _current_snapshot(db: Session, rotation: RotationDB, user: UserDB) -> str | None:
     meta = await SpotifyService.get_playlist(rotation.playlist_id, user, db, fields="snapshot_id")
     return meta.get("snapshot_id")
 
 
 async def write_adopting_snapshot(
     db: Session, rotation: RotationDB, user: UserDB,
-    write: Callable[[], Awaitable[Optional[str]]], in_sync: Optional[bool] = None,
-) -> Optional[str]:
+    write: Callable[[], Awaitable[str | None]], in_sync: bool | None = None,
+) -> str | None:
     """Run a playlist write that returns Spotify's new snapshot_id.
 
     If the stored snapshot matched Spotify right before the write, the only change since is
@@ -142,7 +152,7 @@ def _mark_removed(track: RotationTrackDB, removed_by: str) -> None:
 
 
 async def flush_pending_removals(
-    db: Session, rotation: RotationDB, user: UserDB, in_sync: Optional[bool] = None
+    db: Session, rotation: RotationDB, user: UserDB, in_sync: bool | None = None
 ) -> int:
     """Remove pending tracks from the Spotify playlist. Returns how many were removed.
 
@@ -297,10 +307,9 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
 
     # Pages are read by offset from the live playlist: if it changed mid-read, a removal can
     # shift a song past the pages we'd already read. Re-check before trusting absences.
-    if snapshot_id:
-        if await _current_snapshot(db, rotation, user) != snapshot_id:
-            logger.info("Playlist %s changed during the read; applying additions only", rotation.playlist_id)
-            apply_playlist_snapshot(db, rotation, present, rotation.snapshot_id, partial=True)
-            return True
+    if snapshot_id and await _current_snapshot(db, rotation, user) != snapshot_id:
+        logger.info("Playlist %s changed during the read; applying additions only", rotation.playlist_id)
+        apply_playlist_snapshot(db, rotation, present, rotation.snapshot_id, partial=True)
+        return True
     apply_playlist_snapshot(db, rotation, present, snapshot_id)
     return True

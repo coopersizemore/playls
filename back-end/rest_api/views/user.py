@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 
 from ..database.config import get_db
 from ..database.models.user import UserDB
+from ..models.restock import BlockedSongOut
 from ..models.rotation import RotationOut
 from ..models.user import SettingsOut, SettingsUpdate
-from ..models.restock import BlockedSongOut
 from ..services import preferences as prefs
 from ..services import restock_service as restock
 from ..services.auth_service import AuthService

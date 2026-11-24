@@ -1,11 +1,11 @@
 """Database configuration and session management."""
 import os
 from pathlib import Path
-from sqlalchemy import create_engine
 
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import NullPool
-from dotenv import load_dotenv
 
 # Load back-end/.env for local runs; on Vercel env vars come from the project settings
 backend_dir = Path(__file__).parent.parent.parent

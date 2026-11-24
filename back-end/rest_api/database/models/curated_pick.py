@@ -1,5 +1,6 @@
 """PlayLS picks: songs hand-curated by an admin (ADMIN_SPOTIFY_IDS), shared by all users."""
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 

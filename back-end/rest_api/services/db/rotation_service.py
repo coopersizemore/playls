@@ -1,12 +1,12 @@
 """Rotation CRUD, the due queue, review decisions and history."""
 import logging
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import timedelta
-from typing import Iterable
 
 import sqlalchemy.orm as orm
-from sqlalchemy import case, func
 from fastapi import HTTPException
+from sqlalchemy import case, func
 
 from rest_api.clock import utcnow
 from rest_api.database.models.review_event import (
@@ -32,7 +32,8 @@ from rest_api.models.rotation import (
 from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import preferences as prefs
 from rest_api.services import rotation_logic as logic
-from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService as ss
+from rest_api.services.spotify.spotify_service import SpotifyAPIError
+from rest_api.services.spotify.spotify_service import SpotifyService as ss
 from rest_api.services.sync_service import sync_claim, sync_rotation
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,14 @@ PLAYLIST_META_FIELDS = "id,name,description,snapshot_id,collaborative,owner(id),
 
 def get_owned_rotation(db: orm.Session, rotation_id: int, owner_id: int) -> RotationDB | None:
     return db.query(RotationDB).filter(RotationDB.id == rotation_id, RotationDB.owner_id == owner_id).first()
+
+
+def get_owned_or_404(db: orm.Session, rotation_id: int, user: UserDB) -> RotationDB:
+    """The user's rotation, or 404 (not 403) for anyone else's, so ids don't leak."""
+    rotation = get_owned_rotation(db, rotation_id, user.id)
+    if not rotation:
+        raise HTTPException(status_code=404, detail="Rotation not found")
+    return rotation
 
 
 def get_user_rotations(db: orm.Session, owner_id: int) -> list[RotationDB]:
@@ -223,7 +232,9 @@ def track_out(track: RotationTrackDB, rotation: RotationDB, due_at=_UNSET) -> Tr
     )
 
 
-def _tracks_out(tracks: list[RotationTrackDB], rotation: RotationDB, active: list[RotationTrackDB], now) -> list[TrackOut]:
+def _tracks_out(
+    tracks: list[RotationTrackDB], rotation: RotationDB, active: list[RotationTrackDB], now
+) -> list[TrackOut]:
     dates = due_dates(rotation, active, now)
     return [track_out(t, rotation, dates.get(t.id)) for t in tracks]
 
@@ -295,7 +306,7 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
             playlist = await ss.get_playlist(data.playlist_id, owner, db, fields=PLAYLIST_META_FIELDS)
         except SpotifyAPIError as e:
             if e.upstream_status in (403, 404):
-                raise HTTPException(status_code=404, detail="Playlist not found")
+                raise HTTPException(status_code=404, detail="Playlist not found") from e
             raise
         owns = (playlist.get("owner") or {}).get("id") == owner.spotify_id
         if not owns and not playlist.get("collaborative"):
@@ -330,6 +341,10 @@ async def create_rotation(db: orm.Session, data: RotationCreate, owner: UserDB) 
     return rotation, sync_ok
 
 
+# Rotation fields an update may set but never clear (null in the body means "leave as is")
+_NOT_NULLABLE = ("name", "interval_hours", "grace_period", "target_size", "rotate_percent")
+
+
 def update_rotation(db: orm.Session, rotation: RotationDB, data: RotationUpdate) -> RotationDB:
     changes = data.model_dump(exclude_unset=True)
     if rotation.kind != AUTO and any(changes.get(k) is not None for k in ("target_size", "rotate_percent")):
@@ -337,8 +352,8 @@ def update_rotation(db: orm.Session, rotation: RotationDB, data: RotationUpdate)
     if rotation.kind != AUTO and any(changes.get(k) is not None for k in prefs.AUTO):
         raise HTTPException(status_code=400, detail="Only auto rotations have restock settings")
     for key, value in changes.items():
-        if key in ("name", "interval_hours", "grace_period", "target_size", "rotate_percent") and value is None:
-            continue  # not nullable
+        if key in _NOT_NULLABLE and value is None:
+            continue
         setattr(rotation, key, value)
     db.commit()
     db.refresh(rotation)
@@ -468,7 +483,7 @@ def all_tracks(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:
     rows = tracks + pending
     stats = _review_stats(db, rotation)
     out = _tracks_out(rows, rotation, tracks, now)
-    for row, track in zip(rows, out):
+    for row, track in zip(rows, out, strict=True):
         track.times_kept, track.last_reviewed_at = stats.get(row.id, (0, None))
     return out
 

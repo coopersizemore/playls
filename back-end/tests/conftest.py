@@ -4,6 +4,7 @@ Env vars are set before the app is imported. The app's Postgres engine is lazy,
 so nothing here connects to Supabase.
 """
 import os
+
 from cryptography.fernet import Fernet
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
@@ -25,6 +26,8 @@ from rest_api.database.config import Base, get_db  # noqa: E402
 from rest_api.database.models import UserDB  # noqa: E402
 from rest_api.services.auth_service import AuthService  # noqa: E402
 from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService  # noqa: E402
+
+from helpers import track_object  # noqa: E402
 
 
 @pytest.fixture
@@ -60,37 +63,6 @@ def user(db):
     db.add(u)
     db.commit()
     return u
-
-
-def spotify_item(track_id, added_days_ago=None, name=None, local=False, kind="track"):
-    """A playlist item entry in the post-Feb-2026 shape."""
-    added = None
-    if added_days_ago is not None:
-        added = (utcnow() - timedelta(days=added_days_ago)).isoformat() + "Z"
-    return {
-        "added_at": added,
-        "is_local": local,
-        "item": {
-            "id": None if local else track_id,
-            "uri": f"spotify:{kind}:{track_id}",
-            "type": kind,
-            "name": name or f"Song {track_id}",
-            "duration_ms": 200000,
-            "artists": [{"name": "Artist A"}, {"name": "Artist B"}],
-            "album": {"name": "Album", "images": [{"url": "big", "width": 640}, {"url": "small", "width": 300}]},
-        },
-    }
-
-
-def track_object(track_id, name=None, artists=(("Artist A", "art_a"),), album=("Album", "alb_1")):
-    """A full Spotify track object."""
-    return {
-        "id": track_id, "uri": f"spotify:track:{track_id}", "type": "track", "name": name or f"Song {track_id}",
-        "duration_ms": 200000, "artists": [{"name": n, "id": i} for n, i in artists],
-        "album": {"name": album[0], "id": album[1], "album_type": "album",
-                  "artists": [{"name": artists[0][0], "id": artists[0][1]}],
-                  "images": [{"url": "img", "width": 300}]},
-    }
 
 
 class FakeSpotify:
@@ -174,15 +146,16 @@ class FakeSpotify:
     async def search(self, query, user, db, search_type="track", limit=10, offset=0):
         self.calls.append(("search", query, offset))
         items = self.search_results.get(query, [])
-        return {"tracks": {"items": items[offset:offset + limit], "next": "more" if offset + limit < len(items) else None}}
+        more = offset + limit < len(items)
+        return {"tracks": {"items": items[offset:offset + limit], "next": "more" if more else None}}
 
     async def add_items_to_playlist(self, playlist_id, uris, user, db, position=None):
         self.calls.append(("add", playlist_id, tuple(uris)))
         p = self._get(playlist_id)
         for uri in uris:
             track_id = uri.split(":")[-1]
-            p["items"].append({"added_at": utcnow().isoformat() + "Z", "is_local": False, "item": self.catalog.get(track_id) or
-                               track_object(track_id)})
+            item = self.catalog.get(track_id) or track_object(track_id)
+            p["items"].append({"added_at": utcnow().isoformat() + "Z", "is_local": False, "item": item})
         p["version"] += 1
         return f"{playlist_id}-v{p['version']}"
 

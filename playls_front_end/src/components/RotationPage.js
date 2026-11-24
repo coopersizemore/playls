@@ -36,9 +36,10 @@ import {
   ViewList,
 } from '@mui/icons-material';
 import { api, errorMessage } from '../api';
+import { readStored, writeStored } from '../storage';
 import { GREEN, ON_GREEN } from '../theme';
 import { HistoryList } from './History';
-import { Layout, PlaylistCover, formatDuration, relativeDays } from './Layout';
+import { Layout, PlaylistCover, formatDuration, parseUtc, relativeDays } from './Layout';
 import {
   DeleteRotationDialog,
   EditRotationDialog,
@@ -91,7 +92,7 @@ const DueLabel = ({ track, auto }) => {
     );
   }
   if (!track.due_at) return null;
-  const due = new Date(`${track.due_at}Z`) <= new Date();
+  const due = parseUtc(track.due_at) <= new Date();
   return (
     <Typography variant="caption" sx={{ fontWeight: due ? 700 : 400, whiteSpace: 'nowrap', ml: 1 }}>
       {due ? 'Due' : relativeDays(track.due_at)}
@@ -131,10 +132,10 @@ const sortSongs = (tracks, by, dir) => {
 
 const loadSort = () => {
   try {
-    const saved = JSON.parse(localStorage.getItem(SORT_KEY));
+    const saved = JSON.parse(readStored(SORT_KEY));
     if (saved && SORTS[saved.by] && ['asc', 'desc'].includes(saved.dir)) return saved;
   } catch (e) {
-    // blocked storage or bad JSON: use the default
+    // bad JSON: use the default
   }
   return { by: 'due', dir: 'asc' };
 };
@@ -212,7 +213,7 @@ const RotationPage = () => {
 
   const changeSort = (next) => {
     setSort(next);
-    try { localStorage.setItem(SORT_KEY, JSON.stringify(next)); } catch (e) { /* not remembered */ }
+    writeStored(SORT_KEY, JSON.stringify(next));
   };
 
   const closeDialog = (changed) => { setDialog(null); if (changed) load(); };

@@ -5,6 +5,7 @@ but stay in rotation History. Manual Search and History's "Add back" still work.
 Deleting the row ("Resume suggesting" in Settings) undoes it.
 """
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 

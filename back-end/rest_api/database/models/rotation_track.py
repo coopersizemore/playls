@@ -1,6 +1,18 @@
 """One row per (rotation, track). Spotify is the source of truth; sync keeps these in line."""
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
+
 from rest_api.database.config import Base
 
 ACTIVE = "active"

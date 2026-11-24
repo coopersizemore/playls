@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from rest_api.services.auto_rotation_logic import (
     DEFAULT_INTERVAL_HOURS as AUTO_DEFAULT_INTERVAL_HOURS,
+)
+from rest_api.services.auto_rotation_logic import (
     DEFAULT_ROTATE_PERCENT,
     DEFAULT_TARGET_SIZE,
 )

@@ -1,6 +1,7 @@
 """A rotation wraps one playlist the user owns or collaborates on."""
 from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
+
 from rest_api.clock import utcnow
 from rest_api.database.config import Base
 

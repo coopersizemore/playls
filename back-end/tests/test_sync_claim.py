@@ -7,15 +7,23 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from conftest import spotify_item, track_object
 from rest_api.clock import utcnow
 from rest_api.database.models import RotationDB, RotationTrackDB
 from rest_api.services import sync_service
 from rest_api.services.auth_service import AuthService
 from rest_api.services.spotify import spotify_service
 from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService
-from test_auto_rotation import create_auto, stock_signals
-from test_rotation_flow import make_rotation
+
+from helpers import (
+    count_calls,
+    create_auto,
+    make_rotation,
+    restock_action,
+    review,
+    spotify_item,
+    stock_signals,
+    track_object,
+)
 
 
 @pytest.fixture
@@ -27,10 +35,6 @@ def claim_elsewhere(db, rid, seconds=60):
     rotation = db.get(RotationDB, rid)
     rotation.sync_claimed_until = utcnow() + timedelta(seconds=seconds)
     db.commit()
-
-
-def spotify_calls(spotify, kind):
-    return sum(1 for c in spotify.calls if c[0] == kind)
 
 
 # ---------- the sync claim ----------
@@ -81,30 +85,30 @@ def test_waits_for_a_claim_that_ends(client, spotify, db, monkeypatch):
 
 def test_flush_held_elsewhere_leaves_removals_pending(client, spotify, db, no_wait):
     rid = make_rotation(client, spotify, [spotify_item(t, 60) for t in ("a", "b")], grace=False)["id"]
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "remove"})
+    review(client, rid, "a", "remove")
     claim_elsewhere(db, rid)
     assert client.post(f"/api/rotation/{rid}/flush").json() == {"removed": 0, "pending": 1}
-    assert spotify_calls(spotify, "remove") == 0
+    assert count_calls(spotify, "remove") == 0
 
     claim_elsewhere(db, rid, seconds=-1)  # that request finished (or died)
     client.get(f"/api/rotation/{rid}")
-    assert spotify_calls(spotify, "remove") == 1
+    assert count_calls(spotify, "remove") == 1
 
 
 def test_restock_add_held_elsewhere_is_a_409(client, spotify, db, no_wait):
     rid = make_rotation(client, spotify, [spotify_item("a", 5)])["id"]
     spotify.catalog["n1"] = track_object("n1")
     claim_elsewhere(db, rid)
-    r = client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "n1", "source": "search"})
+    r = restock_action(client, rid, "add", "n1", "search")
     assert r.status_code == 409
-    assert spotify_calls(spotify, "add") == 0
+    assert count_calls(spotify, "add") == 0
 
 
 def test_auto_flush_refills_under_the_same_claim(client, spotify, db):
     stock_signals(spotify, 120)
     rid = create_auto(client, target_size=30)["id"]
     some = db.query(RotationTrackDB).filter_by(rotation_id=rid, status="active").first().track_id
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": some, "action": "remove"})
+    review(client, rid, some, "remove")
     assert client.post(f"/api/rotation/{rid}/flush").json()["removed"] == 1
     assert db.query(RotationTrackDB).filter_by(rotation_id=rid, status="active").count() == 30
 
@@ -113,52 +117,52 @@ def test_auto_flush_refills_under_the_same_claim(client, spotify, db):
 
 def test_flush_onto_unchanged_playlist_skips_the_next_reread(client, spotify):
     rid = make_rotation(client, spotify, [spotify_item(t, 60) for t in ("a", "b", "c")], grace=False)["id"]
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "remove"})
+    review(client, rid, "a", "remove")
     client.post(f"/api/rotation/{rid}/flush")
-    reads = spotify_calls(spotify, "get_items")
+    reads = count_calls(spotify, "get_items")
     r = client.get(f"/api/rotation/{rid}").json()
-    assert spotify_calls(spotify, "get_items") == reads
+    assert count_calls(spotify, "get_items") == reads
     assert r["active_count"] == 2
 
 
 def test_flush_after_an_outside_change_still_rereads(client, spotify):
     rid = make_rotation(client, spotify, [spotify_item(t, 60) for t in ("a", "b", "c")], grace=False)["id"]
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "remove"})
+    review(client, rid, "a", "remove")
     # Changed in Spotify since the last sync: the flush mustn't claim the new snapshot as ours
     spotify.playlists["p1"]["items"].append(spotify_item("d", 0))
     spotify.touch("p1")
     client.post(f"/api/rotation/{rid}/flush")
-    reads = spotify_calls(spotify, "get_items")
+    reads = count_calls(spotify, "get_items")
     r = client.get(f"/api/rotation/{rid}").json()
-    assert spotify_calls(spotify, "get_items") == reads + 1
+    assert count_calls(spotify, "get_items") == reads + 1
     assert r["active_count"] == 3  # b, c, d
 
 
 def test_sync_flush_onto_unchanged_playlist_skips_the_reread(client, spotify):
     rid = make_rotation(client, spotify, [spotify_item(t, 60) for t in ("a", "b")], grace=False)["id"]
-    client.post(f"/api/rotation/{rid}/review", json={"track_id": "a", "action": "remove"})
-    reads = spotify_calls(spotify, "get_items")
+    review(client, rid, "a", "remove")
+    reads = count_calls(spotify, "get_items")
     client.get(f"/api/rotation/{rid}")  # flushes as part of the sync
     client.get(f"/api/rotation/{rid}")
-    assert spotify_calls(spotify, "remove") == 1
-    assert spotify_calls(spotify, "get_items") == reads
+    assert count_calls(spotify, "remove") == 1
+    assert count_calls(spotify, "get_items") == reads
 
 
 def test_restock_add_skips_the_next_reread(client, spotify):
     rid = make_rotation(client, spotify, [spotify_item("a", 5)])["id"]
     spotify.catalog["n1"] = track_object("n1")
-    assert client.post(f"/api/rotation/{rid}/restock/add", json={"track_id": "n1", "source": "search"}).status_code == 201
-    reads = spotify_calls(spotify, "get_items")
+    assert restock_action(client, rid, "add", "n1", "search").status_code == 201
+    reads = count_calls(spotify, "get_items")
     assert client.get(f"/api/rotation/{rid}").json()["active_count"] == 2
-    assert spotify_calls(spotify, "get_items") == reads
+    assert count_calls(spotify, "get_items") == reads
 
 
 def test_auto_fill_skips_the_next_reread(client, spotify):
     stock_signals(spotify, 120)
     rid = create_auto(client, target_size=30)["id"]
-    reads = spotify_calls(spotify, "get_items")
+    reads = count_calls(spotify, "get_items")
     assert client.get(f"/api/rotation/{rid}").json()["active_count"] == 30
-    assert spotify_calls(spotify, "get_items") == reads
+    assert count_calls(spotify, "get_items") == reads
 
 
 # ---------- 429s ----------

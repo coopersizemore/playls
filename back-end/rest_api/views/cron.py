@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database.config import get_db
+from ..services import telemetry
 from ..services.auto_restock_service import run_all
 
 logger = logging.getLogger(__name__)
@@ -32,5 +33,6 @@ async def auto_restock(authorization: str | None = Header(None), db: Session = D
     """Rotate out and restock every auto rotation that's due (daily)."""
     _check_secret(authorization)
     stats = await run_all(db)
+    stats["analytics_purged"] = telemetry.purge(db)  # 6-month retention
     logger.info("Cron auto-restock: %s", stats)
     return stats

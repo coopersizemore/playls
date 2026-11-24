@@ -28,8 +28,8 @@ from rest_api.database.models.rotation_track import (
 )
 from rest_api.database.models.user import UserDB
 from rest_api.services import auto_rotation_logic as auto
+from rest_api.services import health, restock_logic
 from rest_api.services import preferences as prefs
-from rest_api.services import restock_logic
 from rest_api.services import restock_service as rsv
 from rest_api.services.spotify.spotify_service import SpotifyService as ss
 from rest_api.services.sync_service import write_adopting_snapshot
@@ -230,6 +230,7 @@ async def maintain(db: orm.Session, rotation: RotationDB, user: UserDB, now=None
             db.refresh(rotation)
             raise
         result.rotated_out = len(leaving)
+        health.count("auto.rotated_out", len(leaving))
         leaving_ids = {t.id for t in leaving}
         active = [t for t in active if t.id not in leaving_ids]
 
@@ -239,6 +240,8 @@ async def maintain(db: orm.Session, rotation: RotationDB, user: UserDB, now=None
         await _add(db, rotation, user, chosen, now)
         result.added = len(chosen)
         result.short_by = slots - len(chosen)
+        health.count("auto.added", len(chosen))
+        health.count("auto.short", result.short_by)
         result.sources = dict(Counter(c["source"] for c in chosen))
     if result.rotated_out or result.added:
         logger.info(
@@ -259,9 +262,11 @@ async def run_all(db: orm.Session) -> dict[str, int]:
         if rotation is None:
             continue
         stats["rotations"] += 1
+        health.count("cron.rotations")
         # try_sync also runs maintain
         if await try_sync(db, rotation, rotation.owner):
             stats["ok"] += 1
         else:
             stats["failed"] += 1
+            health.count("cron.failed")
     return dict(stats)

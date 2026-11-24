@@ -335,7 +335,8 @@ def test_day_boundary_follows_client_timezone(client, spotify, db):
 
 def test_settings_roundtrip_and_validation(client):
     defaults = {
-        "review_limit": 50, "super_keep_multiplier": 3, "skip_hold_days": 1, "review_order": "overdue",
+        "review_limit": 50, "analytics_consent": None,
+        "super_keep_multiplier": 3, "skip_hold_days": 1, "review_order": "overdue",
         "default_interval_hours": 720, "deck_size": 30, "discovery_percent": 33, "not_now_percent": 50,
         "bring_back_recovery_days": 90,
     }

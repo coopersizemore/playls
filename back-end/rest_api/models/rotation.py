@@ -1,6 +1,6 @@
 """API schemas for rotations, their tracks, reviews and history."""
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -152,6 +152,8 @@ class ReviewIn(BaseModel):
 
     track_id: str = Field(..., min_length=1, max_length=64)
     action: Literal["keep", "super_keep", "skip", "remove", "undo"]
+    # Optional client timing for usage analytics; parsed leniently (bad values are dropped)
+    telemetry: Any = None
 
 
 class UnplayableOut(BaseModel):

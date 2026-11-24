@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 import { API_BASE } from '../api';
+import { setTelemetryEnabled } from '../telemetry';
 
 const AuthContext = createContext();
 
@@ -17,6 +18,12 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Analytics only for users who opted in
+  useEffect(() => { setTelemetryEnabled(user?.analytics_consent === true); }, [user]);
+
+  // Merge fields into the signed-in user (e.g. after changing the analytics consent)
+  const updateUser = (fields) => setUser((u) => (u ? { ...u, ...fields } : u));
 
   useEffect(() => {
     // Tokens used to be kept in localStorage; drop any left over from old sessions
@@ -55,7 +62,8 @@ export const AuthProvider = ({ children }) => {
     user,
     login,
     logout,
-    loading
+    loading,
+    updateUser,
   };
 
   return (

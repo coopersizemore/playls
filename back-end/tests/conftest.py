@@ -24,10 +24,36 @@ from rest_api.app import app  # noqa: E402
 from rest_api.clock import utcnow  # noqa: E402
 from rest_api.database.config import Base, get_db  # noqa: E402
 from rest_api.database.models import UserDB  # noqa: E402
+from rest_api.services import health  # noqa: E402
 from rest_api.services.auth_service import AuthService  # noqa: E402
 from rest_api.services.spotify.spotify_service import SpotifyAPIError, SpotifyService  # noqa: E402
 
 from helpers import track_object  # noqa: E402
+
+
+def _no_health_db():
+    raise RuntimeError("health recording is off in tests (see the health_db fixture)")
+
+
+@pytest.fixture(autouse=True)
+def _health_writes_off(monkeypatch):
+    """The request middleware records app health with its own session; never reach a real DB."""
+    monkeypatch.setattr(health, "session_factory", _no_health_db)
+
+
+@pytest.fixture
+def admin(monkeypatch):
+    """Make the test user ("me") an admin (ADMIN_SPOTIFY_IDS)."""
+    from rest_api.services import auth_service
+    monkeypatch.setattr(auth_service, "ADMIN_SPOTIFY_IDS", {"me"})
+
+
+@pytest.fixture
+def health_db(db, monkeypatch):
+    """Record app health into the test database, keeping every request (no sampling)."""
+    monkeypatch.setattr(health, "session_factory", sessionmaker(bind=db.get_bind()))
+    monkeypatch.setattr(health, "SAMPLE_RATE", 1.0)
+    return db
 
 
 @pytest.fixture

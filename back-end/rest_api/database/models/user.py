@@ -1,5 +1,5 @@
 """User model. Rows hold Spotify tokens, so never return them from a route."""
-from sqlalchemy import CheckConstraint, Column, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from rest_api.clock import utcnow
@@ -43,6 +43,10 @@ class UserDB(Base):
     discovery_percent = Column(Integer, nullable=True)
     not_now_percent = Column(Integer, nullable=True)
     bring_back_recovery_days = Column(Integer, nullable=True)
+
+    # Usage analytics opt-in (0013): NULL = not asked yet, then True / False (changeable in Settings)
+    analytics_consent = Column(Boolean, nullable=True)
+    analytics_consent_at = Column(DateTime, nullable=True)
 
     # Space-separated OAuth scopes granted at the last login (to detect missing ones)
     granted_scopes = Column(Text, nullable=True)

@@ -41,6 +41,8 @@ class RequestContext:
     _connect_started: float | None = None
     # When the client was last shown (UTC, naive); None if the client didn't say
     visible_since: datetime | None = None
+    # Health counters for this request (services/health.py), e.g. {"sync.full_read": 1}
+    counters: dict = field(default_factory=dict)
     _client: httpx.AsyncClient | None = None
     _refresh_lock: asyncio.Lock | None = None
 
@@ -105,9 +107,12 @@ class RequestContextMiddleware:
 
         ctx = RequestContext(visible_since=_visible_since(scope.get("headers") or []))
         token = _current.set(ctx)
+        status = 500  # if the app fails before responding
 
         async def send_with_timing(message):
+            nonlocal status
             if message["type"] == "http.response.start":
+                status = message.get("status", 500)
                 timing = ctx.server_timing()
                 message = {**message, "headers": [*message.get("headers", []), (b"server-timing", timing.encode())]}
                 total = (time.perf_counter() - ctx.started) * 1000
@@ -119,6 +124,10 @@ class RequestContextMiddleware:
             await self.app(scope, receive, send_with_timing)
         finally:
             await ctx.close()
+            duration_ms = (time.perf_counter() - ctx.started) * 1000
+            # App health row (best effort, off the event loop); imported here to avoid an import cycle
+            from rest_api.services import health
+            await asyncio.to_thread(health.record_request, ctx, scope, status, duration_ms)
             _current.reset(token)
 
 

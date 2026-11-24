@@ -70,7 +70,7 @@ Both were found by reading the code; neither was observed in practice. Details a
 - **The playlist changing during a full read** (an offset shift hides a song, which is then wrongly marked removed): fixed by re-checking the snapshot after the read and applying additions only if it changed.
 
 ## Next
-- Stats derived from review history.
+- (Built 2026-11-24: an admin monitoring dashboard with opt-in usage analytics and app health; see [MONITORING_PLAN.md](MONITORING_PLAN.md). Migration `0013`, applied.)
 - A recommendation system that doesn't depend on the Spotify API ("For you" is the current stand-in).
 - Saving recently-played snapshots to build a longer listening history.
 

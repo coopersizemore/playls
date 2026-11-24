@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..database.config import get_db
+from ..database.models.analytics_event import RESTOCK
 from ..database.models.user import UserDB
 from ..models.restock import BlockedSongOut, DeckOut, DeckSource, RestockActionIn, SearchOut
 from ..models.rotation import TrackOut
 from ..services import restock_service as restock
+from ..services import telemetry
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
 from ..services.sync_service import claim_or_409
@@ -18,6 +20,10 @@ router = APIRouter(
 )
 
 current_user_dep = Depends(AuthService.get_current_user_from_token)
+
+
+def _record(db: Session, user: UserDB, rotation, action: str, data: RestockActionIn) -> None:
+    telemetry.record_decision(db, user, rotation, RESTOCK, action, data.telemetry, source=data.source)
 TZ = Query(0, ge=-840, le=840, description="JS Date.getTimezoneOffset() of the client")
 
 
@@ -56,7 +62,9 @@ async def add(rotation_id: int, data: RestockActionIn, db: Session = Depends(get
     """Add a song to the rotation's Spotify playlist now."""
     rotation = rs.get_owned_or_404(db, rotation_id, user)
     async with claim_or_409(db, rotation):
-        return await restock.add_to_rotation(db, rotation, user, data.track_id, data.source)
+        result = await restock.add_to_rotation(db, rotation, user, data.track_id, data.source)
+    _record(db, user, rotation, "add", data)
+    return result
 
 
 @router.post("/undo")
@@ -65,13 +73,17 @@ async def undo(rotation_id: int, data: RestockActionIn, db: Session = Depends(ge
     Returns {"undone": "add" | "skip"}."""
     rotation = rs.get_owned_or_404(db, rotation_id, user)
     async with claim_or_409(db, rotation):
-        return {"undone": await restock.undo_last(db, rotation, user, data.track_id)}
+        undone = await restock.undo_last(db, rotation, user, data.track_id)
+    _record(db, user, rotation, "undo", data)
+    return {"undone": undone}
 
 
 @router.post("/skip", status_code=204)
 async def skip(rotation_id: int, data: RestockActionIn, db: Session = Depends(get_db), user: UserDB = current_user_dep):
     """"Not now": hidden for the rest of today, and weighted lower from then on."""
-    restock.record_skip(db, rs.get_owned_or_404(db, rotation_id, user), user, data.track_id, data.source)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
+    restock.record_skip(db, rotation, user, data.track_id, data.source)
+    _record(db, user, rotation, "not_now", data)
 
 
 @router.post("/block", response_model=BlockedSongOut, status_code=201)
@@ -80,4 +92,7 @@ async def block(
 ):
     """"Stop suggesting": the song never appears in a restock deck again (it stays in History).
     Undo with DELETE /api/user/me/blocked-songs/{track_id}."""
-    return await restock.block_suggestions(db, rs.get_owned_or_404(db, rotation_id, user), user, data.track_id)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
+    result = await restock.block_suggestions(db, rotation, user, data.track_id)
+    _record(db, user, rotation, "block", data)
+    return result

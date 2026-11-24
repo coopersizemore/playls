@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..clock import utcnow
@@ -6,10 +8,12 @@ from ..database.config import get_db
 from ..database.models.curated_pick import CuratedPickDB
 from ..database.models.user import UserDB
 from ..models.restock import PickIn, PickOut, PickUpdate
+from ..services import analytics_service as analytics
 from ..services import restock_service as restock
 from ..services.auth_service import require_admin
 
-# Curating PlayLS picks. Only accounts listed in ADMIN_SPOTIFY_IDS; everyone else gets 404.
+# Admin tools: curating PlayLS picks and the monitoring dashboard. Only accounts listed in
+# ADMIN_SPOTIFY_IDS; everyone else gets 404.
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
@@ -52,3 +56,16 @@ async def delete_pick(pick_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Pick not found")
     db.delete(pick)
     db.commit()
+
+
+@router.get("/stats")
+async def usage_stats(
+    days: int = Query(30, description="How many days back: 7, 30, 90 or 180"),
+    kind: Literal["all", "manual", "auto"] = Query("all", description="Usage from which kind of rotation"),
+    db: Session = Depends(get_db),
+    admin: UserDB = Depends(require_admin),
+):
+    """Monitoring dashboard: usage (opted-in users, aggregated) and app health. Aggregates only."""
+    if days not in analytics.RANGES:
+        raise HTTPException(status_code=422, detail="days must be 7, 30, 90 or 180")
+    return analytics.load_stats(db, admin, days, kind)

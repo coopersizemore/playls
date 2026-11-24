@@ -30,6 +30,7 @@ from rest_api.models.rotation import (
     TrackOut,
 )
 from rest_api.services import auto_rotation_logic as auto
+from rest_api.services import health
 from rest_api.services import preferences as prefs
 from rest_api.services import rotation_logic as logic
 from rest_api.services.spotify.spotify_service import SpotifyAPIError
@@ -257,6 +258,7 @@ async def try_sync(db: orm.Session, rotation: RotationDB, user: UserDB, force: b
             # Spotify errors and timeouts
             db.rollback()
             logger.warning("Sync failed for rotation %s", rotation.id, exc_info=True)
+            health.count("sync.failed")
             return False
         if rotation.kind == AUTO:
             await try_maintain(db, rotation, user)
@@ -276,6 +278,7 @@ async def try_maintain(db: orm.Session, rotation: RotationDB, user: UserDB) -> b
         except Exception:
             db.rollback()
             logger.warning("Auto restock failed for rotation %s", rotation.id, exc_info=True)
+            health.count("auto.failed")
             return False
 
 
@@ -488,11 +491,15 @@ def all_tracks(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:
     return out
 
 
-def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: str) -> TrackOut:
-    """Record one swipe. DB only; removals reach Spotify on flush."""
-    track = db.query(RotationTrackDB).filter(
+def find_track(db: orm.Session, rotation: RotationDB, track_id: str) -> RotationTrackDB | None:
+    return db.query(RotationTrackDB).filter(
         RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.track_id == track_id
     ).first()
+
+
+def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: str) -> TrackOut:
+    """Record one swipe. DB only; removals reach Spotify on flush."""
+    track = find_track(db, rotation, track_id)
     if track is None:
         raise HTTPException(status_code=404, detail="Track not found in this rotation")
 

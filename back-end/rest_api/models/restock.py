@@ -1,6 +1,6 @@
 """API schemas for restocking (bring back, PlayLS picks, suggestions, search) and pick curation."""
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,6 +42,8 @@ class RestockActionIn(BaseModel):
 
     track_id: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9]+$")
     source: Source
+    # Optional client timing for usage analytics; parsed leniently (bad values are dropped)
+    telemetry: Any = None
 
 
 class BlockedSongOut(BaseModel):

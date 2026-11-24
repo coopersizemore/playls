@@ -20,6 +20,7 @@ import { Layout, PlaylistCover, relativeDays, Wordmark } from './Layout';
 import { CreateRotationDialog, formatInterval } from './RotationDialogs';
 import { RotationCardsSkeleton } from './Skeletons';
 import { HelpDialog, hasSeenHelp, RotationVisual } from './Help';
+import { USAGE_DATA_TEXT } from './SettingsControls';
 
 const Landing = ({ login }) => (
   <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -106,8 +107,34 @@ const RotationCard = ({ rotation, syncing }) => {
   );
 };
 
+// Asked once (until answered); changeable in Settings → Privacy
+const UsageDataPrompt = ({ onAnswer }) => {
+  const [saving, setSaving] = useState(false);
+  const answer = async (consent) => {
+    setSaving(true);
+    try {
+      const { analytics_consent: saved } = await api.updateSettings({ analytics_consent: consent });
+      onAnswer({ analytics_consent: saved });
+    } catch (e) {
+      setSaving(false); // leave the prompt up; it can be answered later
+    }
+  };
+  return (
+    <Alert severity="info" sx={{ mb: 3 }}
+      action={(
+        <Box display="flex" flexDirection="column" gap={1}>
+          <Button size="small" variant="contained" onClick={() => answer(true)} disabled={saving}>Allow</Button>
+          <Button size="small" color="inherit" onClick={() => answer(false)} disabled={saving}>No thanks</Button>
+        </Box>
+      )}>
+      <Typography variant="subtitle2" gutterBottom>Help improve PlayLS?</Typography>
+      <Typography variant="body2">{USAGE_DATA_TEXT} You can change this anytime in Settings.</Typography>
+    </Alert>
+  );
+};
+
 const Home = () => {
-  const { user, login } = useAuth();
+  const { user, login, updateUser } = useAuth();
   const [rotations, setRotations] = useState(null);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
@@ -171,6 +198,7 @@ const Home = () => {
         </Typography>
       )}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {user.analytics_consent == null && <UsageDataPrompt onAnswer={updateUser} />}
 
       {rotations === null ? (
         <RotationCardsSkeleton />

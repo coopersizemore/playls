@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Alert,
@@ -32,6 +32,7 @@ import {
   Undo,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { startSession } from '../telemetry';
 import { api, errorMessage } from '../api';
 import { AlbumArt, Layout, RotationHeader, SpotifyEmbed } from './Layout';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
@@ -64,6 +65,15 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   const [error, setError] = useState('');
   const [toast, setToast] = useState(null); // { track, action, index } after an add or block, with Undo
   const [exit, setExit] = useState(null); // card animation: right = add, left = not now / block
+  const session = useRef(null); // usage telemetry for this deck visit (only sent with consent)
+  const furthest = useRef(0);
+
+  useEffect(() => {
+    session.current = startSession('restock', rotationId, source);
+    const left = () => session.current?.end('left');
+    window.addEventListener('pagehide', left);
+    return () => { window.removeEventListener('pagehide', left); left(); };
+  }, [rotationId, source]);
 
   const load = useCallback(async (refresh = false) => {
     setDeck(null);
@@ -72,6 +82,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
       setDeck(await api.restockDeck(rotationId, source, { refresh }));
       setIndex(0);
       setDecisions({});
+      furthest.current = 0;
     } catch (e) {
       setError(errorMessage(e, 'Failed to load suggestions.'));
       setDeck({ items: [], missing_scopes: [] });
@@ -84,6 +95,16 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   const current = items[index];
   const decided = current ? decisions[current.track_id] : null;
   const added = Object.values(decisions).filter((a) => a === 'add').length;
+  const cardKey = current?.track_id;
+
+  useEffect(() => {
+    if (cardKey) {
+      furthest.current = Math.max(furthest.current, index);
+      session.current?.cardShown();
+    } else if (items.length > 0) {
+      session.current?.end('exhausted'); // reached the end of the deck
+    }
+  }, [cardKey, index, items.length]);
 
   const setDecision = useCallback((trackId, action) => setDecisions((d) => {
     const next = { ...d };
@@ -92,16 +113,18 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   }), []);
 
   // Take back one decision (server-side), keeping the session's add count in step
-  const revert = useCallback(async (track, action) => {
+  const revert = useCallback(async (track, action, telemetry) => {
     if (action === 'block') await api.unblockSong(track.track_id);
-    else await api.restockUndo(rotationId, track.track_id, source);
+    else await api.restockUndo(rotationId, track.track_id, source, telemetry);
     setDecision(track.track_id, null);
     if (action === 'add') onAdded(-1);
   }, [rotationId, source, setDecision, onAdded]);
 
-  const act = useCallback(async (action) => {
+  // input ('swipe' | 'button' | 'key') is for usage telemetry only
+  const act = useCallback(async (action, input = 'button') => {
     if (!current || busy) return;
     const prev = decisions[current.track_id];
+    const telemetry = session.current?.decision({ input, revisit: !!prev || index < furthest.current, position: index });
     setBusy(true);
     setError('');
     setToast(null);
@@ -110,9 +133,9 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
     try {
       if (prev !== action) {
         if (prev) await revert(current, prev);
-        if (action === 'add') await api.restockAdd(rotationId, current.track_id, source);
-        else if (action === 'block') await api.restockBlock(rotationId, current.track_id, source);
-        else await api.restockSkip(rotationId, current.track_id, source);
+        if (action === 'add') await api.restockAdd(rotationId, current.track_id, source, telemetry);
+        else if (action === 'block') await api.restockBlock(rotationId, current.track_id, source, telemetry);
+        else await api.restockSkip(rotationId, current.track_id, source, telemetry);
         setDecision(current.track_id, action);
         if (action === 'add') onAdded(1);
         if (action !== 'skip') setToast({ track: current, action, index });
@@ -148,7 +171,8 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
     if (!entry || busy || decisions[entry.track.track_id] !== entry.action) return;
     setBusy(true);
     try {
-      await revert(entry.track, entry.action);
+      const telemetry = session.current?.decision({ input: 'button', revisit: true, position: entry.index });
+      await revert(entry.track, entry.action, telemetry);
       setIndex(entry.index);
     } catch (e) {
       setError(errorMessage(e, entry.action === 'block'
@@ -163,8 +187,8 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'ArrowRight') act('add');
-      else if (e.key === 'ArrowLeft') act('skip');
+      if (e.key === 'ArrowRight') act('add', 'key');
+      else if (e.key === 'ArrowLeft') act('skip', 'key');
       else if (e.key === 'ArrowDown') { e.preventDefault(); forward(); }
       else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') { e.preventDefault(); back(); }
     };
@@ -208,7 +232,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
           </Typography>
           <Box sx={{ px: { xs: 3, sm: 7 } }}>
             <SwipeCard key={current.track_id} exit={exit} disabled={busy}
-              onSwipe={(dir) => act(dir === 'right' ? 'add' : 'skip')}>
+              onSwipe={(dir) => act(dir === 'right' ? 'add' : 'skip', 'swipe')}>
               <AlbumArt src={current.image_url} alt={current.album || current.title} />
               {decided && (
                 <Chip icon={<Check />} color={DECIDED[decided].color} label={DECIDED[decided].label}

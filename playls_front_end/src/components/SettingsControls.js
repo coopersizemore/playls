@@ -54,6 +54,12 @@ export const BACK_OPTIONS = [
 // Built-in defaults for auto rotations (no account-wide setting)
 export const AUTO_SETTING_DEFAULTS = { return_cooldown_days: 28, pick_percent: 10, bring_back_percent: 20 };
 
+// What the usage-data opt-in means (Home's one-time prompt and Settings → Privacy)
+export const USAGE_DATA_TEXT =
+  'PlayLS can record how you use reviews and restocks (how long decisions take and what you choose, not '
+  + 'which songs) so the app can be tuned. It is only ever shown combined with other users\' data and is '
+  + 'deleted after 6 months. Basic performance data with no account attached is always recorded.';
+
 // Wording for the review screens
 const TIMES = { 2: 'twice', 3: 'three times', 5: 'five times' };
 export const timesWord = (n) => TIMES[n] || `${n} times`;

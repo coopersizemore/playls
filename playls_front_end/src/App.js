@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ColorModeProvider } from './colorMode';
 import Home from './components/Home';
@@ -11,6 +11,9 @@ import Restock from './components/Restock';
 import AdminPicks from './components/AdminPicks';
 import { RequireAuth } from './components/Layout';
 import { AuthProvider } from './contexts/AuthContext';
+
+// Admin-only and chart-heavy: loaded on demand so other pages don't carry it
+const AdminStats = lazy(() => import('./components/AdminStats'));
 
 const authed = (element) => <RequireAuth>{element}</RequireAuth>;
 
@@ -28,6 +31,7 @@ function App() {
             <Route path="/rotation/:rotationId/restock" element={authed(<Restock />)} />
             <Route path="/settings" element={authed(<Settings />)} />
             <Route path="/admin/picks" element={authed(<AdminPicks />)} />
+            <Route path="/admin/stats" element={authed(<Suspense fallback={null}><AdminStats /></Suspense>)} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Router>

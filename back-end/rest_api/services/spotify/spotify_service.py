@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ... import request_context
 from ...database.models.user import UserDB
+from .. import health
 from ..auth_service import AuthService
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,7 @@ class SpotifyService:
                 for attempt in range(RATE_LIMIT_RETRIES + 1):
                     response = await send(access_token)
                     if response.status_code == 401:
+                        health.count("spotify.token_refresh")
                         # Token was revoked or expired early: refresh and retry once
                         access_token = await _refresh_after_401(user, db, access_token)
                         response = await send(access_token)
@@ -140,6 +142,7 @@ class SpotifyService:
                     if wait is None:
                         break
                     logger.info("Spotify rate limited %s %s; retrying in %.1fs", method, endpoint, wait)
+                    health.count("spotify.retry")
                     if ctx is not None:
                         ctx.rate_limit_waited += wait
                     local_waited += wait
@@ -155,7 +158,10 @@ class SpotifyService:
                 "Spotify API %s %s failed: %s %s", method, endpoint, response.status_code, response.text[:500]
             )
             if response.status_code == 429:
-                raise SpotifyAPIError(429, retry_after=_retry_after_seconds(response), quota=_is_quota_error(response))
+                quota = _is_quota_error(response)
+                health.count("spotify.quota_exceeded" if quota else "spotify.rate_limited")
+                raise SpotifyAPIError(429, retry_after=_retry_after_seconds(response), quota=quota)
+            health.count(f"spotify.error_{response.status_code}")
             raise SpotifyAPIError(response.status_code)
 
         return response.json() if response.content else {}

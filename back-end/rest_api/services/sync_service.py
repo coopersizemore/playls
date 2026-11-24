@@ -30,6 +30,7 @@ from rest_api.database.models.rotation_track import (
     RotationTrackDB,
 )
 from rest_api.database.models.user import UserDB
+from rest_api.services import health
 from rest_api.services.rotation_logic import PlaylistTrack, parse_playlist_items, playlist_image
 from rest_api.services.spotify.spotify_service import SpotifyService
 
@@ -92,13 +93,19 @@ async def sync_claim(db: Session, rotation: RotationDB, wait_seconds: float | No
         yield True
         return
     wait = SYNC_CLAIM_WAIT_SECONDS if wait_seconds is None else wait_seconds
-    deadline = time.monotonic() + wait
+    started = time.monotonic()
+    deadline = started + wait
     until = _try_claim(db, rotation_id)
     while until is None and time.monotonic() < deadline:
         await asyncio.sleep(SYNC_CLAIM_POLL_SECONDS)
         until = _try_claim(db, rotation_id)
+    waited_ms = round((time.monotonic() - started) * 1000)
+    if waited_ms >= SYNC_CLAIM_POLL_SECONDS * 1000:
+        health.count("claim.waited")
+        health.count("claim.wait_ms", waited_ms)
     if until is None:
         logger.info("Rotation %s is being synced by another request; not waiting longer", rotation_id)
+        health.count("claim.timeout")
         yield False
         return
     token = _held_claims.set(_held_claims.get() | {rotation_id})
@@ -176,6 +183,7 @@ async def flush_pending_removals(
     for track in pending:
         _mark_removed(track, REMOVED_BY_USER)
     db.commit()
+    health.count("sync.flushed_songs", len(pending))
     return len(pending)
 
 
@@ -275,7 +283,9 @@ def apply_playlist_snapshot(
 async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: bool = False) -> bool:
     """Check the playlist's snapshot, flush pending removals, then re-read the playlist if it
     changed. Returns True if re-read. Call under sync_claim (try_sync does)."""
+    health.count("sync.attempt")
     if not force and recently_synced(rotation):
+        health.count("sync.fresh_skip")
         await flush_pending_removals(db, rotation, user)
         return False
 
@@ -288,12 +298,14 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
     in_sync = bool(snapshot_id) and snapshot_id == rotation.snapshot_id
     flushed = await flush_pending_removals(db, rotation, user, in_sync=in_sync)
     if not force and in_sync:
+        health.count("sync.unchanged")
         rotation.last_synced_at = utcnow()
         db.commit()
         return False
     if flushed:
         snapshot_id = await _current_snapshot(db, rotation, user)
 
+    health.count("sync.full_read")
     entries = await SpotifyService.get_all_playlist_items(rotation.playlist_id, user, db)
     present = parse_playlist_items(entries)
     if entries and not present:
@@ -309,6 +321,7 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
     # shift a song past the pages we'd already read. Re-check before trusting absences.
     if snapshot_id and await _current_snapshot(db, rotation, user) != snapshot_id:
         logger.info("Playlist %s changed during the read; applying additions only", rotation.playlist_id)
+        health.count("sync.partial_read")
         apply_playlist_snapshot(db, rotation, present, rotation.snapshot_id, partial=True)
         return True
     apply_playlist_snapshot(db, rotation, present, snapshot_id)

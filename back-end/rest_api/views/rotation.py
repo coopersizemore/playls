@@ -3,7 +3,9 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
+from ..clock import utcnow
 from ..database.config import get_db
+from ..database.models.analytics_event import REVIEW
 from ..database.models.user import UserDB
 from ..models.rotation import (
     FlushOut,
@@ -17,6 +19,7 @@ from ..models.rotation import (
     TrackOut,
     UnplayableOut,
 )
+from ..services import telemetry
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
 from ..services.sync_service import flush_pending_removals, sync_claim, sync_rotation
@@ -131,7 +134,14 @@ async def review_track(
     rotation_id: int, data: ReviewIn, db: Session = Depends(get_db), user: UserDB = current_user_dep
 ):
     """Record one swipe (keep / skip / remove / undo). Removals are applied on flush."""
-    return rs.apply_review(db, rs.get_owned_or_404(db, rotation_id, user), data.track_id, data.action)
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
+    song = None
+    if telemetry.enabled(user) and data.telemetry and data.action != "undo":
+        # The song's state before the decision changes it (for remove-rate-by-age stats)
+        song = telemetry.song_context(rs.find_track(db, rotation, data.track_id), rotation, utcnow())
+    result = rs.apply_review(db, rotation, data.track_id, data.action)
+    telemetry.record_decision(db, user, rotation, REVIEW, data.action, data.telemetry, song=song)
+    return result
 
 
 @router.post("/{rotation_id}/flush", response_model=FlushOut)

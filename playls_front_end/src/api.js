@@ -26,6 +26,9 @@ axios.interceptors.request.use((config) => {
 
 const data = (promise) => promise.then((r) => r.data);
 
+// Optional usage telemetry (src/telemetry.js) rides along with decision requests
+const withTelemetry = (body, telemetry) => (telemetry ? { ...body, telemetry } : body);
+
 // The daily review limit resets at the user's local midnight
 const tz = () => ({ tz_offset: new Date().getTimezoneOffset() });
 
@@ -46,8 +49,8 @@ export const api = {
   unplayable: (id) => data(axios.get(`${API_BASE}/rotation/${id}/unplayable`)),
   removeUnplayable: (id) => data(axios.post(`${API_BASE}/rotation/${id}/remove-unplayable`)),
   tracks: (id) => data(axios.get(`${API_BASE}/rotation/${id}/tracks`)),
-  review: (id, trackId, action) =>
-    data(axios.post(`${API_BASE}/rotation/${id}/review`, { track_id: trackId, action })),
+  review: (id, trackId, action, telemetry) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/review`, withTelemetry({ track_id: trackId, action }, telemetry))),
   flush: (id) => data(axios.post(`${API_BASE}/rotation/${id}/flush`)),
   // Newest first. filter: all | removed | kept | skipped | rotated | reviews (the user's own decisions)
   history: (id, { filter = 'all', limit = 50, offset = 0 } = {}) =>
@@ -64,16 +67,16 @@ export const api = {
     data(axios.get(`${API_BASE}/rotation/${id}/restock/deck/${source}`, { params: { refresh, ...tz() } })),
   restockSearch: (id, q, offset = 0) =>
     data(axios.get(`${API_BASE}/rotation/${id}/restock/search`, { params: { q, offset } })),
-  restockAdd: (id, trackId, source) =>
-    data(axios.post(`${API_BASE}/rotation/${id}/restock/add`, { track_id: trackId, source })),
-  restockSkip: (id, trackId, source) =>
-    data(axios.post(`${API_BASE}/rotation/${id}/restock/skip`, { track_id: trackId, source })),
+  restockAdd: (id, trackId, source, telemetry) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/add`, withTelemetry({ track_id: trackId, source }, telemetry))),
+  restockSkip: (id, trackId, source, telemetry) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/skip`, withTelemetry({ track_id: trackId, source }, telemetry))),
   // Undo the latest Add (taken back out of the playlist) or Not now on a song: { undone: 'add' | 'skip' }
-  restockUndo: (id, trackId, source) =>
-    data(axios.post(`${API_BASE}/rotation/${id}/restock/undo`, { track_id: trackId, source })),
+  restockUndo: (id, trackId, source, telemetry) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/undo`, withTelemetry({ track_id: trackId, source }, telemetry))),
   // "Stop suggesting" a song in every restock deck (undo: unblockSong)
-  restockBlock: (id, trackId, source) =>
-    data(axios.post(`${API_BASE}/rotation/${id}/restock/block`, { track_id: trackId, source })),
+  restockBlock: (id, trackId, source, telemetry) =>
+    data(axios.post(`${API_BASE}/rotation/${id}/restock/block`, withTelemetry({ track_id: trackId, source }, telemetry))),
   blockedSongs: () => data(axios.get(`${API_BASE}/user/me/blocked-songs`)),
   unblockSong: (trackId) => data(axios.delete(`${API_BASE}/user/me/blocked-songs/${encodeURIComponent(trackId)}`)),
   // Admin: curating PlayLS picks
@@ -81,6 +84,8 @@ export const api = {
   createPick: (body) => data(axios.post(`${API_BASE}/admin/picks`, body)),
   updatePick: (pickId, body) => data(axios.put(`${API_BASE}/admin/picks/${pickId}`, body)),
   deletePick: (pickId) => data(axios.delete(`${API_BASE}/admin/picks/${pickId}`)),
+  // Admin: monitoring dashboard (days: 7 | 30 | 90 | 180; kind: all | manual | auto)
+  adminStats: ({ days = 30, kind = 'all' } = {}) => data(axios.get(`${API_BASE}/admin/stats`, { params: { days, kind } })),
   searchSpotify: (q, offset = 0) =>
     data(axios.get(`${API_BASE}/spotify/search`, { params: { q, offset, type: 'track' } })),
   deleteAccount: () => data(axios.delete(`${API_BASE}/user/me`)),

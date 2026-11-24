@@ -13,6 +13,7 @@ import {
   DialogTitle,
   Avatar,
   FormControlLabel,
+  Switch,
   List,
   ListItem,
   ListItemAvatar,
@@ -30,6 +31,7 @@ import { api, errorMessage } from '../api';
 import { Layout } from './Layout';
 import { IntervalPicker } from './RotationDialogs';
 import {
+  USAGE_DATA_TEXT,
   DECK_OPTIONS,
   DISCOVERY_OPTIONS,
   MoreOptions,
@@ -233,6 +235,43 @@ const BlockedSongsCard = () => {
   );
 };
 
+// The usage-data opt-in (asked once on Home); turning it off deletes what was recorded
+const PrivacyCard = () => {
+  const { user, updateUser } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const on = user?.analytics_consent === true;
+
+  const change = async (consent) => {
+    setSaving(true);
+    setError('');
+    try {
+      const { analytics_consent: saved } = await api.updateSettings({ analytics_consent: consent });
+      updateUser({ analytics_consent: saved });
+    } catch (e) {
+      setError(errorMessage(e, "Couldn't change that."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h6" gutterBottom>Privacy</Typography>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <FormControlLabel
+          control={<Switch checked={on} disabled={saving} onChange={(e) => change(e.target.checked)} />}
+          label="Share usage data"
+        />
+        <Typography variant="body2" color="text.secondary" mt={1}>
+          {USAGE_DATA_TEXT} Turning this off also deletes the usage data already recorded for you.
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+};
+
 const Settings = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -281,6 +320,7 @@ const Settings = () => {
       <ReviewingCard settings={settings} save={save} />
       <RestockingCard settings={settings} save={save} />
       <BlockedSongsCard />
+      <PrivacyCard />
 
       <Card sx={{ mb: 3 }}>
         <CardContent>

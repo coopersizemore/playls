@@ -81,12 +81,6 @@ def test_adding_brings_song_back_into_rotation_and_playlist(client, spotify, db)
 
 # ---------- picks + admin ----------
 
-@pytest.fixture
-def admin(monkeypatch):
-    from rest_api.services import auth_service
-    monkeypatch.setattr(auth_service, "ADMIN_SPOTIFY_IDS", {"me"})
-
-
 def test_admin_routes_hidden_from_non_admins(client):
     assert client.get("/api/admin/picks").status_code == 404
     assert client.get("/api/auth/me").json()["is_admin"] is False

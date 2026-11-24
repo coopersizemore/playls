@@ -30,6 +30,7 @@ import ReviewSummary from './ReviewSummary';
 import { skipReturn, timesWord } from './SettingsControls';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
 import { ReviewSkeleton } from './Skeletons';
+import { startSession } from '../telemetry';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -96,12 +97,22 @@ const Review = () => {
   const [error, setError] = useState('');
   const pendingRemovals = useRef(0);
   const batchNo = useRef(0);
+  const session = useRef(null); // usage telemetry for this visit (only sent with consent)
+  const furthest = useRef(0); // furthest card reached in this batch: lower = a revisit
+
+  useEffect(() => {
+    session.current = startSession('review', rotationId);
+    const left = () => session.current?.end('left');
+    window.addEventListener('pagehide', left);
+    return () => { window.removeEventListener('pagehide', left); left(); };
+  }, [rotationId]);
 
   const loadBatch = useCallback(async (more = false) => {
     setError('');
     try {
       const next = await api.queue(rotationId, { more, all: reviewAll });
       batchNo.current += 1;
+      furthest.current = 0;
       setBatch(next);
       setIndex(0);
       setToast(null);
@@ -143,6 +154,14 @@ const Review = () => {
   const tracks = useMemo(() => batch?.tracks || [], [batch]);
   const track = tracks[index];
   const current = track ? decisions[track.track_id] : null;
+  const trackKey = track?.track_id;
+
+  // A new card on screen: start its decision timer
+  useEffect(() => {
+    if (!trackKey) return;
+    furthest.current = Math.max(furthest.current, index);
+    session.current?.cardShown();
+  }, [trackKey, index]);
 
   const setDecision = useCallback((trackId, entry) => setDecisions((d) => {
     const next = { ...d };
@@ -152,9 +171,11 @@ const Review = () => {
 
   // Keep / super keep / remove / skip the song on screen, replacing any earlier decision.
   // The card flies off (right = keep, left = remove, up = super keep) while the API call runs.
-  const decide = useCallback(async (action) => {
+  // input ('swipe' | 'button' | 'key') is for usage telemetry only
+  const decide = useCallback(async (action, input = 'button') => {
     if (!track || busy || summary) return;
     const prev = decisions[track.track_id];
+    const telemetry = session.current?.decision({ input, revisit: !!prev || index < furthest.current, position: index });
     if (prev?.locked && prev.action !== action) {
       setError('That song was already removed from your Spotify playlist. Add it back from History or Restock.');
       return;
@@ -172,7 +193,7 @@ const Review = () => {
           if (prev.action === 'remove') pendingRemovals.current = Math.max(0, pendingRemovals.current - 1);
           setDecision(track.track_id, null);
         }
-        await api.review(rotationId, track.track_id, action);
+        await api.review(rotationId, track.track_id, action, telemetry);
         if (action === 'remove') {
           pendingRemovals.current += 1;
           setToast({ track });
@@ -190,10 +211,10 @@ const Review = () => {
   }, [track, busy, summary, decisions, rotationId, index, setDecision]);
 
   // Skip / Next: records a skip for an undecided song, otherwise just moves forward
-  const forward = useCallback(() => {
+  const forward = useCallback((input = 'button') => {
     if (!track || busy || summary) return;
     if (current) setIndex((i) => i + 1);
-    else decide('skip');
+    else decide('skip', input);
   }, [track, busy, summary, current, decide]);
 
   const back = useCallback(() => {
@@ -213,7 +234,8 @@ const Review = () => {
     }
     setBusy(true);
     try {
-      await api.review(rotationId, entry.track.track_id, 'undo');
+      const telemetry = session.current?.decision({ input: 'button', revisit: true, position: entry.index });
+      await api.review(rotationId, entry.track.track_id, 'undo', telemetry);
       pendingRemovals.current = Math.max(0, pendingRemovals.current - 1);
       setDecision(entry.track.track_id, null);
       if (entry.batch === batchNo.current) setIndex(entry.index);
@@ -224,8 +246,10 @@ const Review = () => {
     }
   };
 
-  // End the session: push removals to Spotify, then show the one-time summary
-  const finish = async () => {
+  // End the session: push removals to Spotify, then show the one-time summary.
+  // how: 'done' (finished the batch) | 'stopped' ("Stop for now"), for usage telemetry
+  const finish = async (how = 'done') => {
+    session.current?.end(how);
     if (Object.keys(decisions).length === 0) {
       navigate(`/rotation/${rotationId}`);
       return;
@@ -249,10 +273,10 @@ const Review = () => {
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'ArrowLeft') decide('remove');
-      else if (e.key === 'ArrowRight') decide('keep');
-      else if (e.key === 'ArrowUp') { e.preventDefault(); decide('super_keep'); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); forward(); }
+      if (e.key === 'ArrowLeft') decide('remove', 'key');
+      else if (e.key === 'ArrowRight') decide('keep', 'key');
+      else if (e.key === 'ArrowUp') { e.preventDefault(); decide('super_keep', 'key'); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); forward('key'); }
       else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') { e.preventDefault(); back(); }
     };
     window.addEventListener('keydown', onKey);
@@ -336,7 +360,7 @@ const Review = () => {
             <Button startIcon={<ArrowBack />} onClick={back} disabled={busy} sx={{ mt: 1 }}>Back to the last song</Button>
           )}
           <Box display="flex" justifyContent="center" gap={2} mt={2} flexWrap="wrap">
-            <Button variant="contained" onClick={finish} disabled={finishing}>
+            <Button variant="contained" onClick={() => finish('done')} disabled={finishing}>
               {finishing ? 'Updating Spotify…' : 'Done'}
             </Button>
             {moreDue > 0 && (
@@ -353,7 +377,7 @@ const Review = () => {
         <>
           <Box sx={{ px: { xs: 2, sm: 5 } }}>
             <SwipeCard key={track.track_id} exit={exit} disabled={busy || locked}
-              onSwipe={(dir) => decide(dir === 'right' ? 'keep' : 'remove')}>
+              onSwipe={(dir) => decide(dir === 'right' ? 'keep' : 'remove', 'swipe')}>
               <AlbumArt src={track.image_url} alt={track.album || track.title} />
               {current && (
                 <Chip
@@ -409,10 +433,10 @@ const Review = () => {
           {/* Back / forward through the batch */}
           <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
             <Button startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0} color="inherit">Back</Button>
-            <Button onClick={finish} disabled={finishing} color="inherit" size="small">
+            <Button onClick={() => finish('stopped')} disabled={finishing} color="inherit" size="small">
               {finishing ? 'Updating Spotify…' : 'Stop for now'}
             </Button>
-            <Button endIcon={current ? <ArrowForward /> : <SkipNext />} onClick={forward} disabled={busy} color="inherit"
+            <Button endIcon={current ? <ArrowForward /> : <SkipNext />} onClick={() => forward()} disabled={busy} color="inherit"
               variant={current?.action === 'skip' ? 'outlined' : 'text'}>
               {current ? 'Next' : 'Skip'}
             </Button>

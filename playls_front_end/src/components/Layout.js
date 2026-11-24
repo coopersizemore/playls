@@ -12,7 +12,9 @@ import {
   Switch,
   Typography,
 } from '@mui/material';
-import { ArrowBack, DarkMode, HelpOutline, Home, Logout, Menu as MenuIcon, QueueMusic, Settings, Star } from '@mui/icons-material';
+import {
+  ArrowBack, DarkMode, HelpOutline, Home, Insights, Logout, Menu as MenuIcon, QueueMusic, Settings, Star,
+} from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
 import { HelpDialog } from './Help';
@@ -59,6 +61,9 @@ const TopBar = ({ back }) => {
         <MenuItem onClick={() => go('/settings')}><ListItemIcon><Settings fontSize="small" /></ListItemIcon>Settings</MenuItem>
         {user?.is_admin && (
           <MenuItem onClick={() => go('/admin/picks')}><ListItemIcon><Star fontSize="small" /></ListItemIcon>Curate picks</MenuItem>
+        )}
+        {user?.is_admin && (
+          <MenuItem onClick={() => go('/admin/stats')}><ListItemIcon><Insights fontSize="small" /></ListItemIcon>Usage &amp; health</MenuItem>
         )}
         <Divider />
         {/* Stays open so the switch's effect is visible */}

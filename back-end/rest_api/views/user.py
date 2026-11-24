@@ -8,6 +8,7 @@ from ..models.rotation import RotationOut
 from ..models.user import SettingsOut, SettingsUpdate
 from ..services import preferences as prefs
 from ..services import restock_service as restock
+from ..services import telemetry
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
 from ..services.db import user_service as us
@@ -29,7 +30,9 @@ async def get_current_user_rotations(
 
 
 def _settings_out(user: UserDB) -> SettingsOut:
-    return SettingsOut(review_limit=user.review_limit, **prefs.account_settings(user))
+    return SettingsOut(
+        review_limit=user.review_limit, analytics_consent=user.analytics_consent, **prefs.account_settings(user)
+    )
 
 
 @router.get("/me/settings", response_model=SettingsOut)
@@ -43,12 +46,26 @@ async def update_settings(
     current_user: UserDB = Depends(AuthService.get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    """Change only the settings sent. review_limit: 1-1000, or null for no limit. For the
-    others, null puts the setting back to its default."""
-    for name in data.model_fields_set:
+    """Change only the settings sent. review_limit: 1-1000, or null for no limit.
+    analytics_consent: true / false (false also deletes recorded usage data; null is ignored).
+    For the others, null puts the setting back to its default."""
+    for name in data.model_fields_set - {"analytics_consent"}:
         setattr(current_user, name, getattr(data, name))
     db.commit()
+    if "analytics_consent" in data.model_fields_set and data.analytics_consent is not None:
+        telemetry.set_consent(db, current_user, data.analytics_consent)
     return _settings_out(current_user)
+
+
+@router.post("/me/telemetry/session-end", status_code=204)
+async def telemetry_session_end(
+    data: telemetry.SessionEndIn,
+    current_user: UserDB = Depends(AuthService.get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """End of a Review or Restock visit (sent with keepalive as the page closes). Recorded only
+    with analytics consent."""
+    telemetry.record_session_end(db, current_user, data)
 
 
 @router.get("/me/blocked-songs", response_model=list[BlockedSongOut])

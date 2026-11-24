@@ -147,6 +147,8 @@ async def get_current_user(
         "is_admin": is_admin(current_user),
         # Non-empty when the user should reconnect Spotify to enable newer features
         "missing_scopes": missing_scopes(current_user),
+        # Usage analytics opt-in: None until asked (the app shows a one-time prompt)
+        "analytics_consent": current_user.analytics_consent,
     }
 
 @router.post("/logout")

@@ -16,6 +16,7 @@ class User(BaseModel):
 
 class SettingsOut(BaseModel):
     review_limit: int | None  # None = no limit
+    analytics_consent: bool | None  # None = not asked yet
     # Reviewing
     super_keep_multiplier: int  # a super keep waits this many intervals
     skip_hold_days: int  # 1 = a skipped song is back tomorrow
@@ -34,6 +35,8 @@ class SettingsUpdate(BaseModel):
 
     # Songs offered for review per rotation per day; null = no limit
     review_limit: int | None = Field(None, ge=1, le=1000)
+    # Usage analytics opt-in; false also deletes what was recorded
+    analytics_consent: bool | None = None
     super_keep_multiplier: Literal[2, 3, 5] | None = None
     skip_hold_days: Literal[1, 3, 7] | None = None
     review_order: Literal["overdue", "oldest", "shuffle"] | None = None

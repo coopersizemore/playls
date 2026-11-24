@@ -35,7 +35,7 @@ The required env vars are listed in `back-end/env.example`. Local and production
 ## Tests
 ```bash
 cd back-end && .venv/Scripts/python -m pytest        # bin/python on macOS/Linux
-cd back-end && .venv/Scripts/python -m ruff check .  # lint (config in back-end/pyproject.toml)
+cd back-end && .venv/Scripts/python -m ruff check .  # lint (config in back-end/ruff.toml)
 ```
 
 GitHub Actions runs the same lint and tests on every push to `main` (`.github/workflows/backend.yml`), and builds the frontend with lint warnings as errors (`.github/workflows/frontend.yml`; locally: `cd playls_front_end && CI=true npm run build`).

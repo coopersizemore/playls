@@ -1,11 +1,10 @@
-# Tooling config only (the app itself is deployed from requirements.txt).
-
-[tool.ruff]
+# Lint config (`python -m ruff check .`). Kept out of pyproject.toml on purpose: Vercel's Python
+# builder installs dependencies from pyproject.toml whenever one exists, instead of requirements.txt.
 target-version = "py312"
 line-length = 120
 extend-exclude = [".venv", "venv"]
 
-[tool.ruff.lint]
+[lint]
 select = [
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings
@@ -19,16 +18,13 @@ ignore = [
     "B008",  # FastAPI's Depends()/Query() defaults are the intended pattern
 ]
 
-[tool.ruff.lint.per-file-ignores]
+[lint.per-file-ignores]
 # conftest sets env vars before importing the app; app.py mounts routers after creating it
 "tests/conftest.py" = ["E402"]
 "rest_api/app.py" = ["E402"]
 "rest_api/database/config.py" = ["E402"]
 
-[tool.ruff.lint.isort]
+[lint.isort]
 known-first-party = ["rest_api"]
 known-third-party = ["alembic"]
 known-local-folder = ["helpers", "conftest"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

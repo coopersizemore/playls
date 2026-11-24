@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt
 
-      # Rules live in back-end/pyproject.toml; GitHub output format annotates the diff
+      # Rules live in back-end/ruff.toml; GitHub output format annotates the diff
       - name: Ruff
         run: python -m ruff check . --output-format github
 

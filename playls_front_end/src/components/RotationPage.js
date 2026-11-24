@@ -38,7 +38,7 @@ import {
 import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
 import { readStored, writeStored } from '../storage';
-import { GREEN, ON_GREEN } from '../theme';
+import { GREEN, GREEN_DARK, GREEN_LIGHT, ON_GREEN } from '../theme';
 import { HistoryList } from './History';
 import { Layout, PlaylistCover, formatDuration, parseUtc, relativeDays } from './Layout';
 import {
@@ -141,10 +141,36 @@ const loadSort = () => {
   return { by: 'due', dir: 'asc' };
 };
 
-const SongRow = ({ track, auto }) => (
+const mixHex = (from, to, t) => {
+  const channel = (hex, i) => parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);
+  return '#' + [0, 1, 2].map((i) =>
+    Math.round(channel(from, i) + (channel(to, i) - channel(from, i)) * t).toString(16).padStart(2, '0')).join('');
+};
+
+// Row shades by rank among the rotation's due dates, not by the dates themselves: the next
+// song due is lightest and the furthest out darkest. Songs already due share the lightest
+// shade; songs with no due date (or kept, or being removed) stay plain green.
+const dueShades = (tracks, auto) => {
+  const now = new Date();
+  const keyOf = (t) => {
+    if (!t.due_at || t.status === 'pending_removal' || (auto && t.protected)) return null;
+    const at = parseUtc(t.due_at);
+    return at <= now ? 0 : at.getTime();
+  };
+  const keys = [...new Set((tracks || []).map(keyOf).filter((k) => k != null))].sort((a, b) => a - b);
+  const rank = new Map(keys.map((k, i) => [k, keys.length > 1 ? i / (keys.length - 1) : 0.5]));
+  const shades = new Map();
+  for (const t of tracks || []) {
+    const k = keyOf(t);
+    if (k != null) shades.set(t.track_id, mixHex(GREEN_LIGHT, GREEN_DARK, rank.get(k)));
+  }
+  return shades;
+};
+
+const SongRow = ({ track, auto, shade }) => (
   <Box sx={{
     display: 'flex', alignItems: 'center', gap: 2, px: 1.5, py: 1.25, borderRadius: 999,
-    bgcolor: track.status === 'pending_removal' ? 'action.disabledBackground' : GREEN,
+    bgcolor: track.status === 'pending_removal' ? 'action.disabledBackground' : shade || GREEN,
     color: track.status === 'pending_removal' ? 'text.primary' : ON_GREEN,
   }}>
     <Avatar variant="rounded" src={track.image_url || undefined}
@@ -211,6 +237,8 @@ const RotationPage = () => {
       : tracks || [];
     return sortSongs(matching, sort.by, sort.dir);
   }, [tracks, filter, sort]);
+  const isAutoKind = rotation?.kind === 'auto';
+  const shades = useMemo(() => dueShades(tracks, isAutoKind), [tracks, isAutoKind]);
 
   const changeSort = (next) => {
     setSort(next);
@@ -351,7 +379,7 @@ const RotationPage = () => {
                 </Typography>
               ) : (
                 <Box display="flex" flexDirection="column" gap={1.5}>
-                  {shown.map((t) => <SongRow key={t.track_id} track={t} auto={isAuto} />)}
+                  {shown.map((t) => <SongRow key={t.track_id} track={t} auto={isAuto} shade={shades.get(t.track_id)} />)}
                 </Box>
               )}
             </>

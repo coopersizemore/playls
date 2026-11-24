@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Card, CardActions, CardContent, Grid, Skeleton } from '@mui/material';
+import SongStage from './SongStage';
 
 // Loading placeholders shaped like the content they stand in for, so the page doesn't
 // jump when data arrives. Wave animation; colors follow the light/dark theme.
@@ -72,34 +73,32 @@ export const RotationPageSkeleton = () => (
 );
 
 // Review / restock card: big art, title, artist, stat, player
-export const SongCardSkeleton = ({ stat = true }) => (
+export const SongCardSkeleton = ({ reserve, stat = true }) => (
   <Box aria-busy="true" aria-label="Loading songs">
-    <Box sx={{ px: { xs: 2, sm: 5 } }}>
-      <Skeleton {...W} variant="rounded" sx={{ width: '100%', height: 'auto', aspectRatio: '1 / 1', borderRadius: 3 }} />
-    </Box>
-    <Box display="flex" flexDirection="column" alignItems="center" mt={3}>
-      <Skeleton {...W} width="60%" height={36} />
-      <Skeleton {...W} width="35%" />
-      {stat && (
-        <>
-          <Skeleton {...W} width={80} height={64} sx={{ mt: 2 }} />
-          <Skeleton {...W} width="55%" />
-        </>
-      )}
-    </Box>
-    <Skeleton {...W} variant="rounded" height={80} sx={{ mt: 2.5, borderRadius: 3 }} />
+    <SongStage reserve={reserve}
+      art={<Skeleton {...W} variant="rounded" sx={{ width: '100%', height: 'auto', aspectRatio: '1 / 1', borderRadius: 3 }} />}>
+      <Box display="flex" alignItems="center" gap={2}>
+        <Box flexGrow={1}>
+          <Skeleton {...W} width="70%" height={28} />
+          <Skeleton {...W} width="45%" />
+        </Box>
+        {stat && <Skeleton {...W} width={64} height={44} />}
+      </Box>
+      <Skeleton {...W} variant="rounded" height={80} sx={{ mt: 1.5, borderRadius: 3 }} />
+      <Skeleton {...W} variant="rounded" height={40} sx={{ mt: 1.5, borderRadius: 2 }} />
+    </SongStage>
   </Box>
 );
 
 // Review page: progress + tally above the card
-export const ReviewSkeleton = () => (
+export const ReviewSkeleton = ({ reserve }) => (
   <Box>
     <Box display="flex" justifyContent="space-between"><Skeleton {...W} width={140} /><Skeleton {...W} width={60} /></Box>
-    <Skeleton {...W} variant="rounded" height={6} sx={{ mt: 1, mb: 1.5, borderRadius: 3 }} />
-    <Box display="flex" justifyContent="center" gap={1} mb={2}>
+    <Skeleton {...W} variant="rounded" height={6} sx={{ mt: 0.75, mb: 1, borderRadius: 3 }} />
+    <Box display="flex" justifyContent="center" gap={1} mb={1.5}>
       {[0, 1, 2].map((i) => <Skeleton key={i} {...W} variant="rounded" width={84} height={24} sx={{ borderRadius: 4 }} />)}
     </Box>
-    <SongCardSkeleton />
+    <SongCardSkeleton reserve={reserve} />
   </Box>
 );
 

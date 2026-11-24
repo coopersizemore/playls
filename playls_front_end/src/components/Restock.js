@@ -17,6 +17,7 @@ import {
   Tabs,
   TextField,
   Typography,
+  useMediaQuery,
 } from '@mui/material';
 import {
   Add,
@@ -35,8 +36,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { startSession } from '../telemetry';
 import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
-import { AlbumArt, Layout, RotationHeader, SpotifyEmbed } from './Layout';
+import { AlbumArt, Layout, PlaylistCover, SpotifyEmbed } from './Layout';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
+import SongStage from './SongStage';
 import { ListSkeleton, SongCardSkeleton } from './Skeletons';
 
 const TABS = [
@@ -54,11 +56,16 @@ const DECIDED = {
 };
 const EXIT_FOR = { add: 'right', skip: 'left', block: 'left' };
 
+// Height left for everything but the album art (see SongStage): top bar, header, tabs,
+// and on phones the details and controls stacked under the art
+const RESERVE = { xs: 480, md: 210 };
+
 // One card at a time with a player; Add (→) or Not now (←). Like Review, Back and Skip/Next
 // move through the deck, picking a different answer for a card undoes the old one first, and
 // an add can be undone from the toast (the song is taken back out of the playlist).
 const Deck = ({ rotationId, source, emptyText, onAdded }) => {
   const { login } = useAuth();
+  const touch = useMediaQuery('(pointer: coarse)');
   const [deck, setDeck] = useState(null);
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -197,7 +204,7 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
     return () => window.removeEventListener('keydown', onKey);
   }, [act, forward, back]);
 
-  if (deck === null) return <SongCardSkeleton stat={false} />;
+  if (deck === null) return <SongCardSkeleton reserve={RESERVE} stat={false} />;
 
   return (
     <Box>
@@ -227,57 +234,65 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
           <Button startIcon={<Refresh />} onClick={() => load(source === 'suggested')}>Refresh</Button>
         </Box>
       ) : (
-        <>
-          <Typography color="text.secondary" textAlign="center" mb={1}>
-            {index + 1} of {items.length}{added ? ` · added ${added}` : ''}
-          </Typography>
-          <Box sx={{ px: { xs: 3, sm: 7 } }}>
-            <SwipeCard key={current.track_id} exit={exit} disabled={busy}
-              onSwipe={(dir) => act(dir === 'right' ? 'add' : 'skip', 'swipe')}>
-              <AlbumArt src={current.image_url} alt={current.album || current.title} />
-              {decided && (
-                <Chip icon={<Check />} color={DECIDED[decided].color} label={DECIDED[decided].label}
-                  sx={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', maxWidth: '92%' }} />
-              )}
-            </SwipeCard>
+        <SongStage reserve={RESERVE} art={
+          <SwipeCard key={current.track_id} exit={exit} disabled={busy}
+            onSwipe={(dir) => act(dir === 'right' ? 'add' : 'skip', 'swipe')}>
+            <AlbumArt src={current.image_url} alt={current.album || current.title} />
+            {decided && (
+              <Chip icon={<Check />} color={DECIDED[decided].color} label={DECIDED[decided].label}
+                sx={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', maxWidth: '92%' }} />
+            )}
+          </SwipeCard>
+        }>
+          {/* Title and artist stay small: the player below identifies the song too */}
+          <Box display="flex" alignItems="center" gap={2}>
+            <Box minWidth={0} flexGrow={1}>
+              <Typography variant="subtitle1" component="h2" noWrap title={current.title}
+                sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                {current.title}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" noWrap title={current.artists}>{current.artists}</Typography>
+            </Box>
+            <Box textAlign="right" flexShrink={0}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>{index + 1} / {items.length}</Typography>
+              {added > 0 && <Typography variant="caption" color="text.secondary">added {added}</Typography>}
+            </Box>
           </Box>
-          <Box textAlign="center" mt={2.5} mb={2}>
-            <Typography variant="h5" component="h2" sx={{ overflowWrap: 'anywhere' }}>{current.title}</Typography>
-            <Typography mt={0.5}>{current.artists}</Typography>
-            {current.reason && <Chip size="small" label={current.reason} sx={{ mt: 1.5 }} />}
-          </Box>
-          <Box mb={2.5}><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></Box>
-          <Box display="flex" justifyContent="center" gap={2}>
+          {current.reason && <Chip size="small" label={current.reason} sx={{ mt: 1, maxWidth: '100%' }} />}
+          <Box mt={1.5}><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></Box>
+          <Box display="flex" justifyContent="center" gap={2} mt={1.5}>
             <Button variant={decided === 'skip' ? 'contained' : 'outlined'} color={decided === 'skip' ? 'inherit' : 'primary'}
-              size="large" startIcon={<Close />} onClick={() => act('skip')} disabled={busy} sx={{ minWidth: 140 }}>
+              size="large" startIcon={<Close />} onClick={() => act('skip')} disabled={busy} sx={{ flex: 1, maxWidth: 180 }}>
               Not now
             </Button>
             <Button variant="contained" size="large" startIcon={decided === 'add' ? <Check /> : <Add />}
-              onClick={() => act('add')} disabled={busy} sx={{ minWidth: 140 }}>
+              onClick={() => act('add')} disabled={busy} sx={{ flex: 1, maxWidth: 180 }}>
               {decided === 'add' ? 'Added' : 'Add'}
             </Button>
           </Box>
-          {source === 'bring_back' && (
-            <Box textAlign="center" mt={1.5}>
-              <Button color="inherit" size="small" startIcon={<Block />} onClick={() => act('block')}
-                disabled={busy || decided === 'block'} sx={{ color: 'text.secondary' }}>
-                Stop suggesting this song
-              </Button>
-            </Box>
-          )}
 
           {/* Back / forward through the deck */}
-          <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
             <Button startIcon={<ArrowBack />} onClick={back} disabled={busy || index === 0} color="inherit">Back</Button>
+            {source === 'bring_back' && (
+              <Button color="inherit" size="small" startIcon={<Block />} onClick={() => act('block')}
+                disabled={busy || decided === 'block'} sx={{ color: 'text.secondary' }}
+                title="Stop suggesting this song">
+                Stop suggesting
+              </Button>
+            )}
             <Button endIcon={decided ? <ArrowForward /> : <SkipNext />} onClick={forward} disabled={busy} color="inherit">
               {decided ? 'Next' : 'Skip'}
             </Button>
           </Box>
-          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={1}>
-            Swipe or drag: left = not now, right = add (or ← / → keys; ↓ skip, Backspace back). Adding puts the
-            song in your Spotify playlist right away; Skip moves on without answering.
+          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" mt={0.5}
+            sx={{ lineHeight: 1.4 }}>
+            {touch
+              ? 'Swipe right to add, left for not now. '
+              : '← not now · → add · ↓ skip · Backspace back. '}
+            Adding puts the song in your Spotify playlist right away.
           </Typography>
-        </>
+        </SongStage>
       )}
       <Snackbar
         open={!!toast}
@@ -405,15 +420,23 @@ const Restock = () => {
   const current = TABS[tab];
 
   return (
-    <Layout maxWidth="sm" back={`/rotation/${rotationId}`}>
-      <RotationHeader rotation={rotation} title={`Restock${rotation ? `: ${rotation.name}` : ''}`} />
-      <Typography color="text.secondary" mb={2}>
-        {addedTotal > 0
-          ? `Added ${addedTotal} song${addedTotal === 1 ? '' : 's'} this session.`
-          : 'Find songs to add to this rotation.'}
-        {rotation?.is_liked && ' Adding a song likes it in Spotify.'}
-      </Typography>
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile sx={{ mb: 3 }}>
+    <Layout maxWidth="md" back={`/rotation/${rotationId}`}>
+      <Box display="flex" alignItems="center" gap={1.5} mb={0.5}>
+        <PlaylistCover rotation={rotation} size={44} />
+        <Box minWidth={0}>
+          <Typography variant="h6" component="h1" noWrap sx={{ lineHeight: 1.3 }}>
+            Restock{rotation ? `: ${rotation.name}` : ''}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {addedTotal > 0
+              ? `Added ${addedTotal} song${addedTotal === 1 ? '' : 's'} this session.`
+              : 'Find songs to add to this rotation.'}
+            {rotation?.is_liked && ' Adding a song likes it in Spotify.'}
+          </Typography>
+        </Box>
+      </Box>
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile
+        sx={{ mb: 1.5, minHeight: 40, '& .MuiTab-root': { minHeight: 40, py: 1 } }}>
         {TABS.map((t) => <Tab key={t.source} label={t.label} />)}
       </Tabs>
       {/* Mounting only the active tab keeps keyboard shortcuts scoped to it */}

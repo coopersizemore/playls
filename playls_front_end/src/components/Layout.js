@@ -129,14 +129,6 @@ export const AlbumArt = ({ src, alt, size = '100%', radius = 3 }) => (
   </Box>
 );
 
-// Small title row with the rotation's cover (Restock and similar pages)
-export const RotationHeader = ({ rotation, title, centered = false }) => (
-  <Box display="flex" alignItems="center" justifyContent={centered ? 'center' : 'flex-start'} gap={2} mb={1}>
-    <PlaylistCover rotation={rotation} size={56} />
-    <Typography variant="h5" component="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{title}</Typography>
-  </Box>
-);
-
 // Spotify's embedded player for one track (compact = the 80px single-row player)
 export const SpotifyEmbed = ({ trackId, title, compact = false }) => (
   <Box

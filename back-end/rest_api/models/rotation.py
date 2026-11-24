@@ -104,6 +104,9 @@ class TrackOut(BaseModel):
     # None unless active. Auto rotations: when the song is expected to rotate out
     due_at: datetime | None
     protected: bool = False  # auto: kept since the last rotation, so it stays for the next one
+    # Filled in by GET /rotation/{id}/tracks only (0 / None elsewhere)
+    times_kept: int = 0  # keeps + super keeps over the song's whole time in the rotation
+    last_reviewed_at: datetime | None = None  # latest keep, super keep, skip or remove
 
 
 class QueueOut(BaseModel):

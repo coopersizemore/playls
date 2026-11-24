@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Iterable
 
 import sqlalchemy.orm as orm
+from sqlalchemy import case, func
 from fastapi import HTTPException
 
 from rest_api.clock import utcnow
@@ -415,11 +416,39 @@ def due_queue(db: orm.Session, rotation: RotationDB, tz_offset_minutes: int = 0,
     )
 
 
+def _review_stats(db: orm.Session, rotation: RotationDB) -> dict[int, tuple[int, object]]:
+    """{rotation_track id: (times kept, last reviewed at)} from review_event.
+
+    Every keep and super keep writes an event and undo deletes it, so counting events is
+    the keep count. A row survives removal and re-adding, so the count covers the song's
+    whole time in the rotation. System events (auto rotations) don't count as reviews.
+    """
+    action = ReviewEventDB.action
+    rows = (
+        db.query(
+            ReviewEventDB.rotation_track_id,
+            func.sum(case((action.in_(KEEP_ACTIONS), 1), else_=0)),
+            func.max(case((action.in_((*KEEP_ACTIONS, SKIP, REMOVE)), ReviewEventDB.created_at), else_=None)),
+        )
+        .join(RotationTrackDB, ReviewEventDB.rotation_track_id == RotationTrackDB.id)
+        .filter(RotationTrackDB.rotation_id == rotation.id)
+        .group_by(ReviewEventDB.rotation_track_id)
+        .all()
+    )
+    return {row_id: (int(kept or 0), last) for row_id, kept, last in rows}
+
+
 def all_tracks(db: orm.Session, rotation: RotationDB) -> list[TrackOut]:
+    """Active songs (soonest due first), then pending removals, with review stats."""
     now = utcnow()
     tracks = _sorted_by_due(rotation, _tracks(db, rotation, (ACTIVE,)), now)
     pending = _tracks(db, rotation, (PENDING_REMOVAL,))
-    return _tracks_out(tracks + pending, rotation, tracks, now)
+    rows = tracks + pending
+    stats = _review_stats(db, rotation)
+    out = _tracks_out(rows, rotation, tracks, now)
+    for row, track in zip(rows, out):
+        track.times_kept, track.last_reviewed_at = stats.get(row.id, (0, None))
+    return out
 
 
 def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: str) -> TrackOut:

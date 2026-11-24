@@ -8,6 +8,7 @@ import {
   ButtonBase,
   Chip,
   Divider,
+  IconButton,
   InputAdornment,
   ListItemIcon,
   Menu,
@@ -19,6 +20,8 @@ import {
 } from '@mui/material';
 import {
   AddCircleOutline,
+  ArrowDownward,
+  ArrowUpward,
   AutoMode,
   Autorenew,
   Delete,
@@ -96,6 +99,46 @@ const DueLabel = ({ track, auto }) => {
   );
 };
 
+// Current songs sort options. Ties (and unknown dates, which go last) fall back to the title.
+const SORTS = {
+  due: { label: 'Due date', autoLabel: 'Leaving date', key: (t) => t.due_at, dir: 'asc' },
+  added: { label: 'Date added', key: (t) => t.added_at, dir: 'desc' },
+  reviewed: { label: 'Last reviewed', key: (t) => t.last_reviewed_at, dir: 'desc' },
+  title: { label: 'Title', key: null, dir: 'asc' },
+  kept: { label: 'Times kept', key: (t) => t.times_kept, dir: 'desc' },
+};
+const SORT_KEY = 'playls.songSort';
+
+const byTitle = (a, b) =>
+  a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }) || a.track_id.localeCompare(b.track_id);
+
+const sortSongs = (tracks, by, dir) => {
+  const sign = dir === 'asc' ? 1 : -1;
+  const key = SORTS[by].key;
+  return [...tracks].sort((a, b) => {
+    if (!key) return sign * byTitle(a, b);
+    const va = key(a);
+    const vb = key(b);
+    if (va == null || vb == null) {
+      if (va != null) return -1; // unknown last, in either direction
+      if (vb != null) return 1;
+      return byTitle(a, b);
+    }
+    if (va !== vb) return sign * (va < vb ? -1 : 1); // ISO timestamps compare as strings
+    return byTitle(a, b);
+  });
+};
+
+const loadSort = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SORT_KEY));
+    if (saved && SORTS[saved.by] && ['asc', 'desc'].includes(saved.dir)) return saved;
+  } catch (e) {
+    // blocked storage or bad JSON: use the default
+  }
+  return { by: 'due', dir: 'asc' };
+};
+
 const SongRow = ({ track, auto }) => (
   <Box sx={{
     display: 'flex', alignItems: 'center', gap: 2, px: 1.5, py: 1.25, borderRadius: 999,
@@ -116,7 +159,12 @@ const SongRow = ({ track, auto }) => (
         {track.is_playable === false && ' · unavailable'}
       </Typography>
     </Box>
-    <Box pr={1.5}><DueLabel track={track} auto={auto} /></Box>
+    <Box pr={1.5} display="flex" flexDirection="column" alignItems="flex-end" flexShrink={0}>
+      <DueLabel track={track} auto={auto} />
+      <Typography variant="caption" sx={{ opacity: 0.75, whiteSpace: 'nowrap' }}>
+        Kept {track.times_kept ?? 0}×
+      </Typography>
+    </Box>
   </Box>
 );
 
@@ -130,6 +178,7 @@ const RotationPage = () => {
   const [tracks, setTracks] = useState(null);
   const [lastReviewed, setLastReviewed] = useState(undefined);
   const [filter, setFilter] = useState('');
+  const [sort, setSort] = useState(loadSort);
   const [error, setError] = useState('');
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [dialog, setDialog] = useState(null); // 'edit' | 'reset' | 'unplayable' | 'delete'
@@ -155,9 +204,16 @@ const RotationPage = () => {
 
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return tracks || [];
-    return (tracks || []).filter((t) => `${t.title} ${t.artists || ''} ${t.album || ''}`.toLowerCase().includes(q));
-  }, [tracks, filter]);
+    const matching = q
+      ? (tracks || []).filter((t) => `${t.title} ${t.artists || ''} ${t.album || ''}`.toLowerCase().includes(q))
+      : tracks || [];
+    return sortSongs(matching, sort.by, sort.dir);
+  }, [tracks, filter, sort]);
+
+  const changeSort = (next) => {
+    setSort(next);
+    try { localStorage.setItem(SORT_KEY, JSON.stringify(next)); } catch (e) { /* not remembered */ }
+  };
 
   const closeDialog = (changed) => { setDialog(null); if (changed) load(); };
   const menuItem = (icon, label, onClick, props = {}) => (
@@ -256,10 +312,27 @@ const RotationPage = () => {
             <SongRowsSkeleton />
           ) : (
             <>
-              {tracks.length > 8 && (
-                <TextField fullWidth size="small" placeholder="Filter songs" value={filter}
-                  onChange={(e) => setFilter(e.target.value)} sx={{ mb: 2 }}
-                  InputProps={{ startAdornment: <InputAdornment position="start"><Search /></InputAdornment> }} />
+              {tracks.length > 1 && (
+                <Box display="flex" gap={1} mb={2} flexWrap="wrap">
+                  {tracks.length > 8 && (
+                    <TextField size="small" placeholder="Filter songs" value={filter}
+                      onChange={(e) => setFilter(e.target.value)} sx={{ flex: '1 1 180px' }}
+                      InputProps={{ startAdornment: <InputAdornment position="start"><Search /></InputAdornment> }} />
+                  )}
+                  <Box display="flex" gap={0.5} alignItems="center" sx={{ flex: '0 0 auto', ml: 'auto' }}>
+                    <TextField select size="small" label="Sort by" value={sort.by} sx={{ minWidth: 160 }}
+                      onChange={(e) => changeSort({ by: e.target.value, dir: SORTS[e.target.value].dir })}>
+                      {Object.entries(SORTS).map(([value, s]) => (
+                        <MenuItem key={value} value={value}>{isAuto && s.autoLabel ? s.autoLabel : s.label}</MenuItem>
+                      ))}
+                    </TextField>
+                    <IconButton
+                      aria-label={sort.dir === 'asc' ? 'Ascending (tap for descending)' : 'Descending (tap for ascending)'}
+                      onClick={() => changeSort({ ...sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' })}>
+                      {sort.dir === 'asc' ? <ArrowUpward /> : <ArrowDownward />}
+                    </IconButton>
+                  </Box>
+                </Box>
               )}
               {shown.length === 0 ? (
                 <Typography color="text.secondary" textAlign="center" py={3}>

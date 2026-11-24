@@ -562,3 +562,24 @@ def test_changing_a_decision_replaces_it(client, spotify, db):
     assert [h["action"] for h in client.get(f"/api/rotation/{rid}/history").json()] == ["skip"]
     assert client.get(f"/api/rotation/{rid}/queue").json()["reviewed_today"] == 1
     assert client.get(f"/api/rotation/{rid}/tracks").json()[0]["status"] == "active"
+
+
+def test_tracks_report_times_kept_and_last_review(client, spotify, db):
+    from rest_api.database.models import RotationTrackDB
+    rid = make_rotation(client, spotify, [spotify_item(t, 60) for t in ("a", "b", "c")], grace=False)["id"]
+    review = lambda t, action: client.post(f"/api/rotation/{rid}/review", json={"track_id": t, "action": action})
+
+    assert review("a", "keep").status_code == 200
+    # Due again, kept again: a song's keeps add up
+    row = db.query(RotationTrackDB).filter_by(rotation_id=rid, track_id="a").one()
+    row.last_kept_at -= timedelta(days=90)
+    db.commit()
+    assert review("a", "super_keep").status_code == 200
+    review("b", "keep")
+    review("b", "undo")  # undo takes the keep back
+    review("b", "skip")
+
+    tracks = {t["track_id"]: t for t in client.get(f"/api/rotation/{rid}/tracks").json()}
+    assert (tracks["a"]["times_kept"], tracks["b"]["times_kept"], tracks["c"]["times_kept"]) == (2, 0, 0)
+    assert tracks["a"]["last_reviewed_at"] and tracks["b"]["last_reviewed_at"]  # a skip is a review
+    assert tracks["c"]["last_reviewed_at"] is None

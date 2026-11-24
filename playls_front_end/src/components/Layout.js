@@ -12,9 +12,10 @@ import {
   Switch,
   Typography,
 } from '@mui/material';
-import { ArrowBack, DarkMode, Home, Logout, Menu as MenuIcon, QueueMusic, Settings, Star } from '@mui/icons-material';
+import { ArrowBack, DarkMode, HelpOutline, Home, Logout, Menu as MenuIcon, QueueMusic, Settings, Star } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
+import { HelpDialog } from './Help';
 
 // Minimal top bar from the wireframes: back arrow (or the PlayLS wordmark on top-level
 // pages) on the left, a ☰ menu on the right.
@@ -23,6 +24,7 @@ const TopBar = ({ back }) => {
   const { mode, toggle } = useColorMode();
   const navigate = useNavigate();
   const [anchor, setAnchor] = useState(null);
+  const [help, setHelp] = useState(false);
   const go = (to) => { setAnchor(null); navigate(to); };
 
   return (
@@ -37,9 +39,15 @@ const TopBar = ({ back }) => {
           PlayLS
         </Typography>
       )}
-      <IconButton aria-label="Menu" onClick={(e) => setAnchor(e.currentTarget)} edge="end" sx={{ color: 'text.primary' }}>
-        <MenuIcon />
-      </IconButton>
+      <Box display="flex" alignItems="center">
+        <IconButton aria-label="How PlayLS works" onClick={() => setHelp(true)} sx={{ color: 'text.primary' }}>
+          <HelpOutline />
+        </IconButton>
+        <IconButton aria-label="Menu" onClick={(e) => setAnchor(e.currentTarget)} edge="end" sx={{ color: 'text.primary' }}>
+          <MenuIcon />
+        </IconButton>
+      </Box>
+      <HelpDialog open={help} onClose={() => setHelp(false)} userId={user?.id} />
       <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
         <MenuItem onClick={() => go('/')}><ListItemIcon><Home fontSize="small" /></ListItemIcon>Home</MenuItem>

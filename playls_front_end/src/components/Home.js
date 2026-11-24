@@ -19,6 +19,7 @@ import { api, errorMessage } from '../api';
 import { Layout, PlaylistCover, relativeDays } from './Layout';
 import { CreateRotationDialog, formatInterval } from './RotationDialogs';
 import { RotationCardsSkeleton } from './Skeletons';
+import { HelpDialog, hasSeenHelp } from './Help';
 
 const Landing = ({ login }) => (
   <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -110,6 +111,7 @@ const Home = () => {
   const [creating, setCreating] = useState(false);
   const [syncing, setSyncing] = useState(() => new Set()); // rotation ids still checking Spotify
   const generation = useRef(0); // ignores syncs from an earlier load
+  const [help, setHelp] = useState(false);
 
   // Show what's stored right away, then check each rotation against Spotify in parallel
   // (one request each) and update its card when it answers.
@@ -142,6 +144,12 @@ const Home = () => {
   useEffect(() => {
     if (user) fetchRotations();
   }, [user, fetchRotations]);
+
+  // First visit of a new account: no rotations yet and the guide not seen on this device
+  const noRotations = rotations !== null && rotations.length === 0;
+  useEffect(() => {
+    if (user && noRotations && !hasSeenHelp(user.id)) setHelp(true);
+  }, [user, noRotations]);
 
   if (!user) return <Landing login={login} />;
 
@@ -186,6 +194,7 @@ const Home = () => {
         </Grid>
       )}
 
+      <HelpDialog open={help} onClose={() => setHelp(false)} userId={user.id} />
       <CreateRotationDialog open={creating} onClose={() => setCreating(false)}
         onCreated={() => { setCreating(false); fetchRotations(); }} />
     </Layout>

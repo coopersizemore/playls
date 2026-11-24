@@ -53,8 +53,9 @@ const Line = ({ width, sx }) => (
 
 // ---------- visuals ----------
 
-// A lazy Susan: songs ride around the turntable and come up for review at the front
-const RotationVisual = () => {
+// A lazy Susan: songs ride around the turntable and come up for review at the front.
+// Also used on the logged-out landing page, without the "Due" marker.
+export const RotationVisual = ({ showDue = true }) => {
   const n = 8;
   const radius = 56;
   return (
@@ -82,8 +83,10 @@ const RotationVisual = () => {
         <QueueMusic sx={{ color: 'text.secondary' }} />
       </Box>
       {/* The review point at the front of the turntable */}
-      <Chip size="small" label="Due" color="primary"
-        sx={{ position: 'absolute', bottom: -6, left: '50%', transform: 'translateX(-50%)', fontWeight: 600 }} />
+      {showDue && (
+        <Chip size="small" label="Due" color="primary"
+          sx={{ position: 'absolute', bottom: -6, left: '50%', transform: 'translateX(-50%)', fontWeight: 600 }} />
+      )}
     </Box>
   );
 };

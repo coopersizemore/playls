@@ -19,7 +19,7 @@ import { api, errorMessage } from '../api';
 import { Layout, PlaylistCover, relativeDays, Wordmark } from './Layout';
 import { CreateRotationDialog, formatInterval } from './RotationDialogs';
 import { RotationCardsSkeleton } from './Skeletons';
-import { HelpDialog, hasSeenHelp } from './Help';
+import { HelpDialog, hasSeenHelp, RotationVisual } from './Help';
 
 const Landing = ({ login }) => (
   <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -27,8 +27,10 @@ const Landing = ({ login }) => (
       <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 700, letterSpacing: '0.04em' }}>
         <Wordmark />
       </Typography>
+      <Box my={4}><RotationVisual showDue={false} /></Box>
       <Typography variant="h6" color="text.secondary" paragraph>
-        A lazy Susan for your playlists. Songs come back around for review, and you decide what stays.
+        A <Box component="span" sx={{ color: 'primary.main' }}>Lazy Susan</Box> for your playlists. Songs come
+        back around for review, and you decide what stays.
       </Typography>
       <Button variant="contained" size="large" onClick={login} sx={{ mt: 4, px: 4, py: 1.5 }}>
         Log in with Spotify

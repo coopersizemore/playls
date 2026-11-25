@@ -40,6 +40,33 @@ class DeckOut(BaseModel):
     already_in_rotation: int = 0
 
 
+class OutcomeSourceOut(BaseModel):
+    source: str
+    added: int
+    played: int  # of those, played at least once since being added
+
+
+class OutcomeSongOut(BaseModel):
+    track_id: str
+    title: str | None
+    artists: str | None
+    image_url: str | None
+    source: str
+    added_at: datetime
+    plays: int  # since being added (anywhere)
+    status: str  # still in the rotation (active) or not
+
+
+class RestockOutcomesOut(BaseModel):
+    """How restocked songs have worked out, from listening history. Display only."""
+    enabled: bool  # listening history on
+    window_days: int
+    added: int
+    played: int
+    by_source: list[OutcomeSourceOut]
+    songs: list[OutcomeSongOut]  # newest add first
+
+
 class SearchOut(BaseModel):
     items: list[CandidateOut]
     next_offset: int | None

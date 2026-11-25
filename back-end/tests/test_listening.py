@@ -247,3 +247,20 @@ def test_restock_cards_show_recent_plays(client, db, user, spotify):
     deck = client.get(f"/api/rotation/{rid}/restock/deck/bring_back").json()
     a00 = next(c for c in deck["items"] if c["track_id"] == "a00")
     assert a00["listening"]["plays"] == 6 and a00["listening"]["window_days"] == 28
+
+
+def test_restock_outcomes(client, db, user, spotify):
+    from helpers import restock_action
+
+    rid = _busy_rotation(client, db, user, spotify)
+    spotify.catalog["new1"] = track_object("new1")
+    spotify.catalog["new2"] = track_object("new2")
+    assert restock_action(client, rid, "add", "new1", "search").status_code == 201
+    assert restock_action(client, rid, "add", "new2", "suggested").status_code == 201
+    add_plays(db, user, "new1", 2, days_ago=(-0.01, -0.005))
+    body = client.get(f"/api/rotation/{rid}/restock/outcomes").json()
+    assert body["enabled"] and body["added"] == 2 and body["played"] == 1
+    by_source = {s["source"]: s for s in body["by_source"]}
+    assert by_source["search"] == {"source": "search", "added": 1, "played": 1}
+    assert by_source["suggested"]["played"] == 0
+    assert {s["track_id"]: s["plays"] for s in body["songs"]} == {"new1": 2, "new2": 0}

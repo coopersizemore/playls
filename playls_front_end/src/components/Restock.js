@@ -41,6 +41,7 @@ import SwipeCard, { EXIT_MS } from './SwipeCard';
 import SongStage, { DetailsPanel, NavRow, PanelNote, PanelSection } from './SongStage';
 import { ListSkeleton, SongCardSkeleton } from './Skeletons';
 import { PlaysIcon, windowLabel } from './Listening';
+import RestockOutcomes from './RestockOutcomes';
 
 const TABS = [
   { source: 'bring_back', label: 'Bring back', empty: 'Nothing to bring back yet. Songs you remove from this rotation show up here, weighted more strongly the longer they have been gone.' },
@@ -446,6 +447,7 @@ const Restock = () => {
               : 'Find songs to add to this rotation.'}
             {rotation?.is_liked && ' Adding a song likes it in Spotify.'}
           </Typography>
+          <RestockOutcomes rotationId={rotationId} refreshKey={addedTotal} />
         </Box>
       </Box>
       <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile

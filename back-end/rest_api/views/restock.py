@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 from ..database.config import get_db
 from ..database.models.analytics_event import RESTOCK
 from ..database.models.user import UserDB
-from ..models.restock import BlockedSongOut, DeckOut, DeckSource, RestockActionIn, SearchOut
+from ..models.restock import BlockedSongOut, DeckOut, DeckSource, RestockActionIn, RestockOutcomesOut, SearchOut
 from ..models.rotation import TrackOut
+from ..services import listening_reports, telemetry
 from ..services import restock_service as restock
-from ..services import telemetry
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
 from ..services.sync_service import claim_or_409
@@ -43,6 +43,18 @@ async def get_deck(
     if source == "picks":
         return restock.picks_deck(db, rotation, user, tz_offset)
     return await restock.suggested_deck(db, rotation, user, tz_offset, refresh)
+
+
+@router.get("/outcomes", response_model=RestockOutcomesOut)
+async def outcomes(
+    rotation_id: int,
+    days: int = Query(90, ge=7, le=365),
+    db: Session = Depends(get_db),
+    user: UserDB = current_user_dep,
+):
+    """Songs added to this rotation in the last `days` and whether they've been played since
+    (listening history). Changes nothing about how suggestions are scored."""
+    return listening_reports.restock_outcomes(db, rs.get_owned_or_404(db, rotation_id, user), user, days)
 
 
 @router.get("/search", response_model=SearchOut)

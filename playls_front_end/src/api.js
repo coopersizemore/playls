@@ -75,6 +75,8 @@ export const api = {
   // Restock (source: bring_back | picks | suggested)
   restockDeck: (id, source, { refresh = false } = {}) =>
     data(axios.get(`${API_BASE}/rotation/${id}/restock/deck/${source}`, { params: { refresh, ...tz() } })),
+  // Restocked songs and whether they've been played since: { enabled, added, played, by_source, songs }
+  restockOutcomes: (id) => data(axios.get(`${API_BASE}/rotation/${id}/restock/outcomes`)),
   restockSearch: (id, q, offset = 0) =>
     data(axios.get(`${API_BASE}/rotation/${id}/restock/search`, { params: { q, offset } })),
   restockAdd: (id, trackId, source, telemetry) =>

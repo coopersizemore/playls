@@ -46,6 +46,7 @@ import {
   SUPER_KEEP_OPTIONS,
 } from './SettingsControls';
 import { ListSkeleton } from './Skeletons';
+import ListeningImport from './ListeningImport';
 
 const DEFAULT_LIMIT = 50;
 const REVIEW_EXTRAS = [
@@ -237,6 +238,8 @@ const ListeningCard = ({ settings, save }) => {
             Log out and back in so PlayLS can read your recently played songs and top tracks.
           </Alert>
         )}
+        {/* The demo has no Spotify account to export from */}
+        {on && !IS_DEMO && <MoreOptions label="Import your Spotify history"><ListeningImport onDone={load} /></MoreOptions>}
       </CardContent>
       <Dialog open={confirmOff} onClose={() => setConfirmOff(false)}>
         <DialogTitle>Turn off listening history?</DialogTitle>

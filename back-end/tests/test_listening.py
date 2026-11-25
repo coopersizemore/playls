@@ -287,3 +287,64 @@ def test_rediscover_deck(client, db, user, spotify):
     user.listening_since = utcnow() - timedelta(days=30)
     db.commit()
     assert client.get(f"/api/rotation/{rid}/restock/deck/rediscover").json()["items"] == []
+
+
+# ---------- import (Extended Streaming History) ----------
+
+def _export_row(track_id, days_ago, ms=200000, skipped=False, title=None):
+    ts = (utcnow() - timedelta(days=days_ago)).replace(microsecond=0).isoformat() + "Z"
+    return {"ts": ts, "ms_played": ms, "uri": f"spotify:track:{track_id}", "track": title or f"Song {track_id}",
+            "artist": "Artist A", "album": "Album", "reason_end": "trackdone", "skipped": skipped}
+
+
+def test_import_adds_plays_skips_duplicates_and_extends_history(client, db, user, spotify):
+    spotify.played = [played_entry("a", 60 * 24 * 2)]  # captured 2 days ago
+    client.post("/api/user/me/listening/capture")
+    captured_since = user.listening_since
+    captured = _plays(db, user)[0].played_at
+    rows = [
+        _export_row("x", 100), _export_row("x", 90, ms=5000, skipped=True), _export_row("y", 50),
+        {**_export_row("a", 0), "ts": (captured + timedelta(minutes=2)).isoformat() + "Z"},  # same play as captured
+        _export_row("z", 500),  # past the one-year retention
+    ]
+    body = client.post("/api/user/me/listening/import", json={"rows": rows}).json()
+    assert body == {"received": 4, "added": 3, "duplicates": 1}
+    db.refresh(user)
+    assert user.listening_since < captured_since
+    imported = db.query(PlayEventDB).filter_by(source="import").all()
+    assert {p.track_id for p in imported} == {"x", "y"}
+    assert any(p.skipped and p.ms_played == 5000 for p in imported)
+    # The export reaches into captured history (the duplicate play), so nothing is missing
+    assert db.query(ListeningGapDB).count() == 0
+    # Importing the same file again adds nothing
+    assert client.post("/api/user/me/listening/import", json={"rows": rows}).json()["added"] == 0
+
+
+def test_import_ending_before_captured_history_leaves_a_gap(client, db, user, spotify):
+    spotify.played = [played_entry("a", 60 * 24 * 2)]
+    client.post("/api/user/me/listening/capture")
+    captured_since = user.listening_since
+    client.post("/api/user/me/listening/import", json={"rows": [_export_row("x", 100), _export_row("y", 50)]})
+    gap = db.query(ListeningGapDB).one()
+    assert gap.gap_end == captured_since and gap.gap_start < captured_since
+
+
+def test_imported_skips_show_but_short_starts_dont_count_as_plays(client, db, user, spotify):
+    from helpers import backdate_rotation, make_rotation, spotify_item
+
+    rot = make_rotation(client, spotify, [spotify_item("k1", 100)])
+    backdate_rotation(db, rot["id"], 100)
+    rows = [_export_row("k1", d, ms=4000, skipped=True, title="Song k1") for d in (3, 5, 7)]
+    rows.append(_export_row("k1", 9, title="Song k1"))
+    client.post("/api/user/me/listening/import", json={"rows": rows})
+    track = client.get(f"/api/rotation/{rot['id']}/tracks").json()[0]
+    assert track["listening"]["plays"] == 1
+    assert track["listening"]["starts"] == 4 and track["listening"]["skips"] == 3
+
+
+def test_import_validation(client, db, user):
+    assert client.post("/api/user/me/listening/import", json={"rows": [{"ts": "x"}]}).status_code == 422
+    bad_uri = {**_export_row("a", 1), "uri": "spotify:episode:abc"}
+    assert client.post("/api/user/me/listening/import", json={"rows": [bad_uri]}).status_code == 422
+    client.put("/api/user/me/settings", json={"listening_enabled": False})
+    assert client.post("/api/user/me/listening/import", json={"rows": []}).status_code == 409

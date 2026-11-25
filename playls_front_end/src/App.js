@@ -15,6 +15,7 @@ import { DEMO_BASENAME, IS_DEMO } from './demo';
 
 // Admin-only and chart-heavy: loaded on demand so other pages don't carry it
 const AdminStats = lazy(() => import('./components/AdminStats'));
+const Recap = lazy(() => import('./components/Recap'));
 
 const authed = (element) => <RequireAuth>{element}</RequireAuth>;
 
@@ -31,6 +32,7 @@ function App() {
             <Route path="/rotation/:rotationId/review" element={authed(<Review />)} />
             <Route path="/rotation/:rotationId/history" element={authed(<History />)} />
             <Route path="/rotation/:rotationId/restock" element={authed(<Restock />)} />
+            <Route path="/rotation/:rotationId/recap" element={authed(<Suspense fallback={null}><Recap /></Suspense>)} />
             <Route path="/settings" element={authed(<Settings />)} />
             <Route path="/admin/picks" element={authed(<AdminPicks />)} />
             <Route path="/admin/stats" element={authed(<Suspense fallback={null}><AdminStats /></Suspense>)} />

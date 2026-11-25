@@ -65,6 +65,9 @@ export const api = {
   // Daily listening for a rotation (newest day first): { since, days: [{ date, plays_here, plays_elsewhere, songs }] }
   listeningDigest: (id, { days = 30 } = {}) =>
     data(axios.get(`${API_BASE}/rotation/${id}/listening`, { params: { days, ...tz() } })),
+  // One month of a rotation (month: 'YYYY-MM', default this month); `months` lists the choices
+  recap: (id, month) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/recap`, { params: { ...(month ? { month } : {}), ...tz() } })),
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
   // Listening history: save the latest plays (throttled on the server), its status, an export import
   captureListening: () => data(axios.post(`${API_BASE}/user/me/listening/capture`)),

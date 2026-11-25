@@ -348,3 +348,28 @@ def test_import_validation(client, db, user):
     assert client.post("/api/user/me/listening/import", json={"rows": [bad_uri]}).status_code == 422
     client.put("/api/user/me/settings", json={"listening_enabled": False})
     assert client.post("/api/user/me/listening/import", json={"rows": []}).status_code == 409
+
+
+# ---------- recap ----------
+
+def test_recap(client, db, user, spotify):
+    from helpers import restock_action, review
+
+    rid = _busy_rotation(client, db, user, spotify)
+    review(client, rid, "a03", "keep")
+    review(client, rid, "a04", "remove")
+    spotify.catalog["new1"] = track_object("new1")
+    restock_action(client, rid, "add", "new1", "search")
+    add_plays(db, user, "new1", 1, days_ago=(-0.01, -0.005))
+    month = utcnow().strftime("%Y-%m")
+    body = client.get(f"/api/rotation/{rid}/recap", params={"month": month}).json()
+    assert body["month"] == month and body["months"][0] == month
+    assert body["listening_enabled"] and body["covered"]
+    assert body["kept"] == 1 and body["removed"] == 1 and body["added"] == 1 and body["adds_played"] == 1
+    assert body["added_by_source"] == {"search": 1}
+    assert body["plays_here"] == sum(d["plays_here"] for d in body["days"])
+    assert body["top_songs"][0]["track_id"] == "a00" and body["top_songs"][0]["plays"] <= 6
+    assert body["most_kept"][0]["track_id"] == "a03"
+    assert client.get(f"/api/rotation/{rid}").status_code == 200
+    assert client.get(f"/api/rotation/{rid}/recap").json()["month"] == month  # defaults to this month
+    assert client.get(f"/api/rotation/{rid}/recap", params={"month": "2026-13"}).status_code == 422

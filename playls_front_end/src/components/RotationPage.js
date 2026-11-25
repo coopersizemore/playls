@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Avatar,
@@ -26,6 +26,7 @@ import {
   Autorenew,
   Delete,
   Edit,
+  InsertChartOutlined,
   MusicNote,
   PlaylistRemove,
   RestartAlt,
@@ -303,6 +304,8 @@ const RotationPage = () => {
           {rotation.listening.plays_here} play{rotation.listening.plays_here === 1 ? '' : 's'} from this playlist in{' '}
           {windowLabel(rotation.listening.window_days)}
           {rotation.listening.top_song && ` · most played: ${rotation.listening.top_song}`}
+          {' · '}
+          <Box component={RouterLink} to={`/rotation/${rotation.id}/recap`} sx={{ color: 'primary.main' }}>Recap</Box>
         </Typography>
       )}
 
@@ -345,6 +348,7 @@ const RotationPage = () => {
 
       <Menu anchorEl={menuAnchor} open={!!menuAnchor} onClose={() => setMenuAnchor(null)}>
         {menuItem(<Edit fontSize="small" />, 'Edit rotation', () => setDialog('edit'))}
+        {menuItem(<InsertChartOutlined fontSize="small" />, 'Monthly recap', () => navigate(`/rotation/${rotation.id}/recap`))}
         {menuItem(<ViewList fontSize="small" />, 'Review all songs',
           () => navigate(`/rotation/${rotation.id}/review?all=1`), { disabled: rotation.active_count === 0 })}
         {!isAuto && menuItem(<RestartAlt fontSize="small" />, 'Reset all songs to not due…', () => setDialog('reset'),

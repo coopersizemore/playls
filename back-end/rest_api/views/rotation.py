@@ -177,6 +177,21 @@ async def get_history(
     return events
 
 
+@router.get("/{rotation_id}/recap")
+async def get_recap(
+    rotation_id: int,
+    month: str | None = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM (default: this month)"),
+    tz_offset: int = Query(0, ge=-840, le=840, description="JS Date.getTimezoneOffset() of the client"),
+    db: Session = Depends(get_db),
+    user: UserDB = current_user_dep,
+):
+    """One month of this rotation: plays (listening history), top songs, turnover and how
+    restocked songs did. `months` lists the months available, newest first."""
+    rotation = rs.get_owned_or_404(db, rotation_id, user)
+    return listening_reports.recap(db, rotation, month or listening_reports.recap_months(rotation, tz_offset)[0],
+                                   tz_offset)
+
+
 @router.get("/{rotation_id}/listening", response_model=ListeningDigestOut)
 async def get_listening(
     rotation_id: int,

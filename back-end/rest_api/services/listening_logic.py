@@ -30,10 +30,6 @@ HEAVY_SHIFT_INTERVALS = 1.0
 FEW_PLAYS_SHIFT_INTERVALS = 0.5
 NO_SHIFT_AFTER_OVERDUE_INTERVALS = 2  # songs this overdue are ordered purely by due date
 
-# Bring back: each play since removal raises the weight, up to this many plays
-BRING_BACK_PLAY_BOOST = 0.5
-BRING_BACK_MAX_PLAYS = 4
-TOP_COUNTS_AS_PLAYS = 2
 
 
 @dataclass
@@ -222,12 +218,6 @@ def protected_by_plays(songs: dict[int, SongListening], row_ids: Sequence[int], 
         key=lambda r: (-songs[r].plays, -songs[r].heavy_strength, r),
     )
     return set(ranked[:n])
-
-
-def bring_back_play_multiplier(plays_since: int, top: bool = False) -> float:
-    """Bring back weight boost for a removed song you've kept playing elsewhere."""
-    plays = min(BRING_BACK_MAX_PLAYS, plays_since + (TOP_COUNTS_AS_PLAYS if top else 0))
-    return 1 + BRING_BACK_PLAY_BOOST * plays
 
 
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",

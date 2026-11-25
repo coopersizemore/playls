@@ -29,8 +29,10 @@ from rest_api.database.models.rotation_track import (
 from rest_api.database.models.user import DEMO, UserDB
 from rest_api.services import auto_rotation_logic as auto
 from rest_api.services import health, restock_logic
+from rest_api.services import listening_service as listening
 from rest_api.services import preferences as prefs
 from rest_api.services import restock_service as rsv
+from rest_api.services.db.rotation_service import auto_listening_args
 from rest_api.services.sync_service import source_add, source_remove, write_adopting_snapshot
 
 logger = logging.getLogger(__name__)
@@ -73,9 +75,11 @@ async def choose_additions(
         and auto.cooled_down(r.removed_at, now, cooldown)
     ]
     keeps = rsv.keep_counts(db, removed)
+    played = listening.plays_since(db, user, removed)
     back_weights = [
         restock_logic.bring_back_weight(
-            r.removed_at, now, skips[r.track_id], keeps[r.id], rsv.recovery_days(user), rsv.skip_factor(user)
+            r.removed_at, now, skips[r.track_id], keeps[r.id], rsv.recovery_days(user), rsv.skip_factor(user),
+            *played.get(r.id, (0, False)),
         )
         for r in removed
     ]
@@ -151,6 +155,7 @@ async def _rotate_out(db: orm.Session, rotation: RotationDB, user: UserDB, leavi
     await write_adopting_snapshot(db, rotation, user, lambda: source_remove(db, rotation, user, uris))
     for track in leaving:
         track.status = REMOVED
+        track.listening_holds = 0
         track.removed_at = now
         track.removed_by = REMOVED_BY_ROTATION
         db.add(ReviewEventDB(rotation_track_id=track.id, action=ROTATED_OUT, created_at=now))
@@ -174,6 +179,7 @@ async def _add(db: orm.Session, rotation: RotationDB, user: UserDB, chosen: list
         row.status, row.added_at, row.last_kept_at, row.keep_multiplier = ACTIVE, now, None, 1
         row.removed_at = row.removed_by = None
         row.is_playable = True
+        row.listening_holds = 0
         db.flush()
         db.add(ReviewEventDB(rotation_track_id=row.id, action=AUTO_ADDED, created_at=now))
         db.add(RestockFeedbackDB(
@@ -215,8 +221,10 @@ async def maintain(db: orm.Session, rotation: RotationDB, user: UserDB, now=None
             return result
         # Leaving order uses the period that just ended
         rotation.last_rotated_at = previous
-        leaving = auto.choose_rotate_out(active, rotation, now)
+        leaving, held = auto.plan_rotate_out(active, rotation, now, **auto_listening_args(rotation, active, now))
         rotation.last_rotated_at = now
+        for track in held:
+            track.listening_holds = (track.listening_holds or 0) + 1  # stays this time: you play it a lot
         try:
             await _rotate_out(db, rotation, user, leaving, now)
         except Exception:

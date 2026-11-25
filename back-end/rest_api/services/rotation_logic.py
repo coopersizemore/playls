@@ -15,6 +15,7 @@ from typing import Any
 
 from rest_api.clock import to_naive_utc
 from rest_api.database.models.rotation_track import ACTIVE
+from rest_api.services.listening_logic import queue_shift
 
 
 def due_at(track, rotation) -> datetime | None:
@@ -148,10 +149,17 @@ def parse_playlist_items(entries: Iterable[dict[str, Any]]) -> dict[str, Playlis
     return tracks
 
 
-def sort_queue(tracks: list, rotation, order: str = "overdue", day_key: str = "") -> list:
+def sort_queue(
+    tracks: list, rotation, order: str = "overdue", day_key: str = "", listening: dict | None = None,
+    now: datetime | None = None,
+) -> list:
     """The review queue's order. Ties are broken by title for a stable order.
 
-    overdue: most overdue first (the default).
+    listening: most overdue first, nudged by listening history (`listening`: {row id:
+             SongListening}): heavily played songs up to an interval later, confidently
+             rarely played ones half an interval sooner, nothing moved once a song is two
+             intervals overdue (listening_logic.queue_shift). With no history it's `overdue`.
+    overdue: most overdue first.
     oldest:  longest in the playlist first (unknown add dates first, as the likely oldest).
     shuffle: a random order that stays the same for the day (`day_key`), so the daily
              batch doesn't change between page loads.
@@ -165,4 +173,11 @@ def sort_queue(tracks: list, rotation, order: str = "overdue", day_key: str = ""
             digest = hashlib.sha256(f"{day_key}:{t.track_id}".encode()).hexdigest()
             return (digest, t.title.lower())
         return sorted(tracks, key=shuffle_key)
+    if order == "listening" and listening and now is not None:
+        interval = timedelta(hours=rotation.interval_hours)
+
+        def listening_key(t):
+            due = due_at(t, rotation)
+            return (due + queue_shift(listening.get(t.id), due, interval, now), t.title.lower())
+        return sorted(tracks, key=listening_key)
     return sorted(tracks, key=lambda t: (due_at(t, rotation), t.title.lower()))

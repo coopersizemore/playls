@@ -227,9 +227,11 @@ def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offs
         if r.track_id not in hidden and r.is_playable
     ]
     keeps = keep_counts(db, removed)
+    played = listening.plays_since(db, user, removed)  # {row id: (plays since removal, top track)}
     weights = [
         logic.bring_back_weight(
-            r.removed_at, now, skips[r.track_id], keeps[r.id], recovery_days(user), skip_factor(user)
+            r.removed_at, now, skips[r.track_id], keeps[r.id], recovery_days(user), skip_factor(user),
+            *played.get(r.id, (0, False)),
         )
         for r in removed
     ]
@@ -238,7 +240,7 @@ def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offs
     )
     return DeckOut(source=BRING_BACK, items=with_listening(db, user, [
         _candidate(row_meta(r), BRING_BACK, score=round(w, 4),
-                   reason=logic.bring_back_reason(r.removed_at, now, keeps[r.id]))
+                   reason=logic.bring_back_reason(r.removed_at, now, keeps[r.id], played.get(r.id, (0,))[0]))
         for r, w in ordered[:deck_size(user)]
     ]))
 
@@ -509,6 +511,7 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
     # A fresh start: comes due one interval from now
     row.status, row.added_at, row.last_kept_at, row.keep_multiplier = ACTIVE, now, None, 1
     row.removed_at = row.removed_by = None
+    row.listening_holds = 0
     db.add(RestockFeedbackDB(
         user_id=user.id, rotation_id=rotation.id, track_id=track_id, source=source, action=ADD, created_at=now,
         previous_state=json.dumps(previous),

@@ -12,6 +12,8 @@ import random
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
+from rest_api.services.listening_logic import protected_by_plays
+
 DEFAULT_TARGET_SIZE = 50
 DEFAULT_ROTATE_PERCENT = 20
 DEFAULT_INTERVAL_HOURS = 7 * 24
@@ -67,35 +69,66 @@ def rotate_out_order(tracks: Sequence, rotation, now: datetime) -> list:
     )
 
 
-def choose_rotate_out(tracks: Sequence, rotation, now: datetime) -> list:
-    """The songs leaving at a rotation happening now (never protected ones)."""
+def plan_rotate_out(
+    tracks: Sequence, rotation, now: datetime, listening: dict | None = None, hold_cap: int = 0,
+    protect_percent: int = 0,
+) -> tuple[list, list]:
+    """(leaving, held) for a rotation happening now.
+
+    Never protected (kept) songs. With listening history (`listening`: {row id:
+    SongListening}): the most played `protect_percent`% never leave, and a heavily played
+    song whose turn it is may stay instead, at most `hold_cap` rotations in a row (its
+    `listening_holds`); the next song in line leaves in its place. If there aren't enough
+    others, held songs leave after all, so turnover never stalls.
+    """
     n = rotate_out_count(rotation.target_size, rotation.rotate_percent, len(tracks))
-    return [t for t in rotate_out_order(tracks, rotation, now) if not is_protected(t, rotation)][:n]
+    listening = listening or {}
+    shielded = protected_by_plays(listening, [t.id for t in tracks], protect_percent)
+    candidates = [
+        t for t in rotate_out_order(tracks, rotation, now) if not is_protected(t, rotation) and t.id not in shielded
+    ]
+    leaving, held = [], []
+    for t in candidates:
+        if len(leaving) >= n:
+            break
+        s = listening.get(t.id)
+        if s is not None and s.heavy and (getattr(t, "listening_holds", 0) or 0) < hold_cap:
+            held.append(t)
+            continue
+        leaving.append(t)
+    while len(leaving) < n and held:
+        leaving.append(held.pop(0))
+    return leaving, held
 
 
-def leaving_schedule(tracks: Sequence, rotation, now: datetime) -> dict[int, datetime]:
+def choose_rotate_out(tracks: Sequence, rotation, now: datetime, **listening_args) -> list:
+    """The songs leaving at a rotation happening now (never protected ones)."""
+    return plan_rotate_out(tracks, rotation, now, **listening_args)[0]
+
+
+def leaving_schedule(tracks: Sequence, rotation, now: datetime, **listening_args) -> dict[int, datetime]:
     """Projected leave time per track row id (an estimate: future restocks shift it).
 
-    The next group leaves at the next rotation; after that, one group per interval.
+    The next group leaves at the next rotation; after that, one group per interval. Songs
+    held back this time are first in line for the one after.
     """
     next_at = max(next_rotation_at(rotation), now)
     period = timedelta(hours=rotation.interval_hours)
-    first = rotate_out_count(rotation.target_size, rotation.rotate_percent, len(tracks))
     step = per_rotation(rotation.target_size, rotation.rotate_percent)
+    leaving, held = plan_rotate_out(tracks, rotation, now, **listening_args)
+    leaving_ids = {t.id for t in leaving}
+    held_ids = {t.id for t in held}
     order = rotate_out_order(tracks, rotation, now)
-    unprotected = [t for t in order if not is_protected(t, rotation)]
-    leaving_next = {t.id for t in unprotected[:first]}
-    rest = [t for t in order if t.id not in leaving_next]
-    schedule = {t_id: next_at for t_id in leaving_next}
+    rest = held + [t for t in order if t.id not in leaving_ids and t.id not in held_ids]
+    schedule = {t_id: next_at for t_id in leaving_ids}
     for i, t in enumerate(rest):
         schedule[t.id] = next_at + period * (1 + i // step)
     return schedule
 
 
-def leaving_next(tracks: Sequence, rotation, now: datetime) -> list:
+def leaving_next(tracks: Sequence, rotation, now: datetime, **listening_args) -> list:
     """Songs that would leave at the next rotation, in leaving order (the review queue)."""
-    first = rotate_out_count(rotation.target_size, rotation.rotate_percent, len(tracks))
-    return [t for t in rotate_out_order(tracks, rotation, now) if not is_protected(t, rotation)][:first]
+    return plan_rotate_out(tracks, rotation, now, **listening_args)[0]
 
 
 def allocate(

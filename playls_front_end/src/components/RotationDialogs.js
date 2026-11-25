@@ -35,10 +35,13 @@ import {
   AUTO_SETTING_DEFAULTS,
   BACK_OPTIONS,
   COOLDOWN_OPTIONS,
+  HEAVY_OPTIONS,
+  HOLD_OPTIONS,
   MoreOptions,
   ORDER_OPTIONS,
   OptionChips,
   PICK_OPTIONS,
+  PROTECT_TOP_OPTIONS,
   SKIP_HOLD_OPTIONS,
   SUPER_KEEP_OPTIONS,
   labelFor,
@@ -361,8 +364,11 @@ const LimitOverride = ({ value, onChange, accountLimit }) => {
   );
 };
 
-const OVERRIDE_KEYS = ['super_keep_multiplier', 'skip_hold_days', 'review_order', 'review_limit'];
-const AUTO_KEYS = ['return_cooldown_days', 'pick_percent', 'bring_back_percent'];
+const OVERRIDE_KEYS = ['super_keep_multiplier', 'skip_hold_days', 'review_order', 'heavy_listening_review', 'review_limit'];
+const AUTO_KEYS = [
+  'return_cooldown_days', 'pick_percent', 'bring_back_percent', 'listening_hold_rotations',
+  'listening_protect_top_percent',
+];
 
 export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
   const [name, setName] = useState('');
@@ -444,8 +450,13 @@ export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
               onChange={setOverride('skip_hold_days')} defaultLabel={defaultOf(SKIP_HOLD_OPTIONS, 'skip_hold_days')} />
             {/* Auto rotations review what's leaving next, so the order setting doesn't apply */}
             {!isAuto && (
-              <OptionChips title="Review order" options={ORDER_OPTIONS} value={overrides.review_order}
-                onChange={setOverride('review_order')} defaultLabel={defaultOf(ORDER_OPTIONS, 'review_order')} />
+              <>
+                <OptionChips title="Review order" options={ORDER_OPTIONS} value={overrides.review_order}
+                  onChange={setOverride('review_order')} defaultLabel={defaultOf(ORDER_OPTIONS, 'review_order')} />
+                <OptionChips title="Songs you play a lot come up for review" options={HEAVY_OPTIONS}
+                  value={overrides.heavy_listening_review} onChange={setOverride('heavy_listening_review')}
+                  defaultLabel={defaultOf(HEAVY_OPTIONS, 'heavy_listening_review')} />
+              </>
             )}
             {isAuto && (
               <>
@@ -458,6 +469,16 @@ export const EditRotationDialog = ({ rotation, onClose, onSaved }) => {
                 <OptionChips title="Songs coming back in each restock" options={BACK_OPTIONS}
                   value={overrides.bring_back_percent} onChange={setOverride('bring_back_percent')}
                   defaultLabel={`Default (${labelFor(BACK_OPTIONS, AUTO_SETTING_DEFAULTS.bring_back_percent).toLowerCase()})`} />
+                <OptionChips title="A song you play a lot can stay past its turn for"
+                  help="Then it rotates out like any other song, unless you keep it."
+                  options={HOLD_OPTIONS} value={overrides.listening_hold_rotations}
+                  onChange={setOverride('listening_hold_rotations')}
+                  defaultLabel={`Default (${labelFor(HOLD_OPTIONS, AUTO_SETTING_DEFAULTS.listening_hold_rotations)})`} />
+                <OptionChips title="Your most played songs never rotate out"
+                  help="Based on your plays in this playlist's window."
+                  options={PROTECT_TOP_OPTIONS} value={overrides.listening_protect_top_percent}
+                  onChange={setOverride('listening_protect_top_percent')}
+                  defaultLabel={`Default (${labelFor(PROTECT_TOP_OPTIONS, AUTO_SETTING_DEFAULTS.listening_protect_top_percent).toLowerCase()})`} />
               </>
             )}
           </MoreOptions>

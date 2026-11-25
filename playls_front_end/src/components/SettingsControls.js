@@ -16,9 +16,25 @@ export const SKIP_HOLD_OPTIONS = [
   { value: 7, label: 'A week' },
 ];
 export const ORDER_OPTIONS = [
+  { value: 'listening', label: 'Overdue, guided by your listening' },
   { value: 'overdue', label: 'Most overdue first' },
   { value: 'oldest', label: 'Longest in the playlist' },
   { value: 'shuffle', label: 'Shuffled' },
+];
+export const HEAVY_OPTIONS = [
+  { value: 'inform', label: 'Like any other song' },
+  { value: 'less_often', label: 'Less often' },
+  { value: 'never', label: 'Not while I play them a lot' },
+];
+export const HOLD_OPTIONS = [
+  { value: 1, label: '1 extra rotation' },
+  { value: 2, label: '2 extra rotations' },
+  { value: 3, label: '3 extra rotations' },
+];
+export const PROTECT_TOP_OPTIONS = [
+  { value: 0, label: 'Off' },
+  { value: 10, label: 'Top 10%' },
+  { value: 25, label: 'Top 25%' },
 ];
 export const DECK_OPTIONS = [10, 20, 30, 50].map((n) => ({ value: n, label: `${n} songs` }));
 export const DISCOVERY_OPTIONS = [
@@ -52,7 +68,16 @@ export const BACK_OPTIONS = [
   { value: 40, label: 'Lots' },
 ];
 // Built-in defaults for auto rotations (no account-wide setting)
-export const AUTO_SETTING_DEFAULTS = { return_cooldown_days: 28, pick_percent: 10, bring_back_percent: 20 };
+export const AUTO_SETTING_DEFAULTS = {
+  return_cooldown_days: 28, pick_percent: 10, bring_back_percent: 20,
+  listening_hold_rotations: 1, listening_protect_top_percent: 0,
+};
+
+// What listening history means (Settings → Listening)
+export const LISTENING_TEXT =
+  'PlayLS saves the songs you play on Spotify (the latest 50 each time you open the app, and once a day) '
+  + 'and your top tracks, so Review, Restock and History can show what you listen to. Spotify only shares '
+  + 'recent plays, so counts can be low but are never inflated. Plays are kept for a year.';
 
 // What the usage-data opt-in means (Home's one-time prompt and Settings → Privacy)
 export const USAGE_DATA_TEXT =

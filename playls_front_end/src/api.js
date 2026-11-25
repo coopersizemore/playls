@@ -63,6 +63,10 @@ export const api = {
     axios.get(`${API_BASE}/rotation/${id}/history`, { params: { filter, limit, offset } })
       .then((r) => ({ events: r.data, total: Number(r.headers['x-total-count']) || r.data.length })),
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
+  // Listening history: save the latest plays (throttled on the server), its status, an export import
+  captureListening: () => data(axios.post(`${API_BASE}/user/me/listening/capture`)),
+  listeningStatus: () => data(axios.get(`${API_BASE}/user/me/listening`)),
+  importListening: (rows) => data(axios.post(`${API_BASE}/user/me/listening/import`, { rows })),
   settings: () => data(axios.get(`${API_BASE}/user/me/settings`)),
   updateSettings: (body) => data(axios.put(`${API_BASE}/user/me/settings`, body)),
   // Restock (source: bring_back | picks | suggested)

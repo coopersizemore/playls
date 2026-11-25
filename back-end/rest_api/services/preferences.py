@@ -12,7 +12,12 @@ ACCOUNT: dict[str, tuple[Any, tuple[Any, ...]]] = {
     # Reviewing
     "super_keep_multiplier": (3, (2, 3, 5)),  # a super keep waits this many intervals
     "skip_hold_days": (1, (1, 3, 7)),  # a skipped song is held back this many days (1 = until tomorrow)
-    "review_order": ("overdue", ("overdue", "oldest", "shuffle")),
+    # "listening": most overdue first, nudged by listening history (heavily played songs a bit
+    # later, rarely played ones a bit sooner; see rotation_logic.sort_queue)
+    "review_order": ("listening", ("listening", "overdue", "oldest", "shuffle")),
+    # Heavily played songs: "inform" (badges and order only), "less_often" (due one interval
+    # later), "never" (left out of the due queue while heavily played)
+    "heavy_listening_review": ("inform", ("inform", "less_often", "never")),
     "default_interval_hours": (30 * 24, None),  # any interval the picker allows (validated by the API)
     # Restocking
     "deck_size": (30, (10, 20, 30, 50)),
@@ -22,13 +27,17 @@ ACCOUNT: dict[str, tuple[Any, tuple[Any, ...]]] = {
 }
 
 # Settings a rotation can override (NULL = the account setting)
-ROTATION_OVERRIDES = ("super_keep_multiplier", "skip_hold_days", "review_order")
+ROTATION_OVERRIDES = ("super_keep_multiplier", "skip_hold_days", "review_order", "heavy_listening_review")
 
 # Auto rotations only (no account-wide equivalent)
 AUTO: dict[str, tuple[Any, tuple[Any, ...]]] = {
     "return_cooldown_days": (28, (14, 28, 56)),
     "pick_percent": (10, (0, 10, 25)),
     "bring_back_percent": (20, (0, 20, 40)),
+    # A heavily played song can stay past its turn this many rotations (then leaves as usual)
+    "listening_hold_rotations": (1, (1, 2, 3)),
+    # The most played X% of the playlist never rotates out (0 = off)
+    "listening_protect_top_percent": (0, (0, 10, 25)),
 }
 
 NO_LIMIT = 0  # rotation.review_limit: 0 = no daily limit for this rotation

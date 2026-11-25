@@ -310,3 +310,14 @@ def test_demo_spotify_never_falls_through(db):
     u = UserDB(provider="demo", spotify_id="demo-x", display_name="d")
     with pytest.raises(RuntimeError):
         asyncio.run(SpotifyService.make_spotify_request("/me", u, db))
+
+
+# ---------- listening history ----------
+
+def test_demo_has_listening_history_and_never_captures(demo, db):
+    start_demo(demo)
+    status = demo.get("/api/user/me/listening").json()
+    assert status["enabled"] is True and status["plays"] > 50 and status["since"]
+    assert demo.post("/api/user/me/listening/capture").json() == {"added": 0}
+    r = demo.post("/api/user/me/listening/import", json={"rows": []})
+    assert r.status_code == 400

@@ -63,6 +63,10 @@ class RotationDB(Base):
     return_cooldown_days = Column(Integer, nullable=True)  # auto only
     pick_percent = Column(Integer, nullable=True)  # auto only: chance per new slot of a PlayLS pick
     bring_back_percent = Column(Integer, nullable=True)  # auto only: share of new slots that are returns
+    # Listening overrides (0017). NULL = the account setting / default (services/preferences.py)
+    heavy_listening_review = Column(String(12), nullable=True)  # manual only
+    listening_hold_rotations = Column(Integer, nullable=True)  # auto only
+    listening_protect_top_percent = Column(Integer, nullable=True)  # auto only
     # Lease held by the request syncing or writing this playlist (sync_service.sync_claim)
     sync_claimed_until = Column(DateTime, nullable=True)
 

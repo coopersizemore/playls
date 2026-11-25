@@ -11,6 +11,7 @@ from ..clock import utcnow
 from ..database.config import get_db
 from ..database.models.user import DEMO, UserDB
 from ..models.user import User
+from ..services import listening_service
 from ..services.auth_service import (
     AuthService,
     SpotifyOAuthService,
@@ -118,6 +119,9 @@ async def spotify_callback(
             user = us.create_user(db, new_user_data)
             user.granted_scopes = granted_scopes
             db.commit()
+
+        # Save the latest plays now (best effort: never fails the login)
+        await listening_service.safe_capture(db, user, force=True)
 
         # The app session lives in an httpOnly cookie, never in the URL
         jwt_token = AuthService.create_access_token(

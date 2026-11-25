@@ -45,6 +45,8 @@ class RequestContext:
     clock_offset_hours: int = 0
     # Health counters for this request (services/health.py), e.g. {"sync.full_read": 1}
     counters: dict = field(default_factory=dict)
+    # Per-request cache for repeated DB reads (e.g. listening history, services/listening_service.py)
+    memo: dict = field(default_factory=dict)
     _client: httpx.AsyncClient | None = None
     _refresh_lock: asyncio.Lock | None = None
 

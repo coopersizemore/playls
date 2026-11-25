@@ -167,8 +167,14 @@ class FakeSpotify:
         self.calls.append(("top", item_type, time_range))
         return {"items": self.top.get((item_type, time_range), [])[:limit]}
 
+    played = []  # full recently-played entries (listening capture); when empty, built from `recent`
+
     async def get_recently_played(self, user, db, limit=50):
         self.calls.append(("recent",))
+        if self.fail:
+            raise SpotifyAPIError(500)
+        if self.played:
+            return {"items": list(self.played[:limit])}
         return {"items": [{"track": t, "played_at": "2026-11-01T00:00:00Z"} for t in self.recent[:limit]]}
 
     async def get_saved_tracks(self, user, db, limit=50, offset=0):
@@ -238,6 +244,7 @@ class FakeSpotify:
 def spotify(monkeypatch):
     fake = FakeSpotify()
     fake.catalog, fake.top, fake.recent, fake.liked, fake.search_results = {}, {}, [], [], {}
+    fake.played = []
     for name in ("get_playlist", "get_all_playlist_items", "remove_items_from_playlist",
                  "create_playlist", "rename_playlist", "get_user_playlists", "get_track", "get_top_items",
                  "get_recently_played", "get_saved_tracks", "search", "add_items_to_playlist",

@@ -57,6 +57,9 @@ class RotationTrackDB(Base):
     last_kept_at = Column(DateTime, nullable=True)
     # Intervals until the next review after the last keep: 1 (keep) or 3 (super keep)
     keep_multiplier = Column(Integer, nullable=False, default=1, server_default="1")
+    # Auto rotations: times this song was let stay past its turn because it's heavily played
+    # (0017). Reset by a keep and whenever the song (re)joins the playlist
+    listening_holds = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(20), nullable=False, default=ACTIVE, server_default=ACTIVE)
     removed_at = Column(DateTime, nullable=True)
     removed_by = Column(String(10), nullable=True)

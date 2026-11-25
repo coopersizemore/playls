@@ -41,6 +41,43 @@ def track_object(track_id, name=None, artists=(("Artist A", "art_a"),), album=("
     }
 
 
+def played_entry(track_id, minutes_ago, context_uri=None, name=None):
+    """A recently-played entry: the track, when it was played, and where from."""
+    at = (utcnow() - timedelta(minutes=minutes_ago)).replace(microsecond=0).isoformat() + "Z"
+    entry = {"track": track_object(track_id, name=name), "played_at": at}
+    if context_uri:
+        entry["context"] = {"type": context_uri.split(":")[1], "uri": context_uri}
+    return entry
+
+
+def add_plays(db, user, track_id, n, days_ago=(1, 10), context_uri=None, title=None, artists="Artist A",
+              source="api", ms_played=None, skipped=None):
+    """Store n plays of a song directly (spread over the given days)."""
+    from rest_api.database.models import PlayEventDB
+    from rest_api.services.restock_logic import song_key
+
+    title = title or f"Song {track_id}"
+    lo, hi = days_ago
+    taken = {t for (t,) in db.query(PlayEventDB.played_at).filter(PlayEventDB.user_id == user.id)}
+    for i in range(n):
+        at = (utcnow() - timedelta(days=lo + (hi - lo) * (i + 0.5) / max(n, 1))).replace(microsecond=0)
+        while at in taken:
+            at += timedelta(seconds=1)
+        taken.add(at)
+        db.add(PlayEventDB(
+            user_id=user.id, track_id=track_id, song_key=song_key(title, artists), title=title, artists=artists,
+            uri=f"spotify:track:{track_id}", played_at=at, source=source, ms_played=ms_played, skipped=skipped,
+            context_type=context_uri.split(":")[1] if context_uri else None, context_uri=context_uri,
+        ))
+    db.commit()
+
+
+def cover_history(db, user, days=120):
+    """Pretend listening history has been captured for the last `days` days, with no gaps."""
+    user.listening_since = utcnow() - timedelta(days=days)
+    db.commit()
+
+
 # ---------- rotations ----------
 
 def make_rotation(client, spotify, items, interval_days=30, playlist_id="p1", grace=True, **kw):

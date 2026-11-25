@@ -23,6 +23,18 @@ export const AuthProvider = ({ children }) => {
   // Analytics only for users who opted in
   useEffect(() => { setTelemetryEnabled(user?.analytics_consent === true); }, [user]);
 
+  // Save the latest plays whenever the app is opened or brought back (the server limits this
+  // to every 15 minutes and does nothing for demo accounts or with listening history off)
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId || IS_DEMO) return undefined;
+    const capture = () => { api.captureListening().catch(() => {}); };
+    const onVisible = () => { if (document.visibilityState === 'visible') capture(); };
+    capture();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [userId]);
+
   // Merge fields into the signed-in user (e.g. after changing the analytics consent)
   const updateUser = (fields) => setUser((u) => (u ? { ...u, ...fields } : u));
 

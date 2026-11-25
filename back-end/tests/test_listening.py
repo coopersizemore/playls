@@ -154,3 +154,96 @@ def test_capture_all_isolates_failures(db, user, spotify, monkeypatch):
     stats = asyncio.run(listening.capture_all(db))
     assert sorted(calls) == sorted([user.id, other.id])
     assert stats["users"] == 2 and stats["plays"] == 3
+
+
+# ---------- awareness: queue, tracks, history, digest, restock ----------
+
+def _busy_rotation(client, db, user, spotify, n=30):
+    """A 30-day manual rotation, everything due, played a lot from its playlist:
+    a00 heavily (6 plays), most others once, a27..a29 not at all."""
+    from helpers import backdate_rotation, cover_history, make_rotation, spotify_item
+
+    rot = make_rotation(client, spotify, [spotify_item(f"a{i:02}", 200 - i) for i in range(n)])
+    backdate_rotation(db, rot["id"], 100)
+    cover_history(db, user, 120)
+    add_plays(db, user, "a00", 6, context_uri="spotify:playlist:p1")
+    for i in range(1, n - 3):
+        add_plays(db, user, f"a{i:02}", 1, days_ago=(2 + i, 3 + i), context_uri="spotify:playlist:p1")
+    return rot["id"]
+
+
+def _by_id(tracks):
+    return {t["track_id"]: t for t in tracks}
+
+
+def test_queue_tracks_show_listening(client, db, user, spotify):
+    rid = _busy_rotation(client, db, user, spotify)
+    db.add(TopTrackDB(user_id=user.id, time_range="short_term", rank=2, track_id="a10",
+                      song_key="song a10|artist a", captured_at=utcnow()))
+    db.commit()
+    tracks = _by_id(client.get(f"/api/rotation/{rid}/queue", params={"all": True}).json()["tracks"])
+    a00 = tracks["a00"]["listening"]
+    assert a00["plays"] == 6 and a00["plays_here"] == 6 and a00["heavy"] and a00["window_days"] == 60
+    assert tracks["a10"]["listening"]["top_rank"] == {"short_term": 2} and tracks["a10"]["listening"]["heavy"]
+    assert tracks["a05"]["listening"]["plays"] == 1 and not tracks["a05"]["listening"]["heavy"]
+    assert tracks["a29"]["listening"]["few_plays"] is True
+    rotation = client.get(f"/api/rotation/{rid}", params={"sync": False}).json()
+    assert rotation["listening"]["plays_here"] == 6 + 26 and rotation["listening"]["top_song"] == "Song a00"
+    assert _by_id(client.get(f"/api/rotation/{rid}/tracks").json())["a00"]["listening"]["plays"] == 6
+
+
+def test_few_plays_needs_enough_history_and_a_used_playlist(client, db, user, spotify):
+    rid = _busy_rotation(client, db, user, spotify)
+    user.listening_since = utcnow() - timedelta(days=20)  # history shorter than the 60-day window
+    db.commit()
+    tracks = _by_id(client.get(f"/api/rotation/{rid}/queue", params={"all": True}).json()["tracks"])
+    assert tracks["a29"]["listening"] is None
+    assert tracks["a00"]["listening"]["heavy"]  # "a lot" doesn't need full coverage
+    # Enough history, but the playlist is barely played: still nothing said
+    user.listening_since = utcnow() - timedelta(days=120)
+    db.query(PlayEventDB).filter(PlayEventDB.track_id.notin_(["a00", "a01"])).delete(synchronize_session=False)
+    db.commit()
+    tracks = _by_id(client.get(f"/api/rotation/{rid}/queue", params={"all": True}).json()["tracks"])
+    assert tracks["a29"]["listening"] is None
+
+
+def test_history_shows_plays_before_and_since(client, db, user, spotify):
+    from helpers import review
+
+    rid = _busy_rotation(client, db, user, spotify)
+    review(client, rid, "a00", "keep")
+    review(client, rid, "a01", "remove")
+    add_plays(db, user, "a01", 2, days_ago=(-0.01, -0.005))  # played after the removal
+    events = client.get(f"/api/rotation/{rid}/history").json()
+    kept = next(e for e in events if e["action"] == "keep")
+    removed = next(e for e in events if e["action"] == "remove")
+    assert kept["plays_before"] == 6 and kept["plays_window_hours"] == 60 * 24
+    assert removed["plays_before"] == 1 and removed["plays_since"] == 2
+    # No history that far back: nothing claimed
+    user.listening_since = utcnow() - timedelta(days=1)
+    db.commit()
+    kept = next(e for e in client.get(f"/api/rotation/{rid}/history").json() if e["action"] == "keep")
+    assert kept["plays_before"] is None and kept["plays_window_hours"] is None
+
+
+def test_listening_digest(client, db, user, spotify):
+    rid = _busy_rotation(client, db, user, spotify)
+    add_plays(db, user, "a02", 1, days_ago=(0.1, 0.2), context_uri="spotify:album:x")
+    body = client.get(f"/api/rotation/{rid}/listening", params={"days": 30}).json()
+    assert body["since"]
+    total_here = sum(d["plays_here"] for d in body["days"])
+    total_elsewhere = sum(d["plays_elsewhere"] for d in body["days"])
+    assert total_here == 6 + 26 and total_elsewhere == 1
+    assert body["days"] == sorted(body["days"], key=lambda d: d["date"], reverse=True)
+    assert any(s["track_id"] == "a00" for d in body["days"] for s in d["songs"])
+
+
+def test_restock_cards_show_recent_plays(client, db, user, spotify):
+    from helpers import review
+
+    rid = _busy_rotation(client, db, user, spotify)
+    review(client, rid, "a00", "remove")
+    client.post(f"/api/rotation/{rid}/flush")
+    deck = client.get(f"/api/rotation/{rid}/restock/deck/bring_back").json()
+    a00 = next(c for c in deck["items"] if c["track_id"] == "a00")
+    assert a00["listening"]["plays"] == 6 and a00["listening"]["window_days"] == 28

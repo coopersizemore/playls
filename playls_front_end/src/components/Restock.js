@@ -40,6 +40,7 @@ import { AlbumArt, Layout, PlaylistCover, SpotifyEmbed } from './Layout';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
 import SongStage, { DetailsPanel, NavRow, PanelNote, PanelSection } from './SongStage';
 import { ListSkeleton, SongCardSkeleton } from './Skeletons';
+import { PlaysIcon, windowLabel } from './Listening';
 
 const TABS = [
   { source: 'bring_back', label: 'Bring back', empty: 'Nothing to bring back yet. Songs you remove from this rotation show up here, weighted more strongly the longer they have been gone.' },
@@ -259,7 +260,13 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
                 {added > 0 && <Typography variant="caption" color="text.secondary">added {added}</Typography>}
               </Box>
             </Box>
-            {current.reason && <Chip size="small" variant="outlined" label={current.reason} sx={{ mt: 1, maxWidth: '100%' }} />}
+            <Box display="flex" gap={1} mt={1} flexWrap="wrap">
+              {current.reason && <Chip size="small" variant="outlined" label={current.reason} sx={{ maxWidth: '100%' }} />}
+              {current.listening && (
+                <Chip size="small" variant="outlined" color="primary" icon={<PlaysIcon />}
+                  label={`Played ${current.listening.plays}× in ${windowLabel(current.listening.window_days)}`} />
+              )}
+            </Box>
 
             <PanelSection><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></PanelSection>
 

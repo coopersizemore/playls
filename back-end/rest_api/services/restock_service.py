@@ -32,7 +32,8 @@ from rest_api.database.models.rotation import RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, REMOVED, RotationTrackDB
 from rest_api.database.models.suggestion_cache import SuggestionCacheDB
 from rest_api.database.models.user import UserDB
-from rest_api.models.restock import CandidateOut, DeckOut, SearchOut
+from rest_api.models.restock import CandidateOut, CandidatePlaysOut, DeckOut, SearchOut
+from rest_api.services import listening_service as listening
 from rest_api.services import preferences as prefs
 from rest_api.services import restock_logic as logic
 from rest_api.services.auth_service import SUGGESTION_SCOPES, missing_scopes
@@ -162,6 +163,19 @@ def _candidate(meta: dict[str, Any], source: str, **extra) -> CandidateOut:
     )
 
 
+def with_listening(db: orm.Session, user: UserDB, items: list[CandidateOut]) -> list[CandidateOut]:
+    """Add recent plays (listening history) to deck cards that have any."""
+    found = listening.song_plays(db, user, [c.model_dump() for c in items])
+    for c in items:
+        p = found.get(c.track_id)
+        if p is not None:
+            c.listening = CandidatePlaysOut(
+                plays=p["plays"], last_played_at=p["last_played_at"], window_days=p["window_days"],
+                since_removed=c.listening.since_removed if c.listening else None,
+            )
+    return items
+
+
 def row_meta(row) -> dict[str, Any]:
     return {
         "track_id": row.track_id, "uri": row.uri, "title": row.title, "artists": row.artists,
@@ -222,11 +236,11 @@ def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offs
     ordered = logic.weighted_order(
         list(zip(removed, weights, strict=True)), weights, _seed(user, rotation, BRING_BACK, today)
     )
-    return DeckOut(source=BRING_BACK, items=[
+    return DeckOut(source=BRING_BACK, items=with_listening(db, user, [
         _candidate(row_meta(r), BRING_BACK, score=round(w, 4),
                    reason=logic.bring_back_reason(r.removed_at, now, keeps[r.id]))
         for r, w in ordered[:deck_size(user)]
-    ])
+    ]))
 
 
 # ---------- 2. PlayLS picks ----------
@@ -255,10 +269,10 @@ def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_mi
         picks.append(pick)
     # Newest first, but songs the user has passed on before sink to the back
     picks.sort(key=lambda p: skips[p.track_id])
-    return DeckOut(source=PICKS, items=[
+    return DeckOut(source=PICKS, items=with_listening(db, user, [
         _candidate(row_meta(p), PICKS, note=p.note, reason=p.note or "PlayLS pick")
         for p in picks[:deck_size(user)]
-    ], already_in_rotation=len(already_in))
+    ]), already_in_rotation=len(already_in))
 
 
 # ---------- 3. suggested for you ----------
@@ -417,7 +431,9 @@ async def suggested_deck(
         return [c for c, _ in logic.weighted_order(items, [s for _, s in items], seed + salt)]
 
     deck = logic.blend(order(known, 0), order(discoveries, 1), deck_size(user), discovery_share(user))
-    return DeckOut(source=SUGGESTED, items=deck, missing_scopes=payload.get("missing_scopes", []))
+    return DeckOut(
+        source=SUGGESTED, items=with_listening(db, user, deck), missing_scopes=payload.get("missing_scopes", [])
+    )
 
 
 # ---------- 4. search ----------
@@ -434,7 +450,7 @@ async def search(db: orm.Session, rotation: RotationDB, user: UserDB, q: str, of
         row = songs.find_meta(meta)
         items.append(_candidate(meta, "search", in_rotation=bool(row and row.status != REMOVED)))
     next_offset = offset + 10 if page.get("next") and offset + 10 <= 1000 else None
-    return SearchOut(items=items, next_offset=next_offset)
+    return SearchOut(items=with_listening(db, user, items), next_offset=next_offset)
 
 
 # ---------- actions ----------

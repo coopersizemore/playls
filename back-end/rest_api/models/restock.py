@@ -8,6 +8,13 @@ DeckSource = Literal["bring_back", "picks", "suggested"]
 Source = Literal["bring_back", "picks", "suggested", "search"]
 
 
+class CandidatePlaysOut(BaseModel):
+    plays: int  # plays from anywhere in the last `window_days` (listening history)
+    last_played_at: datetime | None
+    window_days: int
+    since_removed: int | None = None  # bring back: plays since it left this rotation
+
+
 class CandidateOut(BaseModel):
     track_id: str
     uri: str
@@ -21,6 +28,7 @@ class CandidateOut(BaseModel):
     score: float | None = None  # ranking weight (not shown to users)
     note: str | None = None  # curator's note for PlayLS picks
     in_rotation: bool = False  # search results only
+    listening: CandidatePlaysOut | None = None  # None: no recent plays (or history off)
 
 
 class DeckOut(BaseModel):

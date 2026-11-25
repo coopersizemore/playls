@@ -10,6 +10,7 @@ from ..database.models.user import UserDB
 from ..models.rotation import (
     FlushOut,
     HistoryEventOut,
+    ListeningDigestOut,
     QueueOut,
     RemoveUnplayableOut,
     ReviewIn,
@@ -19,7 +20,7 @@ from ..models.rotation import (
     TrackOut,
     UnplayableOut,
 )
-from ..services import telemetry
+from ..services import listening_reports, telemetry
 from ..services.auth_service import AuthService
 from ..services.db import rotation_service as rs
 from ..services.sync_service import flush_pending_removals, sync_claim, sync_rotation
@@ -174,3 +175,16 @@ async def get_history(
     events, total = rs.history(db, rs.get_owned_or_404(db, rotation_id, user), limit, offset, filter)
     response.headers["X-Total-Count"] = str(total)
     return events
+
+
+@router.get("/{rotation_id}/listening", response_model=ListeningDigestOut)
+async def get_listening(
+    rotation_id: int,
+    days: int = Query(30, ge=1, le=365),
+    tz_offset: int = Query(0, ge=-840, le=840, description="JS Date.getTimezoneOffset() of the client"),
+    db: Session = Depends(get_db),
+    user: UserDB = current_user_dep,
+):
+    """Daily listening for this rotation (the user's local days, newest first), from the
+    stored listening history: plays from its playlist, and plays of its songs elsewhere."""
+    return listening_reports.digest(db, rs.get_owned_or_404(db, rotation_id, user), days, tz_offset)

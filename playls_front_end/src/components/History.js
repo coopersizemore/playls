@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Chip,
+  Collapse,
   List,
   ListItem,
   ListItemAvatar,
@@ -14,10 +15,11 @@ import {
   Snackbar,
   Typography,
 } from '@mui/material';
-import { Check, MusicNote, Replay, Undo } from '@mui/icons-material';
+import { Check, ExpandLess, ExpandMore, MusicNote, Replay, Undo } from '@mui/icons-material';
 import { api, errorMessage } from '../api';
 import { parseUtc } from './Layout';
 import { ListSkeleton } from './Skeletons';
+import { PlaysIcon, hoursLabel } from './Listening';
 
 // Each tab is filtered on the server, so older events of one kind aren't hidden behind newer ones
 const TABS = [
@@ -26,6 +28,7 @@ const TABS = [
   { label: 'Kept', filter: 'kept' },
   { label: 'Skipped', filter: 'skipped' },
   { label: 'Rotated', filter: 'rotated', autoOnly: true },
+  { label: 'Listening', filter: 'listening', listening: true },
 ];
 const PAGE_SIZE = 25;
 
@@ -67,6 +70,84 @@ const sessionLabel = (events) => {
   return `${dayLabel(oldest)} · ${start === end ? start : `${start} – ${end}`}`;
 };
 
+// "12 plays in the 4 weeks before · played 3× since" for kept and removed songs
+const playsNote = (e) => {
+  if (e.plays_before == null) return null;
+  const before = `${e.plays_before} play${e.plays_before === 1 ? '' : 's'} in the ${hoursLabel(e.plays_window_hours)} before`;
+  return e.plays_since ? `${before} · played ${e.plays_since}× since` : before;
+};
+
+const localDate = (iso) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+// One day of listening: totals, and the songs played (tap to expand)
+const ListeningDay = ({ day }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <Box component="section" mt={1.5}>
+      <Button fullWidth color="inherit" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        endIcon={open ? <ExpandLess /> : <ExpandMore />}
+        sx={{ justifyContent: 'space-between', textTransform: 'none', px: 2, py: 1 }}>
+        <Box textAlign="left" minWidth={0}>
+          <Typography variant="subtitle2" component="h3">{dayLabel(localDate(day.date))}</Typography>
+          <Typography variant="body2" color="text.secondary">
+            <PlaysIcon sx={{ fontSize: 14, mr: 0.5, verticalAlign: '-2px' }} />
+            {day.plays_here} from this playlist
+            {day.plays_elsewhere > 0 && ` · ${day.plays_elsewhere} of its songs elsewhere`}
+          </Typography>
+        </Box>
+      </Button>
+      <Collapse in={open} unmountOnExit>
+        <List dense disablePadding>
+          {day.songs.map((song) => (
+            <ListItem key={song.track_id}>
+              <ListItemAvatar>
+                <Avatar variant="rounded" src={song.image_url || undefined}><MusicNote /></Avatar>
+              </ListItemAvatar>
+              <ListItemText sx={{ minWidth: 0 }} primary={song.title} secondary={song.artists || ' '}
+                slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }} />
+              <Typography variant="body2" sx={{ ml: 1, whiteSpace: 'nowrap' }}>
+                {song.plays}×{song.plays_here && song.plays_here !== song.plays ? ` (${song.plays_here} here)` : ''}
+              </Typography>
+            </ListItem>
+          ))}
+        </List>
+      </Collapse>
+    </Box>
+  );
+};
+
+// The Listening tab: a month of daily play digests
+const ListeningDigest = ({ rotationId }) => {
+  const [digest, setDigest] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.listeningDigest(rotationId, { days: 30 }).then(setDigest)
+      .catch((e) => { setError(errorMessage(e, 'Failed to load listening.')); setDigest({ days: [] }); });
+  }, [rotationId]);
+  if (digest === null) return <ListSkeleton count={4} />;
+  return (
+    <>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {digest.days.length === 0 ? (
+        <Typography color="text.secondary" py={2}>
+          {digest.since
+            ? 'No plays of these songs in the last 30 days.'
+            : 'Nothing yet. Your plays show up here as PlayLS saves them (Settings → Listening).'}
+        </Typography>
+      ) : digest.days.map((day) => <ListeningDay key={day.date} day={day} />)}
+      {digest.since && (
+        <Typography variant="caption" color="text.secondary" display="block" mt={2} px={2}>
+          Plays PlayLS has saved since {parseUtc(digest.since).toLocaleDateString()}. Spotify only shares recent
+          plays, so some may be missing.
+        </Typography>
+      )}
+    </>
+  );
+};
+
 // Split a newest-first page into sessions: a new one starts after a long enough gap
 const toSessions = (events) => {
   const sessions = [];
@@ -96,8 +177,10 @@ export const HistoryList = ({ rotationId, onChanged, auto = false }) => {
   const [toast, setToast] = useState('');
 
   const filter = TABS[tab].filter;
+  const listeningTab = !!TABS[tab].listening;
 
   const load = useCallback(() => {
+    if (listeningTab) return;
     const id = ++request.current;
     setEvents(null);
     api.historyPage(rotationId, { filter, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
@@ -113,7 +196,7 @@ export const HistoryList = ({ rotationId, onChanged, auto = false }) => {
         setEvents([]);
         setTotal(0);
       });
-  }, [rotationId, filter, page]);
+  }, [rotationId, filter, page, listeningTab]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -196,7 +279,9 @@ export const HistoryList = ({ rotationId, onChanged, auto = false }) => {
         ))}
       </Box>
 
-      {events === null ? (
+      {listeningTab ? (
+        <ListeningDigest rotationId={rotationId} />
+      ) : events === null ? (
         <ListSkeleton count={6} />
       ) : events.length === 0 ? (
         <Typography color="text.secondary" py={2}>Nothing here yet.</Typography>
@@ -220,8 +305,20 @@ export const HistoryList = ({ rotationId, onChanged, auto = false }) => {
                     <ListItemText
                       sx={{ minWidth: 0 }}
                       primary={e.track.title}
-                      secondary={e.track.artists || ' '}
-                      slotProps={{ primary: { noWrap: true, title: e.track.title }, secondary: { noWrap: true } }}
+                      secondary={(
+                        <>
+                          <Box component="span" display="block"
+                            sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {e.track.artists || ' '}
+                          </Box>
+                          {playsNote(e) && (
+                            <Box component="span" display="block" sx={{ fontSize: '0.75rem' }}>
+                              <PlaysIcon sx={{ fontSize: 12, mr: 0.5, verticalAlign: '-1px' }} />{playsNote(e)}
+                            </Box>
+                          )}
+                        </>
+                      )}
+                      slotProps={{ primary: { noWrap: true, title: e.track.title } }}
                     />
                     <Box display="flex" alignItems="center" gap={1} flexShrink={0} ml={1} flexWrap="wrap"
                       justifyContent="flex-end">
@@ -236,7 +333,7 @@ export const HistoryList = ({ rotationId, onChanged, auto = false }) => {
         ))
       )}
 
-      {events !== null && pages > 1 && (
+      {!listeningTab && events !== null && pages > 1 && (
         <Box display="flex" justifyContent="center" mt={2}>
           <Pagination count={pages} page={page} onChange={changePage} size="small" siblingCount={0} />
         </Box>

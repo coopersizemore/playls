@@ -62,6 +62,9 @@ export const api = {
   historyPage: (id, { filter = 'all', limit = 25, offset = 0 } = {}) =>
     axios.get(`${API_BASE}/rotation/${id}/history`, { params: { filter, limit, offset } })
       .then((r) => ({ events: r.data, total: Number(r.headers['x-total-count']) || r.data.length })),
+  // Daily listening for a rotation (newest day first): { since, days: [{ date, plays_here, plays_elsewhere, songs }] }
+  listeningDigest: (id, { days = 30 } = {}) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/listening`, { params: { days, ...tz() } })),
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
   // Listening history: save the latest plays (throttled on the server), its status, an export import
   captureListening: () => data(axios.post(`${API_BASE}/user/me/listening/capture`)),

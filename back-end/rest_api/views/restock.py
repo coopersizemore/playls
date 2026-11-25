@@ -36,12 +36,14 @@ async def get_deck(
     db: Session = Depends(get_db),
     user: UserDB = current_user_dep,
 ):
-    """A ranked deck of up to 30 songs from one source (bring_back, picks, suggested)."""
+    """A ranked deck of up to 30 songs from one source (bring_back, picks, suggested, rediscover)."""
     rotation = rs.get_owned_or_404(db, rotation_id, user)
     if source == "bring_back":
         return restock.bring_back_deck(db, rotation, user, tz_offset)
     if source == "picks":
         return restock.picks_deck(db, rotation, user, tz_offset)
+    if source == "rediscover":
+        return restock.rediscover_deck(db, rotation, user, tz_offset)
     return await restock.suggested_deck(db, rotation, user, tz_offset, refresh)
 
 

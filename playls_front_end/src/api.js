@@ -72,7 +72,7 @@ export const api = {
   importListening: (rows) => data(axios.post(`${API_BASE}/user/me/listening/import`, { rows })),
   settings: () => data(axios.get(`${API_BASE}/user/me/settings`)),
   updateSettings: (body) => data(axios.put(`${API_BASE}/user/me/settings`, body)),
-  // Restock (source: bring_back | picks | suggested)
+  // Restock (source: bring_back | picks | suggested | rediscover)
   restockDeck: (id, source, { refresh = false } = {}) =>
     data(axios.get(`${API_BASE}/rotation/${id}/restock/deck/${source}`, { params: { refresh, ...tz() } })),
   // Restocked songs and whether they've been played since: { enabled, added, played, by_source, songs }

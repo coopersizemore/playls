@@ -47,6 +47,7 @@ const TABS = [
   { source: 'bring_back', label: 'Bring back', empty: 'Nothing to bring back yet. Songs you remove from this rotation show up here, weighted more strongly the longer they have been gone.' },
   { source: 'picks', label: 'PlayLS picks', empty: 'No new PlayLS picks right now. Check back soon.' },
   { source: 'suggested', label: 'For you', empty: 'No suggestions right now. Try refreshing, or listen a little more and check back.' },
+  { source: 'rediscover', label: 'Rediscover', empty: 'Songs you played a lot a few months ago but not lately show up here. This builds up as PlayLS saves your listening (it needs about two months of it).' },
   { source: 'search', label: 'Search' },
 ];
 

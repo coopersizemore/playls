@@ -264,3 +264,26 @@ def test_restock_outcomes(client, db, user, spotify):
     assert by_source["search"] == {"source": "search", "added": 1, "played": 1}
     assert by_source["suggested"]["played"] == 0
     assert {s["track_id"]: s["plays"] for s in body["songs"]} == {"new1": 2, "new2": 0}
+
+
+def test_rediscover_deck(client, db, user, spotify):
+    from helpers import restock_action
+
+    rid = _busy_rotation(client, db, user, spotify)
+    add_plays(db, user, "old1", 6, days_ago=(120, 200), title="Old One")  # a lot back then, not since
+    add_plays(db, user, "old2", 6, days_ago=(120, 200), title="Old Two")
+    add_plays(db, user, "old2", 3, days_ago=(1, 10), title="Old Two")  # ...but played lately
+    add_plays(db, user, "old3", 2, days_ago=(120, 200), title="Old Three")  # not enough back then
+    add_plays(db, user, "a05", 6, days_ago=(120, 200))  # already in this rotation
+    db.query(PlayEventDB).filter_by(track_id="old1").update({"image_url": "img"})
+    db.commit()
+    deck = client.get(f"/api/rotation/{rid}/restock/deck/rediscover").json()
+    assert [c["track_id"] for c in deck["items"]] == ["old1"]
+    assert deck["items"][0]["reason"].startswith("You played this 6× back in ")
+    # Adding uses the stored details (no Spotify lookup) and records the source
+    assert restock_action(client, rid, "add", "old1", "rediscover").status_code == 201
+    assert not any(c[0] == "get_track" for c in spotify.calls)
+    # Too little history to know what's "lately": nothing offered
+    user.listening_since = utcnow() - timedelta(days=30)
+    db.commit()
+    assert client.get(f"/api/rotation/{rid}/restock/deck/rediscover").json()["items"] == []

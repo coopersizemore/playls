@@ -4,8 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-DeckSource = Literal["bring_back", "picks", "suggested"]
-Source = Literal["bring_back", "picks", "suggested", "search"]
+DeckSource = Literal["bring_back", "picks", "suggested", "rediscover"]
+Source = Literal["bring_back", "picks", "suggested", "search", "rediscover"]
 
 
 class CandidatePlaysOut(BaseModel):

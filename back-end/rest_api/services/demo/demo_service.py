@@ -24,6 +24,7 @@ from rest_api.services import health
 from rest_api.services.auth_service import DEMO_SESSION_HOURS, REQUESTED_SCOPES, SECRET_KEY
 from rest_api.services.rotation_logic import parse_playlist_items
 
+from . import demo_listening
 from .catalog import NEW_PLAYLIST_PREFIX, catalog
 from .demo_spotify import sample_added_at, snapshot
 
@@ -111,8 +112,9 @@ def start(db: Session, client: str | None = None) -> UserDB:
     db.add(user)
     db.flush()
     playlists = list(cat.playlists.values())
-    _seed_daily_mix(db, user, playlists[0], now)
-    _seed_auto(db, user, playlists[1], now)
+    mix, mix_active, mix_removed = _seed_daily_mix(db, user, playlists[0], now)
+    auto, auto_rows = _seed_auto(db, user, playlists[1], now)
+    demo_listening.seed(db, user, now, mix, mix_active, mix_removed, auto, auto_rows)
     db.commit()
     db.refresh(user)
     health.count("demo.start")
@@ -140,7 +142,7 @@ def _event(db: Session, row: RotationTrackDB, action: str, at, **kw) -> None:
     db.add(ReviewEventDB(rotation_track_id=row.id, action=action, created_at=at, **kw))
 
 
-def _seed_daily_mix(db: Session, user: UserDB, playlist: dict, now) -> None:
+def _seed_daily_mix(db: Session, user: UserDB, playlist: dict, now):
     """A weekly manual rotation with songs due now, some review history, a few removed songs
     (for Bring back) and a couple of unavailable ones (for Remove unavailable)."""
     track_ids = playlist["track_ids"][:DAILY_MIX_SIZE]
@@ -184,9 +186,10 @@ def _seed_daily_mix(db: Session, user: UserDB, playlist: dict, now) -> None:
         row.removed_at = now - timedelta(days=20 + 15 * j)
         _event(db, row, KEEP, row.removed_at - interval * 2)
         _event(db, row, REMOVE, row.removed_at)
+    return rotation, active, removed
 
 
-def _seed_auto(db: Session, user: UserDB, playlist: dict, now) -> None:
+def _seed_auto(db: Session, user: UserDB, playlist: dict, now):
     """A weekly auto rotation whose next rotation is a couple of days out."""
     playlist_id = NEW_PLAYLIST_PREFIX + secrets.token_hex(6)
     rotation = RotationDB(
@@ -204,6 +207,7 @@ def _seed_auto(db: Session, user: UserDB, playlist: dict, now) -> None:
     if rows and rows[0].image_url:
         rotation.image_url = rows[0].image_url
     db.add_all(rows)
+    return rotation, rows
 
 
 def skip_ahead(db: Session, user: UserDB) -> int:

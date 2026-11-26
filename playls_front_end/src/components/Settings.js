@@ -29,10 +29,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { useColorMode } from '../colorMode';
 import { IS_DEMO } from '../demo';
 import { api, errorMessage } from '../api';
-import { Layout } from './Layout';
+import { Layout, parseUtc, relativeDays } from './Layout';
 import { IntervalPicker } from './RotationDialogs';
 import {
   USAGE_DATA_TEXT,
+  HEAVY_OPTIONS,
+  LISTENING_TEXT,
   DECK_OPTIONS,
   DISCOVERY_OPTIONS,
   MoreOptions,
@@ -44,9 +46,12 @@ import {
   SUPER_KEEP_OPTIONS,
 } from './SettingsControls';
 import { ListSkeleton } from './Skeletons';
+import ListeningImport from './ListeningImport';
 
 const DEFAULT_LIMIT = 50;
-const REVIEW_EXTRAS = ['super_keep_multiplier', 'skip_hold_days', 'review_order', 'default_interval_hours'];
+const REVIEW_EXTRAS = [
+  'super_keep_multiplier', 'skip_hold_days', 'review_order', 'heavy_listening_review', 'default_interval_hours',
+];
 const RESTOCK_EXTRAS = ['deck_size', 'discovery_percent', 'not_now_percent', 'bring_back_recovery_days'];
 
 const AppearanceCard = () => {
@@ -150,8 +155,13 @@ const ReviewingCard = ({ settings, save }) => {
               onChange={(v) => save({ super_keep_multiplier: v })} />
             <OptionChips title="Skipped songs come back" options={SKIP_HOLD_OPTIONS} value={settings.skip_hold_days}
               onChange={(v) => save({ skip_hold_days: v })} />
-            <OptionChips title="Review order" help="Which due songs come up first."
+            <OptionChips title="Review order"
+              help="Which due songs come up first. Guided by your listening: songs you play a lot come up a little later, and ones you rarely play a little sooner."
               options={ORDER_OPTIONS} value={settings.review_order} onChange={(v) => save({ review_order: v })} />
+            <OptionChips title="Songs you play a lot come up for review"
+              help="Based on your listening history and top tracks."
+              options={HEAVY_OPTIONS} value={settings.heavy_listening_review}
+              onChange={(v) => save({ heavy_listening_review: v })} />
             <IntervalPicker key={pickerKey} value={settings.default_interval_hours} onChange={saveInterval}
               label="Starting interval for new rotations" />
             <ResetLink onClick={reset} />
@@ -188,6 +198,65 @@ const RestockingCard = ({ settings, save }) => (
     </CardContent>
   </Card>
 );
+
+// Listening history: on by default; turning it off deletes what was saved
+const ListeningCard = ({ settings, save }) => {
+  const [status, setStatus] = useState(null);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const on = settings?.listening_enabled !== false;
+
+  const load = useCallback(() => { api.listeningStatus().then(setStatus).catch(() => setStatus(null)); }, []);
+  useEffect(() => { load(); }, [load, on]);
+
+  const turnOff = async () => {
+    setConfirmOff(false);
+    await save({ listening_enabled: false });
+  };
+
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h6" gutterBottom>Listening</Typography>
+        <FormControlLabel
+          control={<Switch checked={on} disabled={!settings}
+            onChange={(e) => (e.target.checked ? save({ listening_enabled: true }) : setConfirmOff(true))} />}
+          label="Use my listening history"
+        />
+        <Typography variant="body2" color="text.secondary" mt={1}>
+          {LISTENING_TEXT}
+        </Typography>
+        {on && status && (
+          <Typography variant="body2" sx={{ mt: 1.5 }}>
+            {status.plays > 0
+              ? `${status.plays.toLocaleString()} plays saved${status.since ? `, going back to ${parseUtc(status.since).toLocaleDateString()}` : ''}.`
+              : 'No plays saved yet. They build up as you listen.'}
+            {status.last_captured_at && ` Last checked ${relativeDays(status.last_captured_at)}.`}
+          </Typography>
+        )}
+        {on && status?.missing_scopes?.length > 0 && (
+          <Alert severity="info" sx={{ mt: 1.5 }}>
+            Log out and back in so PlayLS can read your recently played songs and top tracks.
+          </Alert>
+        )}
+        {/* The demo has no Spotify account to export from */}
+        {on && !IS_DEMO && <MoreOptions label="Import your Spotify history"><ListeningImport onDone={load} /></MoreOptions>}
+      </CardContent>
+      <Dialog open={confirmOff} onClose={() => setConfirmOff(false)}>
+        <DialogTitle>Turn off listening history?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            PlayLS stops saving your plays and deletes the ones already saved. Review, Restock and History go
+            back to working without them.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmOff(false)}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={turnOff}>Turn off and delete</Button>
+        </DialogActions>
+      </Dialog>
+    </Card>
+  );
+};
 
 // Songs the user asked Restock to stop suggesting, with a way to undo each
 const BlockedSongsCard = () => {
@@ -320,6 +389,7 @@ const Settings = () => {
       <AppearanceCard />
       <ReviewingCard settings={settings} save={save} />
       <RestockingCard settings={settings} save={save} />
+      <ListeningCard settings={settings} save={save} />
       <BlockedSongsCard />
       {/* The demo records no usage data and has no real account to delete */}
       {IS_DEMO ? (

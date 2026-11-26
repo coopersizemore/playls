@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database.config import get_db
-from ..services import telemetry
+from ..services import listening_service, telemetry
 from ..services.auto_restock_service import run_all
 from ..services.demo import demo_service
 
@@ -31,9 +31,14 @@ def _check_secret(authorization: str | None) -> None:
 
 @router.get("/auto-restock")
 async def auto_restock(authorization: str | None = Header(None), db: Session = Depends(get_db)):
-    """Rotate out and restock every auto rotation that's due (daily)."""
+    """Daily: save everyone's latest plays, then rotate out and restock every auto rotation
+    that's due."""
     _check_secret(authorization)
+    # Listening first, so auto rotations rotate out with fresh plays
+    listening_stats = await listening_service.capture_all(db)
     stats = await run_all(db)
+    stats["listening"] = listening_stats
+    stats["listening_purged"] = listening_service.purge(db)  # 1-year retention
     stats["analytics_purged"] = telemetry.purge(db)  # 6-month retention
     stats["demo_purged"] = demo_service.purge_expired(db)  # demo accounts last a day
     logger.info("Cron auto-restock: %s", stats)

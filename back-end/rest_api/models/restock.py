@@ -4,8 +4,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-DeckSource = Literal["bring_back", "picks", "suggested"]
-Source = Literal["bring_back", "picks", "suggested", "search"]
+DeckSource = Literal["bring_back", "picks", "suggested", "rediscover"]
+Source = Literal["bring_back", "picks", "suggested", "search", "rediscover"]
+
+
+class CandidatePlaysOut(BaseModel):
+    plays: int  # plays from anywhere in the last `window_days` (listening history)
+    last_played_at: datetime | None
+    window_days: int
+    since_removed: int | None = None  # bring back: plays since it left this rotation
 
 
 class CandidateOut(BaseModel):
@@ -21,6 +28,7 @@ class CandidateOut(BaseModel):
     score: float | None = None  # ranking weight (not shown to users)
     note: str | None = None  # curator's note for PlayLS picks
     in_rotation: bool = False  # search results only
+    listening: CandidatePlaysOut | None = None  # None: no recent plays (or history off)
 
 
 class DeckOut(BaseModel):
@@ -30,6 +38,33 @@ class DeckOut(BaseModel):
     missing_scopes: list[str] = []
     # picks only: active picks hidden because they're already in this rotation
     already_in_rotation: int = 0
+
+
+class OutcomeSourceOut(BaseModel):
+    source: str
+    added: int
+    played: int  # of those, played at least once since being added
+
+
+class OutcomeSongOut(BaseModel):
+    track_id: str
+    title: str | None
+    artists: str | None
+    image_url: str | None
+    source: str
+    added_at: datetime
+    plays: int  # since being added (anywhere)
+    status: str  # still in the rotation (active) or not
+
+
+class RestockOutcomesOut(BaseModel):
+    """How restocked songs have worked out, from listening history. Display only."""
+    enabled: bool  # listening history on
+    window_days: int
+    added: int
+    played: int
+    by_source: list[OutcomeSourceOut]
+    songs: list[OutcomeSongOut]  # newest add first
 
 
 class SearchOut(BaseModel):

@@ -13,7 +13,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 | Recommendations (by song, artist, genre or taste) | **Deferred.** They'll be built later on a system that doesn't depend on the Spotify API. The old Spotify recommendation code has been removed. |
 | Restock (adding songs) | **Built (2026-11-22)**: four sources. See "Restock" below. |
 | Curated "PlayLS pick" | **Built**: curated by admins (`ADMIN_SPOTIFY_IDS`) in-app and shared by all users. |
-| Skip detection, "most skipped" stats | **Scrapped.** The API has no skip data. |
+| Skip detection, "most skipped" stats | **Scrapped** for live data: the API has no skip data. Skips appear only from an imported Extended Streaming History (see Listening history). |
 | Rotating playlists the user doesn't own | **Scrapped.** The API only returns contents for playlists the user owns or collaborates on. |
 | Social features / collaborative rotations | **Scrapped for now.** |
 | Notifications (email or push) | **Not planned.** Neither works here (`/me` returns no email, and there's no mobile app). Due songs show up when the user opens the app (a badge or count on Home). |
@@ -221,7 +221,8 @@ Tweakable behavior, kept out of the way: each area of Settings shows what it did
     - A skip on local day D keeps the song out of the queue through day D + hold − 1.
     - Only today's events count toward the daily limit.
   - **Review order** (manual rotations):
-    - most overdue first (default)
+    - guided by listening (default since 2026-11-25; see Listening history)
+    - most overdue first
     - longest in the playlist (`added_at`, unknown dates first)
     - shuffled: a stable order per rotation per UTC day, so the daily batch doesn't reshuffle between loads
     - Auto rotations always review what's leaving next.
@@ -240,10 +241,75 @@ Tweakable behavior, kept out of the way: each area of Settings shows what it did
   - Return cooldown: 2 / 4 / 8 weeks.
   - PlayLS pick chance per new slot: 0% / 10% / 25%.
   - Bring back share: 0% / 20% / 40%.
+  - Listening: a heavily played song can stay 1 (default) / 2 / 3 extra rotations; the most played 0% (default) / 10% / 25% never rotate out.
+- **Listening** (account, overridable per manual rotation): heavily played songs come up for review like any other (default), less often, or not while heavily played. See Listening history.
 - **API:**
   - `GET|PUT /user/me/settings` returns every account setting. PUT changes only the fields sent (null = default; for `review_limit`, null = no limit).
   - `PUT /rotation/{id}` takes the override fields (null clears one; the auto-only ones return 400 on manual rotations).
   - `RotationOut` carries the effective `super_keep_multiplier`, `skip_hold_days` and `review_order`, plus the raw `overrides`.
+
+## Listening history (owner decisions, 2026-11-25)
+PlayLS approximates what the user listens to, so reviews can lean on "you listen to this a lot". Spotify has no skip data and only returns the last 50 plays (each about 30 s or longer), so the history is a lower bound. Rules stay conservative about calling a song unplayed.
+
+- **Capture** (`services/listening_service.py`, pure rules in `listening_logic.py`):
+  - `GET /me/player/recently-played` (latest 50, with `played_at` and `context`) is saved to `play_event`. It runs:
+    - when the app opens or comes back (`POST /user/me/listening/capture`), at most every 15 minutes per user, using a conditional-UPDATE claim on `users.listening_captured_at`;
+    - after login;
+    - from the daily cron, before auto rotations are maintained.
+  - **Gaps:** a capture whose 50 plays are all newer than the newest stored play records a `listening_gap` (plays were probably missed).
+  - **Top tracks:** all three time ranges are refreshed daily into `top_track` (the latest snapshot only).
+  - `users.listening_since` is where the history starts: the oldest play of the first capture, or the start of an import.
+  - Missing scopes skip capture. Spotify errors never fail the request that triggered it. Demo accounts never capture; they get a seeded history (`demo/demo_listening.py`).
+- **On by default.** Settings > Listening turns it off, which deletes the user's plays, gaps and top tracks. Plays are purged after **365 days** (cron).
+- **Matching:** plays match rotation songs by track id or `song_key` (relinked and re-released copies). "Here" means the play's context is the rotation's playlist (`collection` for Liked Songs). Plays from anywhere count toward "a lot".
+- **Per-song stats** (`for_rotation`, cached per request): over the rotation's **window**, two intervals clamped to 21–90 days.
+  - plays, plays here, last played, current top-track ranks;
+  - imported starts and skips.
+- **Heavy** ("you listen to this a lot"): a current short- or medium-term top track, or at least max(3, 2 × the rotation's average plays per song) plays in the window. `heavy_strength` (0–1) grows with rank and plays.
+- **Few plays lately**: deliberately hard to reach. All of these must hold:
+  - the history covers the whole window with under 20% gaps;
+  - the playlist itself had at least max(20, its size) plays in the window;
+  - the song had no plays anywhere, isn't a top track, and has been in the playlist the whole window.
+
+  It shows as a quiet chip and moves the song up the queue. Nothing is removed automatically.
+- **Review order "listening"** (the new default): most overdue first, nudged.
+  - Heavy songs move back by `heavy_strength` × one interval; few-plays songs move forward half an interval.
+  - Songs more than two intervals overdue aren't moved, so heavily played songs still come up (no starvation).
+  - With no history it's identical to "most overdue first".
+- **Heavily played songs come up for review** (`heavy_listening_review`, account plus rotation override, manual rotations only):
+  - `inform` (default): badges and order only.
+  - `less_often`: due one interval later.
+  - `never`: held out of the due queue while heavy. Review all still shows them, labelled "Held".
+- **Auto rotations:**
+  - A heavy song whose turn it is can stay instead, at most `listening_hold_rotations` times in a row (1 by default; 2 or 3). The next song in line leaves in its place.
+  - `rotation_track.listening_holds` counts the holds. A keep, leaving, or rejoining resets it.
+  - `listening_protect_top_percent` (0 by default; 10 or 25) shields the most played songs (3+ plays) outright.
+  - If there aren't enough other songs, held ones leave anyway, so turnover never stalls.
+  - The leaving schedule simulates holds without counting them.
+- **Bring back:**
+  - Each play of a removed song since it left raises its weight by half, up to 4 plays (×3). Being a current top track counts as 2 plays.
+  - The reason adds "played N× since". Auto restocks use the same weights.
+- **Awareness:**
+  - **Review:** chips for "You play this a lot" (shown only without a top-songs rank), "#N in your top songs this month", "Played N× in X weeks (M here)", "Last played", "Few plays lately", and "Skipped N of M starts" (imported only).
+  - **Current songs:** play counts, and a Plays sort.
+  - **Rotation page:** plays from the playlist in the window, the most played song, and a link to the Recap.
+  - **History:** a Listening tab of daily digests (`GET /rotation/{id}/listening`). Kept and removed rows add "N plays in the 2 intervals before", only when the history reached back that far, and removals add "played N× since".
+  - **Restock:** cards show plays in the last 4 weeks. The header says how many recent adds have been played (`GET restock/outcomes`, 90 days, by source). This is display only: For you scoring is unchanged.
+- **Rediscover** (restock source `rediscover`, manual rotations):
+  - Songs with 5+ plays 3–12 months ago (or a long-term top track) and at most one play in the last 60 days, not in any rotation.
+  - Needs 60 days of history.
+  - Weighted by past plays and how long since the last one, with the usual Not now penalty.
+  - Adds reuse the stored track details.
+- **Import** (Extended Streaming History):
+  - The browser reads the `Streaming_History_Audio_*.json` files and sends song plays from the last year, 5,000 rows per request (`POST /user/me/listening/import`).
+  - Rows within 4 minutes of a captured play of the same song are dropped.
+  - Rows under 30 s are stored as starts (with `skipped`, `ms_played`, `reason_end`) but never counted as plays.
+  - The import moves `listening_since` back and clears gaps inside its range. It records a gap if it ends before captured history begins.
+  - The 365-day retention applies to imported rows too. Not available in the demo.
+- **Monthly recap** (`GET /rotation/{id}/recap?month=`, computed on demand, Recap page):
+  - plays here and elsewhere, songs played, plays per day;
+  - top songs and most kept;
+  - turnover, adds that got played, and imported skips.
 
 ## Demo mode (2026-11-24)
 A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spotify's Development Mode allowlist is capped at 5 people, so this is how PlayLS is shown to more.
@@ -280,7 +346,7 @@ A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spoti
   - Admin pages (a demo account is never an admin) and Delete account (replaced by End demo).
   - Demo accounts are left out of `/admin/stats`. Their requests still produce health rows, which have no user.
 
-## Data model (Alembic revisions 0001–0012)
+## Data model (Alembic revisions 0001–0017)
 - `users`: adds `provider` (default `'spotify'`); `email` dropped.
 - `rotation`:
   - `id`, `owner_id`, `provider`, `playlist_id` (required; unique together with `owner_id`), `name` (mirrors the Spotify playlist name: every sync copies it from Spotify, and a rename in PlayLS renames the Spotify playlist first, which only the owner can do; Liked Songs keeps its PlayLS name), `image_url` (playlist cover, refreshed on every sync), `interval_hours`, `grace_period`
@@ -292,7 +358,9 @@ A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spoti
   - Review state: `added_at` (from Spotify; NULL if unknown), `last_kept_at`, `keep_multiplier` (1, or 3 after a super keep), `status` (`active` | `pending_removal` | `removed`), `removed_at`, `removed_by` (`user` | `external` | `rotation`)
 - `restock_block`: `user_id`, `track_id` (unique together), display metadata, `created_at`.
 - `curated_pick`: track metadata plus `note`, optional `starts_at`/`ends_at`, and `created_by`.
-- `restock_feedback`: `user_id`, `rotation_id`, `track_id`, `source` (`bring_back` | `picks` | `suggested` | `search`), `action` (`add` | `skip`), `created_at`.
+- `restock_feedback`: `user_id`, `rotation_id`, `track_id`, `source` (`bring_back` | `picks` | `suggested` | `search` | `rediscover`), `action` (`add` | `skip`), `created_at`.
+- `play_event` (0017): one row per play, `user_id`, `track_id`, `song_key`, track details, `played_at` (unique per user), `context_type` / `context_uri`, `source` (`api` | `import`), and for imports `ms_played`, `skipped`, `reason_end`. `listening_gap` (`gap_start`, `gap_end`) and `top_track` (`time_range`, `rank`, `track_id`, `song_key`). All cascade with the user.
+- `users`: `listening_enabled`, `listening_since`, `listening_cursor`, `listening_captured_at`, `top_tracks_captured_at`, `heavy_listening_review`. `rotation`: `heavy_listening_review`, `listening_hold_rotations`, `listening_protect_top_percent`. `rotation_track.listening_holds`.
 - `suggestion_cache`: one row per user, `{candidates: {track_id: {meta, features}}, missing_scopes}` as JSON, plus `created_at`.
 - `users.granted_scopes`: the space-separated OAuth scopes from the last login.
 - `review_event`: `id`, `rotation_track_id`, `action` (`keep` | `super_keep` | `skip` | `remove`; system `rotated_out` | `auto_added`; legacy `undo` rows only), `previous_last_kept_at` / `previous_keep_multiplier` (keeps only, for undo), `created_at`. An undone action's row is deleted. Removed songs stay in this history so they can be reused in Phase 2 (for example, a "bring back" option in restock).
@@ -300,7 +368,7 @@ A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spoti
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 
 ## Decisions to revisit
-- Recently played only covers the last 50 plays. Saving snapshots (on each visit, or from a daily cron) would give a longer listening history.
+- Listening history is captured on app open and daily, so very heavy listeners (50+ plays a day between visits) leave gaps. A more frequent cron would need Vercel Pro.
 - Daily limit is per rotation, so several big rotations can still add up to several × N in one day.
 - Removing every duplicate copy of a track (above).
 - Whether to add any provider abstraction if Apple comes back into scope.

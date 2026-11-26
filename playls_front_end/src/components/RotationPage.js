@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Avatar,
@@ -26,6 +26,7 @@ import {
   Autorenew,
   Delete,
   Edit,
+  InsertChartOutlined,
   MusicNote,
   PlaylistRemove,
   RestartAlt,
@@ -49,6 +50,7 @@ import {
   formatInterval,
 } from './RotationDialogs';
 import { RotationPageSkeleton, SongRowsSkeleton } from './Skeletons';
+import { PlaysIcon, playsText, windowLabel } from './Listening';
 
 // Spotify's mark, simplified (MUI has no brand icons)
 const SpotifyMark = () => (
@@ -92,6 +94,9 @@ const DueLabel = ({ track, auto }) => {
       </Typography>
     );
   }
+  if (track.listening?.held) {
+    return <Typography variant="caption" sx={{ whiteSpace: 'nowrap', ml: 1 }}>Held</Typography>;
+  }
   if (!track.due_at) return null;
   const due = parseUtc(track.due_at) <= new Date();
   return (
@@ -108,6 +113,7 @@ const SORTS = {
   reviewed: { label: 'Last reviewed', key: (t) => t.last_reviewed_at, dir: 'desc' },
   title: { label: 'Title', key: null, dir: 'asc' },
   kept: { label: 'Times kept', key: (t) => t.times_kept, dir: 'desc' },
+  plays: { label: 'Plays', key: (t) => t.listening?.plays || null, dir: 'desc' },
 };
 const SORT_KEY = 'playls.songSort';
 
@@ -192,6 +198,11 @@ const SongRow = ({ track, auto, shade }) => (
       <Typography variant="caption" sx={{ opacity: 0.75, whiteSpace: 'nowrap' }}>
         Kept {track.times_kept ?? 0}×
       </Typography>
+      {playsText(track.listening) && (
+        <Typography variant="caption" sx={{ opacity: 0.75, whiteSpace: 'nowrap', fontWeight: track.listening.heavy ? 700 : 400 }}>
+          <PlaysIcon sx={{ fontSize: 12, mr: 0.4, verticalAlign: '-1px' }} />{playsText(track.listening)}
+        </Typography>
+      )}
     </Box>
   </Box>
 );
@@ -287,6 +298,16 @@ const RotationPage = () => {
         </Typography>
         <Typography variant="body2">{tracks ? formatDuration(totalMs) : ''}</Typography>
       </Box>
+      {rotation.listening?.plays_here > 0 && (
+        <Typography variant="body2" color="text.secondary" textAlign="center" mt={-1.5} mb={3} px={0.5}>
+          <PlaysIcon sx={{ fontSize: 15, mr: 0.5, verticalAlign: '-2px' }} />
+          {rotation.listening.plays_here} play{rotation.listening.plays_here === 1 ? '' : 's'} from this playlist in{' '}
+          {windowLabel(rotation.listening.window_days)}
+          {rotation.listening.top_song && ` · most played: ${rotation.listening.top_song}`}
+          {' · '}
+          <Box component={RouterLink} to={`/rotation/${rotation.id}/recap`} sx={{ color: 'primary.main' }}>Recap</Box>
+        </Typography>
+      )}
 
       {!rotation.sync_ok && (
         <Alert severity="warning" icon={<SyncProblem />} sx={{ mb: 2 }}>
@@ -327,6 +348,7 @@ const RotationPage = () => {
 
       <Menu anchorEl={menuAnchor} open={!!menuAnchor} onClose={() => setMenuAnchor(null)}>
         {menuItem(<Edit fontSize="small" />, 'Edit rotation', () => setDialog('edit'))}
+        {menuItem(<InsertChartOutlined fontSize="small" />, 'Monthly recap', () => navigate(`/rotation/${rotation.id}/recap`))}
         {menuItem(<ViewList fontSize="small" />, 'Review all songs',
           () => navigate(`/rotation/${rotation.id}/review?all=1`), { disabled: rotation.active_count === 0 })}
         {!isAuto && menuItem(<RestartAlt fontSize="small" />, 'Reset all songs to not due…', () => setDialog('reset'),

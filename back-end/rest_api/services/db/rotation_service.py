@@ -23,14 +23,17 @@ from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, Rot
 from rest_api.database.models.user import DEMO, UserDB
 from rest_api.models.rotation import (
     HistoryEventOut,
+    ListeningOut,
     QueueOut,
     RotationCreate,
+    RotationListeningOut,
     RotationOut,
     RotationUpdate,
     TrackOut,
 )
 from rest_api.services import auto_rotation_logic as auto
-from rest_api.services import health
+from rest_api.services import health, listening_reports
+from rest_api.services import listening_service as listening
 from rest_api.services import preferences as prefs
 from rest_api.services import rotation_logic as logic
 from rest_api.services.auth_service import LIBRARY_WRITE_SCOPES, missing_scopes
@@ -120,30 +123,61 @@ def _todays_activity(db: orm.Session, rotations: Iterable[RotationDB], since) ->
     return activity
 
 
-def due_dates(rotation: RotationDB, active: list[RotationTrackDB], now) -> dict[int, object]:
-    """When each active track comes due, by row id.
+def auto_listening_args(rotation: RotationDB, active: list[RotationTrackDB], now) -> dict:
+    """Listening inputs for auto_rotation_logic (holds for heavily played songs, top-X% shield)."""
+    stats = listening.for_rotation(rotation, active, now)
+    return {
+        "listening": stats.songs,
+        "hold_cap": prefs.for_rotation(rotation, "listening_hold_rotations"),
+        "protect_percent": prefs.for_rotation(rotation, "listening_protect_top_percent"),
+    }
 
-    Manual rotations: the review due date. Auto rotations: when the song is projected to
+
+def _held(rotation: RotationDB, s) -> bool:
+    """Manual rotations set to never review heavily played songs: this one is held back."""
+    return (
+        s is not None and s.heavy and rotation.kind != AUTO
+        and prefs.for_rotation(rotation, "heavy_listening_review") == "never"
+    )
+
+
+def due_dates(rotation: RotationDB, active: list[RotationTrackDB], now) -> dict[int, object]:
+    """When each active track comes due, by row id (None: held back while heavily played).
+
+    Manual rotations: the review due date, one interval later for heavily played songs when
+    heavy_listening_review is "less_often". Auto rotations: when the song is projected to
     rotate out (the next group is "due" for an optional review).
     """
     if rotation.kind == AUTO:
-        return auto.leaving_schedule(active, rotation, now)
-    return {t.id: logic.due_at(t, rotation) for t in active}
+        return auto.leaving_schedule(active, rotation, now, **auto_listening_args(rotation, active, now))
+    stats = listening.for_rotation(rotation, active, now)
+    mode = prefs.for_rotation(rotation, "heavy_listening_review")
+    interval = timedelta(hours=rotation.interval_hours)
+    dates = {}
+    for t in active:
+        due = logic.due_at(t, rotation)
+        s = stats.songs.get(t.id)
+        if due is not None and s is not None and s.heavy and mode != "inform":
+            due = None if mode == "never" else due + interval
+        dates[t.id] = due
+    return dates
 
 
 def _due_now(rotation: RotationDB, active: list[RotationTrackDB], now) -> list[RotationTrackDB]:
     """Every active track currently due, in queue order (auto: leaving at the next rotation)."""
     if rotation.kind == AUTO:
-        return auto.leaving_next(active, rotation, now)
+        return auto.leaving_next(active, rotation, now, **auto_listening_args(rotation, active, now))
+    dates = due_dates(rotation, active, now)
     return logic.sort_queue(
-        [t for t in active if logic.is_due(t, rotation, now)], rotation,
+        [t for t in active if dates[t.id] is not None and dates[t.id] <= now], rotation,
         order=prefs.for_rotation(rotation, "review_order"), day_key=f"{rotation.id}:{now.date()}",
+        listening=listening.for_rotation(rotation, active, now).songs, now=now,
     )
 
 
 def _sorted_by_due(rotation: RotationDB, active: list[RotationTrackDB], now) -> list[RotationTrackDB]:
     if rotation.kind == AUTO:
-        schedule = auto.leaving_schedule(active, rotation, now)
+        schedule = auto.leaving_schedule(active, rotation, now, **auto_listening_args(rotation, active, now))
         order = {t.id: i for i, t in enumerate(auto.rotate_out_order(active, rotation, now))}
         return sorted(active, key=lambda t: (schedule[t.id], order[t.id]))
     return logic.sort_queue(active, rotation)
@@ -166,7 +200,7 @@ def summarize(
     limit = prefs.review_limit(rotation)
     active = [t for t in tracks if t.status == ACTIVE]
     is_auto = rotation.kind == AUTO
-    dates = list(due_dates(rotation, active, now).values())
+    dates = [d for d in due_dates(rotation, active, now).values() if d is not None]
     due_count = len(_due_now(rotation, active, now)) if is_auto else sum(1 for d in dates if d <= now)
     upcoming = [d for d in dates if d > now] if not is_auto else []
     eligible = len(_eligible_due(rotation, tracks, day, now))
@@ -198,7 +232,31 @@ def summarize(
         super_keep_multiplier=prefs.for_rotation(rotation, "super_keep_multiplier"),
         skip_hold_days=prefs.for_rotation(rotation, "skip_hold_days"),
         review_order=prefs.for_rotation(rotation, "review_order"),
+        heavy_listening_review=prefs.for_rotation(rotation, "heavy_listening_review"),
         overrides=prefs.overrides(rotation),
+        listening=_rotation_listening(rotation, active, now),
+    )
+
+
+def _rotation_listening(rotation: RotationDB, active: list[RotationTrackDB], now) -> RotationListeningOut | None:
+    if rotation.owner is None or not listening.enabled(rotation.owner):
+        return None
+    stats = listening.for_rotation(rotation, active, now)
+    top = max(active, key=lambda t: (stats.songs[t.id].plays, t.title), default=None) if stats.songs else None
+    top_plays = stats.songs[top.id].plays if top is not None else 0
+    return RotationListeningOut(
+        window_days=stats.window_days, plays_here=stats.plays_here,
+        top_song=top.title if top is not None and top_plays else None, top_song_plays=top_plays,
+    )
+
+
+def listening_out(s, window_days: int, held: bool = False) -> ListeningOut | None:
+    """A song's listening for the API, or None when there's nothing to show."""
+    if s is None or not (s.plays or s.top_rank or s.few_plays or s.starts or held):
+        return None
+    return ListeningOut(
+        window_days=window_days, plays=s.plays, plays_here=s.plays_here, last_played_at=s.last_played_at,
+        top_rank=s.top_rank, heavy=s.heavy, few_plays=s.few_plays, held=held, starts=s.starts, skips=s.skips,
     )
 
 
@@ -213,7 +271,7 @@ def summarize_one(
 _UNSET = object()
 
 
-def track_out(track: RotationTrackDB, rotation: RotationDB, due_at=_UNSET) -> TrackOut:
+def track_out(track: RotationTrackDB, rotation: RotationDB, due_at=_UNSET, listening_stats=None) -> TrackOut:
     """`due_at` overrides the computed due date (auto rotations pass the leaving estimate)."""
     if due_at is _UNSET:
         due_at = logic.due_at(track, rotation) if rotation.kind != AUTO else None
@@ -232,6 +290,7 @@ def track_out(track: RotationTrackDB, rotation: RotationDB, due_at=_UNSET) -> Tr
         status=track.status,
         due_at=due_at if track.status == ACTIVE else None,
         protected=rotation.kind == AUTO and track.status == ACTIVE and auto.is_protected(track, rotation),
+        listening=listening_stats,
     )
 
 
@@ -239,7 +298,12 @@ def _tracks_out(
     tracks: list[RotationTrackDB], rotation: RotationDB, active: list[RotationTrackDB], now
 ) -> list[TrackOut]:
     dates = due_dates(rotation, active, now)
-    return [track_out(t, rotation, dates.get(t.id)) for t in tracks]
+    stats = listening.for_rotation(rotation, active, now)
+    out = []
+    for t in tracks:
+        s = stats.songs.get(t.id)
+        out.append(track_out(t, rotation, dates.get(t.id), listening_out(s, stats.window_days, _held(rotation, s))))
+    return out
 
 
 # ---------- sync wrappers ----------
@@ -560,6 +624,7 @@ def apply_review(db: orm.Session, rotation: RotationDB, track_id: str, action: s
         event.previous_keep_multiplier = track.keep_multiplier
         track.last_kept_at = utcnow()
         track.keep_multiplier = prefs.for_rotation(rotation, "super_keep_multiplier") if action == SUPER_KEEP else 1
+        track.listening_holds = 0  # a keep is a fresh start for auto rotations' holds too
     elif action == REMOVE:
         track.status = PENDING_REMOVAL
     # SKIP changes nothing on the track: it stays due and comes back after the skip hold
@@ -644,10 +709,18 @@ def history(
         .limit(limit)
         .all()
     )
-    dates = due_dates(rotation, _tracks(db, rotation, (ACTIVE,)), utcnow())
-    return [
-        HistoryEventOut(
-            action=event.action, created_at=event.created_at, track=track_out(track, rotation, dates.get(track.id))
-        )
-        for event, track in rows
-    ], total
+    now = utcnow()
+    active = _tracks(db, rotation, (ACTIVE,))
+    dates = due_dates(rotation, active, now)
+    stats = listening.for_rotation(rotation, active, now)
+    plays = listening_reports.event_plays(db, rotation, rows)
+    out = []
+    for event, track in rows:
+        before, hours, since = plays.get(event.id, (None, None, None))
+        out.append(HistoryEventOut(
+            action=event.action, created_at=event.created_at,
+            track=track_out(track, rotation, dates.get(track.id),
+                            listening_out(stats.songs.get(track.id), stats.window_days)),
+            plays_before=before, plays_window_hours=hours if before is not None else None, plays_since=since,
+        ))
+    return out, total

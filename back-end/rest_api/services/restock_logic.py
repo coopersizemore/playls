@@ -19,6 +19,11 @@ BRING_BACK_FLOOR = 0.1  # weight right after removal
 BRING_BACK_RECOVERY_DAYS = 90  # days until full weight
 SKIP_FACTOR = 0.5  # a fresh "Not now" halves the weight...
 SKIP_HALF_LIFE_DAYS = 30  # ...and its effect halves every 30 days after that
+# Listening history: each play of a removed song since it left raises its bring-back weight
+# by half, up to 4 plays (x3); being a current top track counts as 2 plays
+BRING_BACK_PLAY_BOOST = 0.5
+BRING_BACK_MAX_PLAYS = 4
+TOP_COUNTS_AS_PLAYS = 2
 DISCOVERY_SHARE = 1 / 3  # target share of "new to you" songs in the suggested deck
 
 TOP_WINDOW_WEIGHTS = {"short_term": 3.0, "medium_term": 2.0, "long_term": 1.0}
@@ -91,21 +96,31 @@ def skip_multiplier(effective_skips: float, factor: float = SKIP_FACTOR) -> floa
 
 # ---------- bring back ----------
 
+def bring_back_play_multiplier(plays_since: int = 0, top: bool = False) -> float:
+    """Boost for a removed song you've kept playing elsewhere (listening history)."""
+    plays = min(BRING_BACK_MAX_PLAYS, plays_since + (TOP_COUNTS_AS_PLAYS if top else 0))
+    return 1 + BRING_BACK_PLAY_BOOST * plays
+
+
 def bring_back_weight(
     removed_at: datetime | None, now: datetime, skips: float, keeps: int = 0,
     recovery_days: float = BRING_BACK_RECOVERY_DAYS, skip_factor: float = SKIP_FACTOR,
+    plays_since: int = 0, top: bool = False,
 ) -> float:
     """Low right after removal, full after `recovery_days` (90 by default); lowered by (fading)
-    "Not now"s; small boost per past keep."""
+    "Not now"s; small boost per past keep; raised by plays since it left (and being a top track)."""
     if removed_at is None:
         ramp = 1.0
     else:
         days = max(0.0, (now - removed_at).total_seconds() / 86400)
         ramp = BRING_BACK_FLOOR + (1 - BRING_BACK_FLOOR) * min(1.0, days / max(recovery_days, 1))
-    return ramp * skip_multiplier(skips, skip_factor) * (1 + 0.1 * min(keeps, 5))
+    return (
+        ramp * skip_multiplier(skips, skip_factor) * (1 + 0.1 * min(keeps, 5))
+        * bring_back_play_multiplier(plays_since, top)
+    )
 
 
-def bring_back_reason(removed_at: datetime | None, now: datetime, keeps: int) -> str:
+def bring_back_reason(removed_at: datetime | None, now: datetime, keeps: int, plays_since: int = 0) -> str:
     if removed_at is None:
         return "Previously in this rotation"
     days = (now - removed_at).days
@@ -116,7 +131,8 @@ def bring_back_reason(removed_at: datetime | None, now: datetime, keeps: int) ->
     else:
         when = f"{days // 30} months ago"
     kept = f" · kept {keeps}×" if keeps else ""
-    return f"Removed {when}{kept}"
+    played = f" · played {plays_since}× since" if plays_since else ""
+    return f"Removed {when}{kept}{played}"
 
 
 # ---------- suggestions ----------

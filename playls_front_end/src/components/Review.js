@@ -28,6 +28,7 @@ import { skipReturn, timesWord } from './SettingsControls';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
 import SongStage, { DetailsPanel, NavRow, PanelNote, PanelSection } from './SongStage';
 import { ReviewSkeleton } from './Skeletons';
+import { BadgeRow, listeningBadges } from './Listening';
 import { startSession } from '../telemetry';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -408,13 +409,7 @@ const Review = () => {
               </Box>
               <DaysStat track={track} />
             </Box>
-            {badges.length > 0 && (
-              <Box display="flex" gap={1} mt={1} flexWrap="wrap">
-                {badges.map((b) => (
-                  <Chip key={b.label} size="small" color={b.color || 'default'} variant={b.variant || 'outlined'} label={b.label} />
-                ))}
-              </Box>
-            )}
+            <BadgeRow badges={[...badges, ...listeningBadges(track.listening)]} />
 
             <PanelSection><SpotifyEmbed trackId={track.track_id} title={track.title} compact /></PanelSection>
 

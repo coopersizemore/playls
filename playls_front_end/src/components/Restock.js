@@ -40,11 +40,14 @@ import { AlbumArt, Layout, PlaylistCover, SpotifyEmbed } from './Layout';
 import SwipeCard, { EXIT_MS } from './SwipeCard';
 import SongStage, { DetailsPanel, NavRow, PanelNote, PanelSection } from './SongStage';
 import { ListSkeleton, SongCardSkeleton } from './Skeletons';
+import { PlaysIcon, windowLabel } from './Listening';
+import RestockOutcomes from './RestockOutcomes';
 
 const TABS = [
   { source: 'bring_back', label: 'Bring back', empty: 'Nothing to bring back yet. Songs you remove from this rotation show up here, weighted more strongly the longer they have been gone.' },
   { source: 'picks', label: 'PlayLS picks', empty: 'No new PlayLS picks right now. Check back soon.' },
   { source: 'suggested', label: 'For you', empty: 'No suggestions right now. Try refreshing, or listen a little more and check back.' },
+  { source: 'rediscover', label: 'Rediscover', empty: 'Songs you played a lot a few months ago but not lately show up here. This builds up as PlayLS saves your listening (it needs about two months of it).' },
   { source: 'search', label: 'Search' },
 ];
 
@@ -259,7 +262,13 @@ const Deck = ({ rotationId, source, emptyText, onAdded }) => {
                 {added > 0 && <Typography variant="caption" color="text.secondary">added {added}</Typography>}
               </Box>
             </Box>
-            {current.reason && <Chip size="small" variant="outlined" label={current.reason} sx={{ mt: 1, maxWidth: '100%' }} />}
+            <Box display="flex" gap={1} mt={1} flexWrap="wrap">
+              {current.reason && <Chip size="small" variant="outlined" label={current.reason} sx={{ maxWidth: '100%' }} />}
+              {current.listening && (
+                <Chip size="small" variant="outlined" color="primary" icon={<PlaysIcon />}
+                  label={`Played ${current.listening.plays}× in ${windowLabel(current.listening.window_days)}`} />
+              )}
+            </Box>
 
             <PanelSection><SpotifyEmbed trackId={current.track_id} title={current.title} compact /></PanelSection>
 
@@ -439,6 +448,7 @@ const Restock = () => {
               : 'Find songs to add to this rotation.'}
             {rotation?.is_liked && ' Adding a song likes it in Spotify.'}
           </Typography>
+          <RestockOutcomes rotationId={rotationId} refreshKey={addedTotal} />
         </Box>
       </Box>
       <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile

@@ -11,7 +11,8 @@ BRING_BACK = "bring_back"
 PICKS = "picks"
 SUGGESTED = "suggested"
 SEARCH = "search"
-SOURCES = (BRING_BACK, PICKS, SUGGESTED, SEARCH)
+REDISCOVER = "rediscover"  # songs the user played a lot months ago (listening history)
+SOURCES = (BRING_BACK, PICKS, SUGGESTED, SEARCH, REDISCOVER)
 
 
 class RestockFeedbackDB(Base):

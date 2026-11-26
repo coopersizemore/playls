@@ -71,12 +71,15 @@ class RotationUpdate(BaseModel):
     # Overrides of the account settings; null = use the account setting
     super_keep_multiplier: Literal[2, 3, 5] | None = None
     skip_hold_days: Literal[1, 3, 7] | None = None
-    review_order: Literal["overdue", "oldest", "shuffle"] | None = None
+    review_order: Literal["listening", "overdue", "oldest", "shuffle"] | None = None
+    heavy_listening_review: Literal["inform", "less_often", "never"] | None = None
     review_limit: int | None = Field(None, ge=0, le=1000)  # 0 = no limit for this rotation
     # Auto rotations only; null = the default
     return_cooldown_days: Literal[14, 28, 56] | None = None
     pick_percent: Literal[0, 10, 25] | None = None
     bring_back_percent: Literal[0, 20, 40] | None = None
+    listening_hold_rotations: Literal[1, 2, 3] | None = None
+    listening_protect_top_percent: Literal[0, 10, 25] | None = None
 
 
 class RotationOverrides(BaseModel):
@@ -84,10 +87,19 @@ class RotationOverrides(BaseModel):
     super_keep_multiplier: int | None = None
     skip_hold_days: int | None = None
     review_order: str | None = None
+    heavy_listening_review: str | None = None
     review_limit: int | None = None  # 0 = no limit
     return_cooldown_days: int | None = None
     pick_percent: int | None = None
     bring_back_percent: int | None = None
+
+
+class RotationListeningOut(BaseModel):
+    """This rotation's listening over its window (listening history)."""
+    window_days: int
+    plays_here: int  # plays from this playlist
+    top_song: str | None = None  # the rotation's most played song (title)
+    top_song_plays: int = 0
 
 
 class RotationOut(BaseModel):
@@ -120,8 +132,26 @@ class RotationOut(BaseModel):
     # Settings in effect for this rotation (its override, else the account setting)
     super_keep_multiplier: int = 3
     skip_hold_days: int = 1
-    review_order: str = "overdue"
+    review_order: str = "listening"
+    heavy_listening_review: str = "inform"
     overrides: RotationOverrides = RotationOverrides()
+    listening: RotationListeningOut | None = None  # None: listening history off
+
+
+class ListeningOut(BaseModel):
+    """A song's listening over the rotation's window (see services/listening_logic.py)."""
+    window_days: int
+    plays: int  # from anywhere
+    plays_here: int  # from this rotation's playlist
+    last_played_at: datetime | None = None
+    # Current top tracks: time range (short_term | medium_term | long_term) -> rank (0 = #1)
+    top_rank: dict[str, int] = {}
+    heavy: bool = False  # "you listen to this a lot"
+    few_plays: bool = False  # confidently not played lately
+    held: bool = False  # left out of reviews while heavily played (heavy_listening_review = never)
+    # Imported history only: starts in the window and how many were skipped
+    starts: int = 0
+    skips: int = 0
 
 
 class TrackOut(BaseModel):
@@ -143,6 +173,7 @@ class TrackOut(BaseModel):
     # Filled in by GET /rotation/{id}/tracks only (0 / None elsewhere)
     times_kept: int = 0  # keeps + super keeps over the song's whole time in the rotation
     last_reviewed_at: datetime | None = None  # latest keep, super keep, skip or remove
+    listening: ListeningOut | None = None  # None: no listening history to show
 
 
 class QueueOut(BaseModel):
@@ -183,3 +214,30 @@ class HistoryEventOut(BaseModel):
     action: str
     created_at: datetime
     track: TrackOut
+    # Keeps and removals, when listening history covers it: plays of the song (anywhere) in
+    # the `plays_window_hours` before the event, and (removals) since
+    plays_before: int | None = None
+    plays_window_hours: int | None = None
+    plays_since: int | None = None
+
+
+class ListeningSongOut(BaseModel):
+    track_id: str
+    title: str | None
+    artists: str | None
+    image_url: str | None
+    plays: int
+    plays_here: int
+
+
+class ListeningDayOut(BaseModel):
+    """One day (the user's local date) of this rotation's listening."""
+    date: str  # YYYY-MM-DD
+    plays_here: int  # plays from this playlist
+    plays_elsewhere: int  # plays of its songs from anywhere else
+    songs: list[ListeningSongOut]
+
+
+class ListeningDigestOut(BaseModel):
+    since: datetime | None  # earliest moment the listening history covers
+    days: list[ListeningDayOut]  # newest first, days with plays only

@@ -7,6 +7,7 @@ any `rest_api.database.models.*` module runs this first. New models must be adde
 from rest_api.database.models.analytics_event import AnalyticsEventDB
 from rest_api.database.models.curated_pick import CuratedPickDB
 from rest_api.database.models.health_event import HealthEventDB
+from rest_api.database.models.listening import ListeningGapDB, PlayEventDB, TopTrackDB
 from rest_api.database.models.restock_block import RestockBlockDB
 from rest_api.database.models.restock_feedback import RestockFeedbackDB
 from rest_api.database.models.review_event import ReviewEventDB
@@ -18,5 +19,5 @@ from rest_api.database.models.user import UserDB
 __all__ = [
     "UserDB", "RotationDB", "RotationTrackDB", "ReviewEventDB",
     "CuratedPickDB", "RestockFeedbackDB", "SuggestionCacheDB", "RestockBlockDB",
-    "AnalyticsEventDB", "HealthEventDB",
+    "AnalyticsEventDB", "HealthEventDB", "PlayEventDB", "ListeningGapDB", "TopTrackDB",
 ]

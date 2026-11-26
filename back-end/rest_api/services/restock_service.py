@@ -18,11 +18,14 @@ from sqlalchemy import func
 
 from rest_api.clock import to_naive_utc, utcnow
 from rest_api.database.models.curated_pick import CuratedPickDB
+from rest_api.database.models.listening import API as PLAY_API
+from rest_api.database.models.listening import PlayEventDB, TopTrackDB
 from rest_api.database.models.restock_block import RestockBlockDB
 from rest_api.database.models.restock_feedback import (
     ADD,
     BRING_BACK,
     PICKS,
+    REDISCOVER,
     SKIP,
     SUGGESTED,
     RestockFeedbackDB,
@@ -32,7 +35,9 @@ from rest_api.database.models.rotation import RotationDB
 from rest_api.database.models.rotation_track import ACTIVE, PENDING_REMOVAL, REMOVED, RotationTrackDB
 from rest_api.database.models.suggestion_cache import SuggestionCacheDB
 from rest_api.database.models.user import UserDB
-from rest_api.models.restock import CandidateOut, DeckOut, SearchOut
+from rest_api.models.restock import CandidateOut, CandidatePlaysOut, DeckOut, SearchOut
+from rest_api.services import listening_logic
+from rest_api.services import listening_service as listening
 from rest_api.services import preferences as prefs
 from rest_api.services import restock_logic as logic
 from rest_api.services.auth_service import SUGGESTION_SCOPES, missing_scopes
@@ -162,6 +167,19 @@ def _candidate(meta: dict[str, Any], source: str, **extra) -> CandidateOut:
     )
 
 
+def with_listening(db: orm.Session, user: UserDB, items: list[CandidateOut]) -> list[CandidateOut]:
+    """Add recent plays (listening history) to deck cards that have any."""
+    found = listening.song_plays(db, user, [c.model_dump() for c in items])
+    for c in items:
+        p = found.get(c.track_id)
+        if p is not None:
+            c.listening = CandidatePlaysOut(
+                plays=p["plays"], last_played_at=p["last_played_at"], window_days=p["window_days"],
+                since_removed=c.listening.since_removed if c.listening else None,
+            )
+    return items
+
+
 def row_meta(row) -> dict[str, Any]:
     return {
         "track_id": row.track_id, "uri": row.uri, "title": row.title, "artists": row.artists,
@@ -213,20 +231,22 @@ def bring_back_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offs
         if r.track_id not in hidden and r.is_playable
     ]
     keeps = keep_counts(db, removed)
+    played = listening.plays_since(db, user, removed)  # {row id: (plays since removal, top track)}
     weights = [
         logic.bring_back_weight(
-            r.removed_at, now, skips[r.track_id], keeps[r.id], recovery_days(user), skip_factor(user)
+            r.removed_at, now, skips[r.track_id], keeps[r.id], recovery_days(user), skip_factor(user),
+            *played.get(r.id, (0, False)),
         )
         for r in removed
     ]
     ordered = logic.weighted_order(
         list(zip(removed, weights, strict=True)), weights, _seed(user, rotation, BRING_BACK, today)
     )
-    return DeckOut(source=BRING_BACK, items=[
+    return DeckOut(source=BRING_BACK, items=with_listening(db, user, [
         _candidate(row_meta(r), BRING_BACK, score=round(w, 4),
-                   reason=logic.bring_back_reason(r.removed_at, now, keeps[r.id]))
+                   reason=logic.bring_back_reason(r.removed_at, now, keeps[r.id], played.get(r.id, (0,))[0]))
         for r, w in ordered[:deck_size(user)]
-    ])
+    ]))
 
 
 # ---------- 2. PlayLS picks ----------
@@ -255,10 +275,10 @@ def picks_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_mi
         picks.append(pick)
     # Newest first, but songs the user has passed on before sink to the back
     picks.sort(key=lambda p: skips[p.track_id])
-    return DeckOut(source=PICKS, items=[
+    return DeckOut(source=PICKS, items=with_listening(db, user, [
         _candidate(row_meta(p), PICKS, note=p.note, reason=p.note or "PlayLS pick")
         for p in picks[:deck_size(user)]
-    ], already_in_rotation=len(already_in))
+    ]), already_in_rotation=len(already_in))
 
 
 # ---------- 3. suggested for you ----------
@@ -417,10 +437,84 @@ async def suggested_deck(
         return [c for c, _ in logic.weighted_order(items, [s for _, s in items], seed + salt)]
 
     deck = logic.blend(order(known, 0), order(discoveries, 1), deck_size(user), discovery_share(user))
-    return DeckOut(source=SUGGESTED, items=deck, missing_scopes=payload.get("missing_scopes", []))
+    return DeckOut(
+        source=SUGGESTED, items=with_listening(db, user, deck), missing_scopes=payload.get("missing_scopes", [])
+    )
 
 
-# ---------- 4. search ----------
+# ---------- 4. rediscover (listening history) ----------
+
+REDISCOVER_PAST_DAYS = (90, 365)  # "back then": 3 to 12 months ago
+REDISCOVER_RECENT_DAYS = 60  # "lately"
+REDISCOVER_MIN_PAST_PLAYS = 5
+REDISCOVER_MAX_RECENT_PLAYS = 1
+
+
+def rediscover_deck(db: orm.Session, rotation: RotationDB, user: UserDB, tz_offset_minutes: int = 0) -> DeckOut:
+    """Songs the user played a lot 3 to 12 months ago (or a long-term top track) but hardly in
+    the last 60 days, and that aren't in any of their rotations. Needs 60+ days of history
+    to say "not lately"."""
+    now = utcnow()
+    recent_start = now - timedelta(days=REDISCOVER_RECENT_DAYS)
+    if not listening.enabled(user) or user.listening_since is None or user.listening_since > recent_start:
+        return DeckOut(source=REDISCOVER, items=[])
+    past_lo = now - timedelta(days=REDISCOVER_PAST_DAYS[1])
+    past_hi = now - timedelta(days=REDISCOVER_PAST_DAYS[0])
+    long_term = {
+        k for (k,) in db.query(TopTrackDB.song_key).filter(
+            TopTrackDB.user_id == user.id, TopTrackDB.time_range == "long_term"
+        ) if k
+    }
+    songs: dict[str, dict[str, Any]] = {}
+    rows = db.query(PlayEventDB).filter(PlayEventDB.user_id == user.id, PlayEventDB.played_at >= past_lo).order_by(
+        PlayEventDB.played_at
+    )
+    for p in rows:
+        if p.ms_played is not None and p.ms_played < listening_logic.PLAY_MIN_MS:
+            continue
+        key = p.song_key or p.track_id
+        song = songs.setdefault(key, {"past": 0, "recent": 0, "last": None, "months": Counter(), "meta": None})
+        if past_lo <= p.played_at < past_hi:
+            song["past"] += 1
+            song["months"][p.played_at.month] += 1
+        if p.played_at >= recent_start:
+            song["recent"] += 1
+        song["last"] = p.played_at
+        # Prefer captured plays for display (imported ones have no artwork)
+        if song["meta"] is None or (p.source == PLAY_API and song["meta"]["image_url"] is None):
+            song["meta"] = {
+                "track_id": p.track_id, "uri": p.uri or f"spotify:track:{p.track_id}",
+                "title": p.title or "Unknown track", "artists": p.artists, "album": p.album,
+                "image_url": p.image_url, "duration_ms": p.duration_ms,
+            }
+    today = _today(tz_offset_minutes)
+    hidden = _skipped_since(db, user, today) | blocked_ids(db, user)
+    skips = skip_counts(db, user)
+    in_rotation = rotation_songs(db, rotation)
+    elsewhere = in_other_rotations(db, user, rotation)
+    picked, weights = [], []
+    for key, song in songs.items():
+        meta = song["meta"]
+        eligible_past = song["past"] >= REDISCOVER_MIN_PAST_PLAYS or (key in long_term and song["past"] >= 1)
+        if (
+            not eligible_past or song["recent"] > REDISCOVER_MAX_RECENT_PLAYS or meta["track_id"] in hidden
+            or in_rotation.find_meta(meta) is not None or is_elsewhere(elsewhere, meta)
+        ):
+            continue
+        idle_days = (now - song["last"]).days if song["last"] else 0
+        weight = song["past"] * (1 + min(idle_days, 180) / 180) * logic.skip_multiplier(
+            skips[meta["track_id"]], skip_factor(user)
+        )
+        peak = song["months"].most_common(1)[0][0] if song["months"] else None
+        picked.append((meta, listening_logic.rediscover_reason(song["past"], peak), weight))
+        weights.append(weight)
+    ordered = logic.weighted_order(picked, weights, _seed(user, rotation, REDISCOVER, today))
+    return DeckOut(source=REDISCOVER, items=with_listening(db, user, [
+        _candidate(meta, REDISCOVER, reason=reason, score=round(w, 4)) for meta, reason, w in ordered[:deck_size(user)]
+    ]))
+
+
+# ---------- 5. search ----------
 
 async def search(db: orm.Session, rotation: RotationDB, user: UserDB, q: str, offset: int = 0) -> SearchOut:
     result = await ss.search(q, user, db, "track", 10, offset)
@@ -434,7 +528,7 @@ async def search(db: orm.Session, rotation: RotationDB, user: UserDB, q: str, of
         row = songs.find_meta(meta)
         items.append(_candidate(meta, "search", in_rotation=bool(row and row.status != REMOVED)))
     next_offset = offset + 10 if page.get("next") and offset + 10 <= 1000 else None
-    return SearchOut(items=items, next_offset=next_offset)
+    return SearchOut(items=with_listening(db, user, items), next_offset=next_offset)
 
 
 # ---------- actions ----------
@@ -459,6 +553,15 @@ async def _resolve_meta(db: orm.Session, user: UserDB, track_id: str, row: Rotat
     cached = ((cache.payload if cache else {}) or {}).get("candidates", {}).get(track_id)
     if cached:
         return cached["meta"]
+    # A song from the listening history (Rediscover), if a captured play has its details
+    play = db.query(PlayEventDB).filter(
+        PlayEventDB.user_id == user.id, PlayEventDB.track_id == track_id, PlayEventDB.image_url.isnot(None)
+    ).order_by(PlayEventDB.played_at.desc()).first()
+    if play is not None and play.uri and play.title:
+        return {
+            "track_id": track_id, "uri": play.uri, "title": play.title, "artists": play.artists,
+            "album": play.album, "image_url": play.image_url, "duration_ms": play.duration_ms,
+        }
     meta = await _spotify_track_meta(db, user, track_id)
     if meta is None:
         raise HTTPException(status_code=400, detail="Only Spotify tracks can be added")
@@ -493,6 +596,7 @@ async def add_to_rotation(db: orm.Session, rotation: RotationDB, user: UserDB, t
     # A fresh start: comes due one interval from now
     row.status, row.added_at, row.last_kept_at, row.keep_multiplier = ACTIVE, now, None, 1
     row.removed_at = row.removed_by = None
+    row.listening_holds = 0
     db.add(RestockFeedbackDB(
         user_id=user.id, rotation_id=rotation.id, track_id=track_id, source=source, action=ADD, created_at=now,
         previous_state=json.dumps(previous),

@@ -57,6 +57,15 @@ class UserDB(Base):
     # Demo accounts only (0016): keyed hash of the IP that started it, for the per-IP cap
     demo_client_hash = Column(String(64), nullable=True)
 
+    # Listening history (0017; services/listening_service.py). Off: nothing is captured and the
+    # stored history is deleted
+    listening_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    listening_since = Column(DateTime, nullable=True)  # earliest moment the history covers
+    listening_cursor = Column(DateTime, nullable=True)  # newest play stored
+    listening_captured_at = Column(DateTime, nullable=True)  # last capture (throttle and claim)
+    top_tracks_captured_at = Column(DateTime, nullable=True)
+    heavy_listening_review = Column(String(12), nullable=True)  # see services/preferences.py
+
     # Space-separated OAuth scopes granted at the last login (to detect missing ones)
     granted_scopes = Column(Text, nullable=True)
 

@@ -62,12 +62,24 @@ export const api = {
   historyPage: (id, { filter = 'all', limit = 25, offset = 0 } = {}) =>
     axios.get(`${API_BASE}/rotation/${id}/history`, { params: { filter, limit, offset } })
       .then((r) => ({ events: r.data, total: Number(r.headers['x-total-count']) || r.data.length })),
+  // Daily listening for a rotation (newest day first): { since, days: [{ date, plays_here, plays_elsewhere, songs }] }
+  listeningDigest: (id, { days = 30 } = {}) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/listening`, { params: { days, ...tz() } })),
+  // One month of a rotation (month: 'YYYY-MM', default this month); `months` lists the choices
+  recap: (id, month) =>
+    data(axios.get(`${API_BASE}/rotation/${id}/recap`, { params: { ...(month ? { month } : {}), ...tz() } })),
   playlists: () => data(axios.get(`${API_BASE}/spotify/playlists`)),
+  // Listening history: save the latest plays (throttled on the server), its status, an export import
+  captureListening: () => data(axios.post(`${API_BASE}/user/me/listening/capture`)),
+  listeningStatus: () => data(axios.get(`${API_BASE}/user/me/listening`)),
+  importListening: (rows) => data(axios.post(`${API_BASE}/user/me/listening/import`, { rows })),
   settings: () => data(axios.get(`${API_BASE}/user/me/settings`)),
   updateSettings: (body) => data(axios.put(`${API_BASE}/user/me/settings`, body)),
-  // Restock (source: bring_back | picks | suggested)
+  // Restock (source: bring_back | picks | suggested | rediscover)
   restockDeck: (id, source, { refresh = false } = {}) =>
     data(axios.get(`${API_BASE}/rotation/${id}/restock/deck/${source}`, { params: { refresh, ...tz() } })),
+  // Restocked songs and whether they've been played since: { enabled, added, played, by_source, songs }
+  restockOutcomes: (id) => data(axios.get(`${API_BASE}/rotation/${id}/restock/outcomes`)),
   restockSearch: (id, q, offset = 0) =>
     data(axios.get(`${API_BASE}/rotation/${id}/restock/search`, { params: { q, offset } })),
   restockAdd: (id, trackId, source, telemetry) =>

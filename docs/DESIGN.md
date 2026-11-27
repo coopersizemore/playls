@@ -11,7 +11,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 | Feature | Decision |
 |---|---|
 | Recommendations (by song, artist, genre or taste) | **Deferred.** They'll be built later on a system that doesn't depend on the Spotify API. The old Spotify recommendation code has been removed. |
-| Restock (adding songs) | **Built (2026-11-22)**: four sources. See "Restock" below. |
+| Restock (adding songs) | **Built (2026-11-22)**: four sources, plus Rediscover from listening history (2026-11-25). See "Restock" and "Listening history" below. |
 | Curated "PlayLS pick" | **Built**: curated by admins (`ADMIN_SPOTIFY_IDS`) in-app and shared by all users. |
 | Skip detection, "most skipped" stats | **Scrapped** for live data: the API has no skip data. Skips appear only from an imported Extended Streaming History (see Listening history). |
 | Rotating playlists the user doesn't own | **Scrapped.** The API only returns contents for playlists the user owns or collaborates on. |
@@ -94,7 +94,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 - **Removed songs** are recorded only in PlayLS history (`review_event` and the `removed` rows); there's no "rotated out" archive playlist in Spotify. In Phase 2, the user can bring them back through PlayLS.
 
 ## Restock (owner decisions, 2026-11-22)
-Restocking is open-ended, per rotation: there's a Restock page for each rotation, reached from its Home card or from the end of a review session that removed songs. It has four tabs. The first three are swipe decks of up to 30 songs (Add / Not now, with a player); Search is a list.
+Restocking is open-ended, per rotation: there's a Restock page for each rotation, reached from its Home card or from the end of a review session that removed songs. It has five tabs: Bring back, PlayLS picks, For you, Rediscover (added 2026-11-25; see "Listening history") and Search. The first four are swipe decks of up to 30 songs (Add / Not now, with a player); Search is a list.
 - **Adding a song** writes it to the Spotify playlist right away (`POST /playlists/{id}/items`). It also upserts the `rotation_track` row as `active`, with `added_at = now`, so the song comes due one interval later. Spotify stays the source of truth, and the next sync reconciles anything else.
 - **Moving through a deck works like Review (2026-11-24).** Back and Skip/Next move between cards without answering, and Skip records nothing. Picking a different answer for a card undoes the old one first.
   - Undoing **Not now** deletes that feedback row, so the song can show up again today at full weight.

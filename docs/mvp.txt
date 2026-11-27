@@ -43,7 +43,7 @@ User can, at their will, go to this queue of songs and start swiping left and ri
 [A daily review limit (default 50 songs per rotation per day, most overdue first, or no limit) keeps a big backlog from arriving all at once, and there's an opt-in "review more" button. Actions are keep / skip / remove. Skip leaves the song in the playlist and it comes back the next day. Removals are saved per swipe and sent to Spotify in batches when the user leaves.]
 
 
-Recommend new songs based on user preferences or current playlist  [BUILT as Restock: Bring back / PlayLS picks / For you (scored from top tracks, Liked Songs, recently played, plus searches from top artists and albums) / Search. A fuller recommendation system is still backlog.]
+Recommend new songs based on user preferences or current playlist  [BUILT as Restock: Bring back / PlayLS picks / For you (scored from top tracks, Liked Songs, recently played, plus searches from top artists and albums) / Rediscover (songs played a lot a few months ago but not lately, from PlayLS's saved listening history) / Search. A fuller recommendation system is still backlog.]
 Options for adding new songs could include:
 Based on specific song
 Based on artist
@@ -56,10 +56,10 @@ Curated PlayLS pick (daily/weekly song picked by app for users to expand their t
 
 
 Nice-to-Have Features
-Detect skipped songs and suggest removing them  [SCRAPPED: the API exposes no skip data]
+Detect skipped songs and suggest removing them  [SCRAPPED for live data: the API exposes no skip data. Skips only appear from an imported Extended Streaming History.]
 
 
-Show stats like most skipped or longest kept songs  [only stats from PlayLS review history, e.g. longest kept; "most skipped" is SCRAPPED]
+Show stats like most skipped or longest kept songs  [stats come from PlayLS review history (e.g. longest kept) and, since 2026-11-25, from PlayLS's saved listening history (play counts, daily digests, a monthly recap per rotation). Live "most skipped" is SCRAPPED.]
 
 
 A social system that could possibly introduce a new way to bring new songs to a rotation  [SCRAPPED for now]
@@ -93,7 +93,7 @@ FastAPI backend with login and callback routes
 Connect to Spotify and retrieve user playlist
 Connect front end to back end
 Let users remove songs and add recommendations
-Manual rotation to start (interval-based later)
+Manual rotation to start (interval-based later)  [BUILT: interval-based due dates, plus auto rotations that turn over on a schedule]
 
 
 

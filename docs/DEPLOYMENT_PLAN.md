@@ -19,6 +19,10 @@ Tags: **[YOU]** means it needs your accounts, dashboards or secrets. **[CLAUDE]*
 
 ## Optional
 - **[YOU]** Set `CRON_SECRET` in Vercel (Production). Use a long random string, for example `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Then redeploy. Vercel Cron sends it to `/api/cron/auto-restock` daily at 10:00 UTC (`vercel.json` `crons`), which turns over auto rotations even when nobody opens the app. Without it the route is disabled.
+  The same cron also captures everyone's listening history and runs the retention purges.
+- **[YOU]** Set `ADMIN_SPOTIFY_IDS` (comma-separated Spotify user IDs) in `back-end/.env` and in Vercel. These accounts can curate PlayLS picks at `/admin/picks` and see the dashboard at `/admin/stats`.
+- **[YOU]** Optionally tune demo mode with `DEMO_MAX_ACTIVE` (default 100) and `DEMO_MAX_PER_CLIENT` (live demos per IP, default 3). The demo needs `back-end/rest_api/services/demo/catalog.json`, which is built once with `back-end/scripts/build_demo_catalog.py` (it's already committed); without it `/api/demo/start` returns 503.
+- **[YOU]** Log in again on each account after scope changes. The current scopes add `user-top-read`, `user-read-recently-played`, `user-library-read` and `user-library-modify` to the four playlist scopes.
 - **[YOU]** Add up to 4 more users in the Spotify dashboard (Settings → User Management).
 
 ## Ongoing workflow

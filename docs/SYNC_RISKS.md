@@ -1,6 +1,8 @@
 # Spotify ↔ PlayLS: tradeoffs and edge cases
 
-Written 2026-11-24, after the latency pass and the sync claim. This is a review from reading the code; none of it has been seen happen in real use. Each item gives what happens, how bad it is, and what would fix it. Nothing here has been changed in code.
+Written 2026-11-24, after the latency pass and the sync claim. This is a review from reading the code; none of it has been seen happen in real use. Each item gives what happens, how bad it is, and what would fix it.
+
+**Status (checked against the code 2026-11-27):** only 2.3 (renames) is fixed, plus the count check for Liked Songs only (4.6). Every other item, including the whole suggested order in §6, is still open.
 
 Severity: **High** = can silently lose or corrupt review state. **Medium** = wrong for a while, or needs a manual fix. **Low** = cosmetic, slower, or self-healing.
 
@@ -94,7 +96,7 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
    - Collaborators who lose access get 403s.
    - **Fix:** after repeated 403/404s, show "This playlist is gone" with a delete option.
 
-3. **Renames and covers (Low).** The playlist's image is refreshed on each sync, but the rotation's **name** isn't. Renaming the playlist in Spotify doesn't rename the rotation, and the reverse is also true.
+3. **Renames and covers (Low). Fixed 2026-11-24.** The image and the name are both refreshed on every sync: Spotify's name wins, and a rename in PlayLS renames the Spotify playlist first (owner only). Demo and Liked Songs rotations keep their PlayLS names.
 
 4. **Duplicates (Low, by design).** Copies of one song collapse into one row. Removing the song removes **every** copy, including ones added on purpose.
 

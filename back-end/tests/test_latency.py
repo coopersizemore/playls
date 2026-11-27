@@ -45,14 +45,16 @@ def fake_pages(monkeypatch, total, fail_at=None):
 
 def test_all_pages_fetched_in_order(monkeypatch):
     offsets = fake_pages(monkeypatch, total=170)
-    items = asyncio.run(SpotifyService.get_all_playlist_items("p", None, None))
+    items, total = asyncio.run(SpotifyService.get_all_playlist_items("p", None, None))
     assert [i["n"] for i in items] == list(range(170))
+    assert total == 170
     assert sorted(offsets) == [0, 50, 100, 150]
 
 
 def test_single_page_playlist(monkeypatch):
     offsets = fake_pages(monkeypatch, total=12)
-    assert len(asyncio.run(SpotifyService.get_all_playlist_items("p", None, None))) == 12
+    items, total = asyncio.run(SpotifyService.get_all_playlist_items("p", None, None))
+    assert len(items) == total == 12
     assert offsets == [0]
 
 
@@ -100,11 +102,13 @@ def test_change_during_read_marks_nothing_removed(client, spotify, db, monkeypat
     real_read = spotify.get_all_playlist_items
 
     async def shifted_read(playlist_id, user, db_):
-        items = await real_read(playlist_id, user, db_)
+        items, _total = await real_read(playlist_id, user, db_)
         p = spotify.playlists["p1"]
         p["items"] = [i for i in p["items"] if i["item"]["id"] != "c"]
         spotify.touch("p1")
-        return [i for i in items if i["item"]["id"] != "b"]
+        # Report a matching total so this exercises the snapshot re-check, not the count check
+        shown = [i for i in items if i["item"]["id"] != "b"]
+        return shown, len(shown)
 
     monkeypatch.setattr(SpotifyService, "get_all_playlist_items", staticmethod(shifted_read))
     assert client.get(f"/api/rotation/{rid}").json()["sync_ok"] is True
@@ -118,6 +122,90 @@ def test_change_during_read_marks_nothing_removed(client, spotify, db, monkeypat
     client.get(f"/api/rotation/{rid}")
     status = {t.track_id: t.status for t in db.query(RotationTrackDB).filter_by(rotation_id=rid)}
     assert status == {"a": "active", "b": "active", "c": "removed", "d": "active"}
+
+
+# ---------- short and empty reads (SYNC_RISKS 2.1) ----------
+
+def _statuses(db, rid):
+    return {t.track_id: t.status for t in db.query(RotationTrackDB).filter_by(rotation_id=rid)}
+
+
+def _read_returning(monkeypatch, spotify, transform):
+    """Make full reads return transform(items, total) instead of the fake's real result."""
+    real_read = spotify.get_all_playlist_items
+
+    async def read(playlist_id, user, db_):
+        return transform(*(await real_read(playlist_id, user, db_)))
+
+    monkeypatch.setattr(SpotifyService, "get_all_playlist_items", staticmethod(read))
+    return real_read
+
+
+def test_short_read_keeps_kept_state(client, spotify, db, monkeypatch):
+    rot = make_rotation(client, spotify, [spotify_item(t, 40) for t in ("a", "b", "c")], grace=False)
+    rid = rot["id"]
+    assert review(client, rid, "a", "keep").status_code == 200
+    stored_snapshot = db.get(RotationDB, rid).snapshot_id
+
+    # "d" is added in Spotify, and the next read comes back short: a page dropped "a"
+    spotify.playlists["p1"]["items"].append(spotify_item("d", 0))
+    spotify.touch("p1")
+    real_read = _read_returning(
+        monkeypatch, spotify, lambda items, total: ([i for i in items if i["item"]["id"] != "a"], total)
+    )
+    assert client.get(f"/api/rotation/{rid}").json()["sync_ok"] is True
+
+    assert _statuses(db, rid) == {"a": "active", "b": "active", "c": "active", "d": "active"}
+    kept = db.query(RotationTrackDB).filter_by(rotation_id=rid, track_id="a").one()
+    assert kept.last_kept_at is not None
+    assert db.get(RotationDB, rid).snapshot_id == stored_snapshot  # re-read next time
+
+    # A real removal is still picked up once a read returns every item
+    monkeypatch.setattr(SpotifyService, "get_all_playlist_items", staticmethod(real_read))
+    spotify.playlists["p1"]["items"] = [i for i in spotify.playlists["p1"]["items"] if i["item"]["id"] != "c"]
+    spotify.touch("p1")
+    client.get(f"/api/rotation/{rid}")
+    assert _statuses(db, rid) == {"a": "active", "b": "active", "c": "removed", "d": "active"}
+    assert db.query(RotationTrackDB).filter_by(rotation_id=rid, track_id="a").one().last_kept_at is not None
+
+
+def test_read_without_a_total_removes_nothing(client, spotify, db, monkeypatch):
+    rot = make_rotation(client, spotify, [spotify_item(t, 5) for t in ("a", "b")])
+    rid = rot["id"]
+    spotify.playlists["p1"]["items"] = spotify.playlists["p1"]["items"][:1]
+    spotify.touch("p1")
+    _read_returning(monkeypatch, spotify, lambda items, total: (items, None))
+    client.get(f"/api/rotation/{rid}")
+    assert _statuses(db, rid) == {"a": "active", "b": "active"}
+
+
+def test_one_empty_read_removes_nothing(client, spotify, db, monkeypatch):
+    rot = make_rotation(client, spotify, [spotify_item(t, 5) for t in ("a", "b")])
+    rid = rot["id"]
+    spotify.touch("p1")
+    reads = []
+    real_read = spotify.get_all_playlist_items
+
+    async def flaky(playlist_id, user, db_):
+        reads.append(playlist_id)
+        if len(reads) == 1:
+            return [], 0  # a 200 with nothing in it
+        return await real_read(playlist_id, user, db_)
+
+    monkeypatch.setattr(SpotifyService, "get_all_playlist_items", staticmethod(flaky))
+    assert client.get(f"/api/rotation/{rid}").json()["sync_ok"] is True
+    assert len(reads) == 2
+    assert _statuses(db, rid) == {"a": "active", "b": "active"}
+
+
+def test_playlist_emptied_in_spotify_is_trusted(client, spotify, db):
+    rot = make_rotation(client, spotify, [spotify_item(t, 5) for t in ("a", "b")])
+    rid = rot["id"]
+    spotify.playlists["p1"]["items"] = []
+    spotify.touch("p1")
+    client.get(f"/api/rotation/{rid}")
+    assert _statuses(db, rid) == {"a": "removed", "b": "removed"}
+    assert count_calls(spotify, "get_items") == 3  # create, then the read and its confirmation
 
 
 # ---------- skipping recent syncs (manual rotations) ----------

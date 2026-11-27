@@ -527,7 +527,8 @@ const AdminStats = () => {
               <Grid size={{ xs: 12, sm: 6, md: 4 }}>
                 <Counters title="Syncs" values={stats.health.counters.sync} labels={{
                   attempt: 'Attempts', fresh_skip: 'Reused a recent sync', unchanged: 'Unchanged (1 call)',
-                  full_read: 'Full playlist reads', partial_read: 'Changed mid-read', failed: 'Failed',
+                  full_read: 'Full playlist reads', partial_read: 'Changed mid-read',
+                  partial_count: 'Short reads (count off)', partial_empty: 'Empty reads not trusted', failed: 'Failed',
                   flushed_songs: 'Removals sent',
                 }} />
               </Grid>

@@ -91,8 +91,8 @@ Rules are in DESIGN.md, "Listening history".
 - Liked Songs confirmed to come back strictly newest first on a real library (SYNC_RISKS 4.6).
 - `Server-Timing` read on prod. The numbers aren't recorded in the docs yet.
 
-### Sync hardening (from [SYNC_RISKS.md](SYNC_RISKS.md) §6; none built yet)
-1. A count and empty-read guard for playlist syncs (2.1). Liked Songs already has one.
+### Sync hardening (from [SYNC_RISKS.md](SYNC_RISKS.md) §6)
+1. ~~A count and empty-read guard for playlist syncs (2.1).~~ Built 2026-11-27.
 2. Force a full read at least once a day (1.1).
 3. Show stuck pending removals in the UI, and let `maintain` cope with them (3.1).
 4. A "reconnect Spotify" prompt when a token refresh fails (5.1), and a "playlist is gone" state (2.2).

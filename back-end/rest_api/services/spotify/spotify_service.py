@@ -243,18 +243,22 @@ class SpotifyService:
         )
 
     @staticmethod
-    async def get_all_playlist_items(playlist_id: str, user: UserDB, db: Session) -> list[dict[str, Any]]:
-        """Every item, in playlist order. The first page gives the total, then the rest are fetched
-        a few at a time. (The first call also refreshes the token if needed, so the concurrent
-        ones don't race to refresh it.)
+    async def get_all_playlist_items(
+        playlist_id: str, user: UserDB, db: Session
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        """Every item, in playlist order, and the first page's total (None if it had none). The
+        first page gives the total, then the rest are fetched a few at a time. (The first call
+        also refreshes the token if needed, so the concurrent ones don't race to refresh it.)
 
         Pages are read by offset from the live playlist, so a change mid-read can skip or repeat
-        an item; sync_service re-checks the snapshot afterwards for that reason.
+        an item; sync_service re-checks the count and the snapshot afterwards for that reason.
         """
         async def page(offset: int) -> dict[str, Any]:
             return await SpotifyService.get_playlist_items_page(playlist_id, user, db, offset=offset)
 
-        return await _read_all_pages(page, await page(0))
+        first = await page(0)
+        total = first.get("total")
+        return await _read_all_pages(page, first), total if isinstance(total, int) else None
 
     # ---------- Liked Songs (the user's library) ----------
 

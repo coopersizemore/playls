@@ -107,7 +107,14 @@ class DemoSpotify:
         }
 
     @staticmethod
-    async def get_all_playlist_items(playlist_id: str, user: UserDB, db: Session) -> list[dict[str, Any]]:
+    async def get_all_playlist_items(
+        playlist_id: str, user: UserDB, db: Session
+    ) -> tuple[list[dict[str, Any]], int]:
+        items = await DemoSpotify._playlist_items(playlist_id, user, db)
+        return items, len(items)
+
+    @staticmethod
+    async def _playlist_items(playlist_id: str, user: UserDB, db: Session) -> list[dict[str, Any]]:
         if not _known_playlist(playlist_id):
             raise _not_found()
         rotation = db.query(RotationDB).filter(
@@ -128,7 +135,7 @@ class DemoSpotify:
     async def get_playlist_items_page(
         playlist_id: str, user: UserDB, db: Session, limit: int = PAGE, offset: int = 0
     ) -> dict[str, Any]:
-        return _page(await DemoSpotify.get_all_playlist_items(playlist_id, user, db), offset, limit)
+        return _page(await DemoSpotify._playlist_items(playlist_id, user, db), offset, limit)
 
     @staticmethod
     async def add_items_to_playlist(

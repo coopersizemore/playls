@@ -34,6 +34,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
     - Pending removals are still flushed.
     - Requests without the header (the cron) and auto rotations always sync.
   - **A full read is double-checked.** Pages are read by offset from the live playlist, a few at a time. Afterwards the snapshot is fetched again. If it changed during the read, only new songs and metadata are applied: nothing is marked removed or reactivated, and the old snapshot is kept so the next sync reads it again.
+  - **A short or empty read is not trusted (2026-11-27).** If the number of items read doesn't match the first page's `total` (or there's no `total`), the read is applied as additions only, the same way, so a page that came back empty can't mark songs removed and later wipe their kept state. A read that comes back empty while the rotation still has active songs is read a second time, and the removals are applied only if that read is empty too (the playlist really was emptied in Spotify). Counted as `sync.partial_count` and `sync.partial_empty` on the dashboard.
   - **One sync at a time per rotation.** A sync claim (`rotation.sync_claimed_until`, a 60-second lease taken with a conditional UPDATE) is held around every sync (including auto maintenance), every flush, and every restock add.
     - A request waits up to 10 s for another request's claim. If it's still held, the request carries on without syncing:
       - Pages read what's stored, with `sync_ok` true, since the other request is syncing.
@@ -62,7 +63,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
   - **Remove:** takes the song out of the Spotify playlist and marks it `removed` (`removed_by = user`).
 - **Daily review limit** (owner decision, 2026-11-22): this keeps a big backlog from arriving all at once.
   - **Setting:** `users.review_limit`, default **50**, range 1–1000, or **NULL for no limit**. Changed in Settings.
-  - **Scope:** per rotation, per day. The day resets at the user's local midnight, using the browser's offset sent as `tz_offset`.
+  - **Scope:** per rotation, per day, with no account-wide total, so several big rotations can add up to several × N in one day (accepted by the owner, 2026-11-27). The day resets at the user's local midnight, using the browser's offset sent as `tz_offset`.
   - **Today's batch:** the most overdue due songs, excluding songs skipped today, up to `limit − reviewed_today`.
   - **What counts:** keep, skip and remove each count toward `reviewed_today`. Undoing an action deletes its event, so it stops counting.
   - **When the allowance runs out:** the user sees "Done for today" with an opt-in **"Review N more"** button (`?more=true`), which serves another full batch right away. Otherwise the next batch comes the next day.
@@ -257,7 +258,7 @@ PlayLS approximates what the user listens to, so reviews can lean on "you listen
     - when the app opens or comes back (`POST /user/me/listening/capture`), at most every 15 minutes per user, using a conditional-UPDATE claim on `users.listening_captured_at`;
     - after login;
     - from the daily cron, before auto rotations are maintained.
-  - **Gaps:** a capture whose 50 plays are all newer than the newest stored play records a `listening_gap` (plays were probably missed).
+  - **Gaps:** a capture whose 50 plays are all newer than the newest stored play records a `listening_gap` (plays were probably missed). Heavy listeners (50+ plays between captures) will lose some plays. That's accepted (owner, 2026-11-27): capturing more often would need a more frequent cron, which means Vercel Pro. Gaps are recorded, "few plays lately" won't fire over gappy history, and an Extended Streaming History import fills them.
   - **Top tracks:** all three time ranges are refreshed daily into `top_track` (the latest snapshot only).
   - `users.listening_since` is where the history starts: the oldest play of the first capture, or the start of an import.
   - Missing scopes skip capture. Spotify errors never fail the request that triggered it. Demo accounts never capture; they get a seeded history (`demo/demo_listening.py`).
@@ -369,6 +370,4 @@ A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spoti
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 
 ## Decisions to revisit
-- Listening history is captured on app open and daily, so very heavy listeners (50+ plays between captures) still lose plays. This is mitigated, not prevented: missed stretches are recorded in `listening_gap`, "few plays lately" refuses to fire over gappy history, and an Extended Streaming History import fills them. Capturing more often would need a more frequent cron (Vercel Pro).
-- Daily limit is per rotation, so several big rotations can still add up to several × N in one day. (A rotation can set its own limit, but there's no account-wide total.)
 - Notifications, if a channel that makes sense ever turns up.

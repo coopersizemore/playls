@@ -79,7 +79,8 @@ async def build(user: UserDB, db, playlist_ids: list[str]) -> dict:
     for n, pid in enumerate(playlist_ids, start=1):
         meta = await ss.get_playlist(pid, user, db, fields="name,description")
         ids = []
-        for entry in await ss.get_all_playlist_items(pid, user, db):
+        entries, _total = await ss.get_all_playlist_items(pid, user, db)
+        for entry in entries:
             tid = keep(entry.get("item") or entry.get("track"))
             if tid and tid not in ids:
                 ids.append(tid)

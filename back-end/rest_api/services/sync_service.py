@@ -333,7 +333,7 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
         snapshot_id = await _current_snapshot(db, rotation, user)
 
     health.count("sync.full_read")
-    entries = await SpotifyService.get_all_playlist_items(rotation.playlist_id, user, db)
+    entries, total = await SpotifyService.get_all_playlist_items(rotation.playlist_id, user, db)
     present = parse_playlist_items(entries)
     if entries and not present:
         # Either the playlist is only local files/episodes, or the response shape changed.
@@ -343,6 +343,27 @@ async def sync_rotation(db: Session, rotation: RotationDB, user: UserDB, force: 
             rotation.playlist_id, len(entries),
         )
         return False
+
+    # A short read (a page that came back empty, or a total that doesn't match the pages)
+    # would mark the missing songs removed, and the next good read would re-add them with
+    # their kept state wiped. Only trust absences from a read that returned every item.
+    reason = None
+    if total is None or len(entries) != total:
+        reason = "count"
+    elif not entries and _has_active_rows(db, rotation):
+        # Emptied in Spotify, or a bad read? Trust it only if a second read agrees.
+        entries, total = await SpotifyService.get_all_playlist_items(rotation.playlist_id, user, db)
+        present = parse_playlist_items(entries)
+        if entries or total != 0:
+            reason = "empty"
+    if reason:
+        logger.warning(
+            "Playlist %s read not trusted (%s: %d items, total %s); applying additions only",
+            rotation.playlist_id, reason, len(entries), total,
+        )
+        health.count(f"sync.partial_{reason}")
+        apply_playlist_snapshot(db, rotation, present, rotation.snapshot_id, partial=True)
+        return True
 
     # Pages are read by offset from the live playlist: if it changed mid-read, a removal can
     # shift a song past the pages we'd already read. Re-check before trusting absences.
@@ -384,6 +405,12 @@ def library_fingerprint(page: dict, now: datetime | None = None) -> str | None:
     digest = hashlib.sha1(",".join(ids).encode()).hexdigest()[:16]
     day = (now or utcnow()).strftime("%Y%m%d")
     return f"liked:{day}:{total}:{digest}"
+
+
+def _has_active_rows(db: Session, rotation: RotationDB) -> bool:
+    return db.query(RotationTrackDB.id).filter(
+        RotationTrackDB.rotation_id == rotation.id, RotationTrackDB.status == ACTIVE
+    ).first() is not None
 
 
 def _would_remove_too_many(db: Session, rotation: RotationDB, present: dict[str, PlaylistTrack]) -> bool:

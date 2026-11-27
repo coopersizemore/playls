@@ -2,7 +2,7 @@
 
 Written 2026-11-24, after the latency pass and the sync claim. This is a review from reading the code; none of it has been seen happen in real use. Each item gives what happens, how bad it is, and what would fix it.
 
-**Status (checked against the code 2026-11-27):** only 2.3 (renames) is fixed, plus the count check for Liked Songs only (4.6). `Server-Timing` has been read on prod, but no numbers are recorded here yet. Every other item, including the whole suggested order in §6, is still open.
+**Status (checked against the code 2026-11-27):** 2.1 (short and empty reads) and 2.3 (renames) are fixed. Everything else is still open. `Server-Timing` has been read on prod, but no numbers are recorded here yet.
 
 Severity: **High** = can silently lose or corrupt review state. **Medium** = wrong for a while, or needs a manual fix. **Low** = cosmetic, slower, or self-healing.
 
@@ -78,7 +78,7 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
 
 ## 2. Reading Spotify (sync)
 
-1. **A full read that silently returns too few items (High).**
+1. **A full read that silently returns too few items (High). Fixed 2026-11-27.** Playlist syncs now apply a read as additions only when its item count doesn't match page 1's `total`, and confirm an empty read (with active rows) with a second read before removing anything. Liked Songs already had the count check. The original analysis:
    - **Two ways it happens:** a page comes back 200 but empty, or `total` overstates or understates what the pages return. Either way, the songs that should have been on that page are missing from the read.
    - **Why the existing guards miss it:**
      - The snapshot recheck doesn't catch it, because nothing changed.
@@ -153,7 +153,7 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
    - **Every PlayLS write forces a full read (Low, cost).** Unlikes and likes return no snapshot, so the next sync reads the whole library (up to 100 requests at the 5,000-song cap).
    - **The mass-removal guard can stall (Low).** If you really unlike more than 25% of the library at once in Spotify, every sync re-reads and applies additions only. Those songs stay "active" in PlayLS, and removing them in Review is a harmless no-op unlike. The guard logs `sync.liked_partial_mass_removal`.
    - **An unlike is lossy (by design, warned in the UI).** Re-liking resets Spotify's like date, so the song's due clock restarts from the new `added_at`.
-   - **Count-check guard:** the liked path refuses to diff when the items read don't match `total` (item 2.1). It's applied only to Liked Songs for now, so playlist sync behaviour is unchanged.
+   - **Count-check guard:** the liked path refuses to diff when the items read don't match `total` (item 2.1). Playlist syncs have the same check since 2026-11-27.
 
 ## 5. Account, tokens and quota
 
@@ -169,7 +169,7 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
 3. **Concurrent token refresh across requests (Low).** Within a request, the refresh lock makes sure only one call refreshes. Two separate requests (Home's parallel syncs) can still both refresh at once. Spotify usually keeps refresh tokens valid, so the second one probably works, but if Spotify ever rotates them strictly, one session could store a dead token.
 
 ## 6. Suggested order if any of this gets picked up
-1. Add the count and empty-read guard (2.1). It's cheap, and it's the most direct way to lose kept state.
+1. ~~Add the count and empty-read guard (2.1).~~ Done 2026-11-27.
 2. Force a full read daily (1.1). It caps every "stale forever" case: adopted snapshots, `is_playable`, partial reads.
 3. Show stuck pending removals in the UI, and let `maintain` cope with them (3.1).
 4. Show a "reconnect Spotify" prompt on refresh failure (5.1), and a "playlist is gone" state (2.2).

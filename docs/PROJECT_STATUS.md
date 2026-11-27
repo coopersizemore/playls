@@ -16,7 +16,7 @@ Phases 0–2 are built, and so is everything listed below through listening hist
 Health checks:
 - **Tests:** 298 backend tests pass (SQLite plus a fake Spotify). CI runs ruff and pytest, and checks that the frontend builds with no warnings.
 - **Schema:** Alembic is at `0017` (head), applied to the shared database.
-- **Not yet verified against real Spotify:** the "Verify Phase 1" pass below has never been ticked off. Most features since then are only covered by tests too. The two real-account checks still open are in "Open items".
+- **Verified against real Spotify (2026-11-27):** the Phase 1 pass below, plus spot checks of restock add and undo, an auto rotation turning over, a Liked Songs rotation, and listening capture and import.
 
 ## Phase 0: setup (done 2026-11-07)
 1. ~~Smoke-test locally, push, log in on prod~~
@@ -32,7 +32,7 @@ Health checks:
 9. ~~**Tests.**~~ Done.
 10. ~~**Cleanup.**~~ Done.
 
-### Verify Phase 1 (manual, on prod or `vercel dev`; still to do)
+### Verify Phase 1 (manual, on prod; done 2026-11-27)
 - Log in, then create a rotation from a real playlist. Its song count should match Spotify, and the due count should be 0 with the grace period on (or reflect each song's add date with it off).
 - Create one with a 1-day interval on a scratch playlist. Change `created_at` in Supabase to an earlier date (or wait a day), then review: keep one song, remove one, skip one.
 - Leave the Review page. The removed song should disappear from the Spotify playlist.
@@ -84,24 +84,26 @@ Rules are in DESIGN.md, "Listening history".
 
 ## Open items
 
-### To do by hand
-- Run the "Verify Phase 1" pass above on prod, then spot-check the newer features with a real account: restock add and undo, an auto rotation turning over, a Liked Songs rotation, listening capture and the import.
-- Set `ADMIN_SPOTIFY_IDS` and `CRON_SECRET` in Vercel (Production), then redeploy. Without `CRON_SECRET` the cron route stays disabled, so auto rotations only turn over and listening is only captured when someone opens the app. (Ticked off here once they're done; the docs can't tell whether they are.)
-- Log in again on each account to grant the newer scopes (`user-top-read`, `user-read-recently-played`, `user-library-read`, `user-library-modify`).
-- Verify on a real library that Liked Songs comes back strictly newest first (SYNC_RISKS 4.6). The sync shortcut relies on it.
-- Read the `Server-Timing` numbers on prod (especially `dbconnect`) before tuning anything else.
+### Done by hand (2026-11-27)
+- The "Verify Phase 1" pass on prod, and spot checks of the newer features with a real account.
+- `ADMIN_SPOTIFY_IDS` and `CRON_SECRET` set in Vercel (Production), and redeployed. The daily cron is live.
+- Every account logged in again to grant the newer scopes.
+- Liked Songs confirmed to come back strictly newest first on a real library (SYNC_RISKS 4.6).
+- `Server-Timing` read on prod. The numbers aren't recorded in the docs yet.
 
 ### Sync hardening (from [SYNC_RISKS.md](SYNC_RISKS.md) §6; none built yet)
 1. A count and empty-read guard for playlist syncs (2.1). Liked Songs already has one.
 2. Force a full read at least once a day (1.1).
 3. Show stuck pending removals in the UI, and let `maintain` cope with them (3.1).
 4. A "reconnect Spotify" prompt when a token refresh fails (5.1), and a "playlist is gone" state (2.2).
-5. Tune the claim lease and waits once there are prod numbers (1.2, 1.3, 1.8). That includes an explicit `maxDuration` in `vercel.json`.
+5. Tune the claim lease and waits against the prod `Server-Timing` numbers (1.2, 1.3, 1.8). That includes an explicit `maxDuration` in `vercel.json`.
 
 ### Next
 - A recommendation system that doesn't depend on the Spotify API ("For you" is the current stand-in). Ask the owner before expanding "For you" into one.
 
 ### Later / maybe
 - The decisions listed in DESIGN.md, "Decisions to revisit".
-- Apple Music (blocked: the Apple API can't remove tracks from library playlists).
 - Notifications, if a channel that makes sense turns up.
+
+### Out of scope
+- **Apple Music** (owner decision, 2026-11-27): its API can't remove tracks from library playlists, so the core remove action can't work.

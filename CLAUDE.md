@@ -2,7 +2,7 @@
 
 Spotify "lazy susan": a rotation wraps a playlist the user owns, and songs come due for keep/skip/remove review every N days. Product spec: [mvp.txt](docs/mvp.txt), annotated with what's deferred or scrapped. **Owner decisions and semantics (source of truth, due-date math, batched removals, data model): [DESIGN.md](docs/DESIGN.md).** Phased build plan: [PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Known Spotify ↔ PlayLS edge cases and latency tradeoffs: [SYNC_RISKS.md](docs/SYNC_RISKS.md) (read it before changing sync). The owner knows the product well, so don't explain it back; focus on the code.
 
-Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled (Supabase + Vercel + Spotify OAuth), so build within it. Scope is Spotify only, personal use (at most 5 users). Apple Music is a maybe-later, so keep track IDs provider-neutral and keep the `provider` columns, but build no abstraction layer.
+Status: Phase 1 (core rotation loop) built Nov 2026. The architecture is settled (Supabase + Vercel + Spotify OAuth), so build within it. Scope is Spotify only, personal use (at most 5 users). Apple Music is out of scope (owner decision, 2026-11-27): its API can't remove tracks from library playlists. Keep the `provider` columns (demo accounts use `provider = 'demo'`), but build no provider abstraction.
 
 ## Layout
 - `back-end/rest_api/` — FastAPI. Run from `back-end/` as `python -m rest_api.app` (port 8000). Package uses a mix of relative (`..`) and absolute (`rest_api.`) imports, so it only works from `back-end/` as the CWD.

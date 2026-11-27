@@ -65,7 +65,7 @@ Show stats like most skipped or longest kept songs  [stats come from PlayLS revi
 A social system that could possibly introduce a new way to bring new songs to a rotation  [SCRAPPED for now]
 Possibly collaborative rotations  [SCRAPPED for now]
 
-Apple Music support  [LATER/MAYBE: blocked because the Apple Music API can't remove tracks from library playlists]
+Apple Music support  [OUT OF SCOPE (2026-11-27): the Apple Music API can't remove tracks from library playlists, so the core remove action can't work]
 
 
 

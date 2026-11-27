@@ -16,13 +16,13 @@ Tags: **[YOU]** means it needs your accounts, dashboards or secrets. **[CLAUDE]*
 - [x] Local `vercel dev` login works. Windows needs Developer Mode on, because the Vercel CLI creates symlinks. **[YOU]**
 - [x] Pending work committed and pushed; Git-connected prod deploys are live **[YOU]**
 - [x] Prod login works at https://playls.vercel.app (2026-11-07) **[YOU]**
+- [x] `CRON_SECRET` set in Vercel (Production) and redeployed. Vercel Cron calls `/api/cron/auto-restock` daily at 10:00 UTC (`vercel.json` `crons`) to turn over auto rotations, capture everyone's listening history and run the retention purges. If it's ever unset, the route is disabled. **[YOU]** (2026-11-27)
+- [x] `ADMIN_SPOTIFY_IDS` set locally and in Vercel. These accounts can curate PlayLS picks at `/admin/picks` and see `/admin/stats`. **[YOU]** (2026-11-27)
+- [x] Every account logged in again for the current scopes: the four playlist scopes plus `user-top-read`, `user-read-recently-played`, `user-library-read` and `user-library-modify`. Repeat this whenever scopes change. **[YOU]** (2026-11-27)
+- [x] Manual verification on prod against real Spotify **[YOU]** (2026-11-27)
 
 ## Optional
-- **[YOU]** Set `CRON_SECRET` in Vercel (Production). Use a long random string, for example `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Then redeploy. Vercel Cron sends it to `/api/cron/auto-restock` daily at 10:00 UTC (`vercel.json` `crons`), which turns over auto rotations even when nobody opens the app. Without it the route is disabled.
-  The same cron also captures everyone's listening history and runs the retention purges.
-- **[YOU]** Set `ADMIN_SPOTIFY_IDS` (comma-separated Spotify user IDs) in `back-end/.env` and in Vercel. These accounts can curate PlayLS picks at `/admin/picks` and see the dashboard at `/admin/stats`.
 - **[YOU]** Optionally tune demo mode with `DEMO_MAX_ACTIVE` (default 100) and `DEMO_MAX_PER_CLIENT` (live demos per IP, default 3). The demo needs `back-end/rest_api/services/demo/catalog.json`, which is built once with `back-end/scripts/build_demo_catalog.py` (it's already committed); without it `/api/demo/start` returns 503.
-- **[YOU]** Log in again on each account after scope changes. The current scopes add `user-top-read`, `user-read-recently-played`, `user-library-read` and `user-library-modify` to the four playlist scopes.
 - **[YOU]** Add up to 4 more users in the Spotify dashboard (Settings → User Management).
 
 ## Ongoing workflow

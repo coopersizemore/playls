@@ -2,7 +2,7 @@
 
 Written 2026-11-24, after the latency pass and the sync claim. This is a review from reading the code; none of it has been seen happen in real use. Each item gives what happens, how bad it is, and what would fix it.
 
-**Status (checked against the code 2026-11-27):** only 2.3 (renames) is fixed, plus the count check for Liked Songs only (4.6). Every other item, including the whole suggested order in §6, is still open.
+**Status (checked against the code 2026-11-27):** only 2.3 (renames) is fixed, plus the count check for Liked Songs only (4.6). `Server-Timing` has been read on prod, but no numbers are recorded here yet. Every other item, including the whole suggested order in §6, is still open.
 
 Severity: **High** = can silently lose or corrupt review state. **Medium** = wrong for a while, or needs a manual fix. **Low** = cosmetic, slower, or self-healing.
 
@@ -98,21 +98,19 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
 
 3. **Renames and covers (Low). Fixed 2026-11-24.** The image and the name are both refreshed on every sync: Spotify's name wins, and a rename in PlayLS renames the Spotify playlist first (owner only). Demo and Liked Songs rotations keep their PlayLS names.
 
-4. **Duplicates (Low, by design).** Copies of one song collapse into one row. Removing the song removes **every** copy, including ones added on purpose.
-
-5. **Relinking and market changes (Low–Medium).**
+4. **Relinking and market changes (Low–Medium).**
    - Identity stays stable as long as the playlist keeps holding the same original id.
    - **Travel:** `market=from_token` follows the account's country, so songs can flip to unplayable. "Remove unavailable" would then remove songs that play fine at home, and auto rotations rotate unplayable songs out first.
    - **A song added twice under two different ids** (original and relinked) becomes two separate rows.
 
-6. **Local files, podcast episodes, and unavailable (null) items are ignored (Low).**
+5. **Local files, podcast episodes, and unavailable (null) items are ignored (Low).**
    - They're never reviewed.
    - Auto rotations' song counts leave them out, so the Spotify playlist is bigger than `target_size`.
    - A playlist with only these skips the diff every time, so the snapshot is never stored, which means a full re-read on every sync (slow, but correct).
 
-7. **`added_at` semantics (Low).** Removing a song and re-adding it in Spotify between two syncs never shows up as a removal. It just gets a new `added_at`, which moves the due date for songs that were never kept. Reordering doesn't change `added_at`.
+6. **`added_at` semantics (Low).** Removing a song and re-adding it in Spotify between two syncs never shows up as a removal. It just gets a new `added_at`, which moves the due date for songs that were never kept. Reordering doesn't change `added_at`.
 
-8. **Re-adding a removed song in Spotify resets it (by design).** Its kept state and super keep are wiped, and it starts fresh from the new `added_at`. That's correct, but surprising if you added it back by accident.
+7. **Re-adding a removed song in Spotify resets it (by design).** Its kept state and super keep are wiped, and it starts fresh from the new `added_at`. That's correct, but surprising if you added it back by accident.
 
 ## 3. Writing to Spotify (flush, restock, auto restocks)
 
@@ -132,7 +130,7 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
    - **Flush:** safe. A retry removes URIs that are already gone, which does nothing.
    - **Fix:** write the database rows as pending before the Spotify call and confirm them after, so a crash leaves a record to reconcile.
 
-3. **Removal is by URI, not by position (by design).** It's immune to reordering, but it always drops every copy (see 2.4).
+3. **Removal is by URI, not by position (by design).** It's immune to reordering, but it always drops every copy, which the owner has accepted.
 
 4. **The 10,000-item playlist limit (Low).** Adds to a full playlist fail with a generic 502. That's irrelevant for auto rotations (200 at most), and possible but unlikely for big manual ones.
 
@@ -151,7 +149,7 @@ Severity: **High** = can silently lose or corrupt review state. **Medium** = wro
    - **Deletes during a sync:** the sync's commits may fail and roll back. Harmless.
 5. **Bring back and the 4-week cooldown** key on PlayLS's `removed_at`. Songs removed in Spotify count too, with the time PlayLS noticed, not when you actually removed them.
 6. **Liked Songs rotations** (DESIGN.md, "Liked Songs rotations"):
-   - **No snapshot (Medium, mitigated).** The page-1 fingerprint assumes Liked Songs is strictly newest first. If Spotify ever orders it differently, a like plus an unlike outside page 1 is missed until the daily full read. Verify the ordering on a real library before relying on the shortcut.
+   - **No snapshot (Low, mitigated).** The page-1 fingerprint assumes Liked Songs is strictly newest first. That ordering was verified on a real library (2026-11-27). If Spotify ever changes it, a like plus an unlike outside page 1 is missed until the daily full read.
    - **Every PlayLS write forces a full read (Low, cost).** Unlikes and likes return no snapshot, so the next sync reads the whole library (up to 100 requests at the 5,000-song cap).
    - **The mass-removal guard can stall (Low).** If you really unlike more than 25% of the library at once in Spotify, every sync re-reads and applies additions only. Those songs stay "active" in PlayLS, and removing them in Review is a harmless no-op unlike. The guard logs `sync.liked_partial_mass_removal`.
    - **An unlike is lossy (by design, warned in the UI).** Re-liking resets Spotify's like date, so the song's due clock restarts from the new `added_at`.

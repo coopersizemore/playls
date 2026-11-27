@@ -5,7 +5,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 ## Scope
 - **Spotify only, personal use.** Build for Spotify Development Mode (at most 5 allowlisted users). Nothing gets designed for public scale.
 - **Architecture stays:** Supabase Postgres, Vercel (`api` + `web` services on one domain), Spotify OAuth, and the session cookie.
-- **Apple Music may be added later, but not now.** The Apple Music API can't remove tracks from library playlists (confirmed), so the core "remove" action can't work there as designed. The only prep is a `provider` column and provider-neutral track IDs (see Data model). There's no provider abstraction layer.
+- **Apple Music is out of scope (owner decision, 2026-11-27).** The Apple Music API can't remove tracks from library playlists (confirmed), so PlayLS's core "remove" action can't work there. Don't plan or build for it. The `provider` columns stay: demo accounts use `provider = 'demo'`.
 
 ## Feature decisions
 | Feature | Decision |
@@ -16,6 +16,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 | Skip detection, "most skipped" stats | **Scrapped** for live data: the API has no skip data. Skips appear only from an imported Extended Streaming History (see Listening history). |
 | Rotating playlists the user doesn't own | **Scrapped.** The API only returns contents for playlists the user owns or collaborates on. |
 | Social features / collaborative rotations | **Scrapped for now.** |
+| Apple Music | **Out of scope** (2026-11-27): its API can't remove tracks from library playlists. |
 | Notifications (email or push) | **Not planned.** Neither works here (`/me` returns no email, and there's no mobile app). Due songs show up when the user opens the app (a badge or count on Home). |
 | Stats | Only stats derivable from PlayLS's own review history (for example, longest kept or most kept). |
 
@@ -77,7 +78,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
     - **Changing a decision:** picking a different action on a decided song undoes the old one server-side (the API's `undo`), then applies the new one.
     - **Removal toast:** after a removal, an "Undo" toast reverts it and returns to that song.
     - **Limit:** a removal can only be changed until the flush reaches Spotify. After that, History or Restock offers "Add back".
-- **Duplicates:** removing by URI deletes **every copy** of a track from the playlist. The database keeps one row per `(rotation, track)`. *This decision should be revisited.*
+- **Duplicates:** removing by URI deletes **every copy** of a track from the playlist. The database keeps one row per `(rotation, track)`. Accepted by the owner (2026-11-27); not something to change.
 - **One rotation per playlist** per user.
 - **Super keep** (review action `super_keep`, star button, ↑ key): a keep that doesn't ask again for three intervals. It counts toward the daily limit like any review. Undo restores the previous `last_kept_at` and `keep_multiplier`, which are stored on the event.
 - **Stop suggesting** (the Bring back deck's "Stop suggesting this song"): adds a `restock_block` row for the user and track.
@@ -368,8 +369,6 @@ A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spoti
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 
 ## Decisions to revisit
-- Listening history is captured on app open and daily, so very heavy listeners (50+ plays a day between visits) leave gaps. A more frequent cron would need Vercel Pro.
-- Daily limit is per rotation, so several big rotations can still add up to several × N in one day.
-- Removing every duplicate copy of a track (above).
-- Whether to add any provider abstraction if Apple comes back into scope.
+- Listening history is captured on app open and daily, so very heavy listeners (50+ plays between captures) still lose plays. This is mitigated, not prevented: missed stretches are recorded in `listening_gap`, "few plays lately" refuses to fire over gappy history, and an Extended Streaming History import fills them. Capturing more often would need a more frequent cron (Vercel Pro).
+- Daily limit is per rotation, so several big rotations can still add up to several × N in one day. (A rotation can set its own limit, but there's no account-wide total.)
 - Notifications, if a channel that makes sense ever turns up.

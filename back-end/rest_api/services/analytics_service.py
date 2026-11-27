@@ -278,7 +278,7 @@ def usage_summary(events: list, users: list, rotations: list, sizes: dict[int, i
 
 HEALTH_GROUPS = {
     "sync": ("sync.attempt", "sync.fresh_skip", "sync.unchanged", "sync.full_read", "sync.partial_read",
-             "sync.failed", "sync.flushed_songs"),
+             "sync.partial_count", "sync.partial_empty", "sync.failed", "sync.flushed_songs"),
     "claim": ("claim.waited", "claim.wait_ms", "claim.timeout"),
     "spotify": ("spotify.rate_limited", "spotify.quota_exceeded", "spotify.retry", "spotify.token_refresh"),
     "auto": ("auto.rotated_out", "auto.added", "auto.short", "auto.failed"),

@@ -127,7 +127,8 @@ class FakeSpotify:
 
     async def get_all_playlist_items(self, playlist_id, user, db):
         self.calls.append(("get_items", playlist_id))
-        return list(self._get(playlist_id)["items"])
+        items = list(self._get(playlist_id)["items"])
+        return items, len(items)
 
     async def remove_items_from_playlist(self, playlist_id, uris, user, db):
         self.calls.append(("remove", playlist_id, tuple(uris)))

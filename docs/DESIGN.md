@@ -5,17 +5,18 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 ## Scope
 - **Spotify only, personal use.** Build for Spotify Development Mode (at most 5 allowlisted users). Nothing gets designed for public scale.
 - **Architecture stays:** Supabase Postgres, Vercel (`api` + `web` services on one domain), Spotify OAuth, and the session cookie.
-- **Apple Music may be added later, but not now.** The Apple Music API can't remove tracks from library playlists (confirmed), so the core "remove" action can't work there as designed. The only prep is a `provider` column and provider-neutral track IDs (see Data model). There's no provider abstraction layer.
+- **Apple Music is out of scope (owner decision, 2026-11-27).** The Apple Music API can't remove tracks from library playlists (confirmed), so PlayLS's core "remove" action can't work there. Don't plan or build for it. The `provider` columns stay: demo accounts use `provider = 'demo'`.
 
 ## Feature decisions
 | Feature | Decision |
 |---|---|
 | Recommendations (by song, artist, genre or taste) | **Deferred.** They'll be built later on a system that doesn't depend on the Spotify API. The old Spotify recommendation code has been removed. |
-| Restock (adding songs) | **Built (2026-11-22)**: four sources. See "Restock" below. |
+| Restock (adding songs) | **Built (2026-11-22)**: four sources, plus Rediscover from listening history (2026-11-25). See "Restock" and "Listening history" below. |
 | Curated "PlayLS pick" | **Built**: curated by admins (`ADMIN_SPOTIFY_IDS`) in-app and shared by all users. |
 | Skip detection, "most skipped" stats | **Scrapped** for live data: the API has no skip data. Skips appear only from an imported Extended Streaming History (see Listening history). |
 | Rotating playlists the user doesn't own | **Scrapped.** The API only returns contents for playlists the user owns or collaborates on. |
 | Social features / collaborative rotations | **Scrapped for now.** |
+| Apple Music | **Out of scope** (2026-11-27): its API can't remove tracks from library playlists. |
 | Notifications (email or push) | **Not planned.** Neither works here (`/me` returns no email, and there's no mobile app). Due songs show up when the user opens the app (a badge or count on Home). |
 | Stats | Only stats derivable from PlayLS's own review history (for example, longest kept or most kept). |
 
@@ -33,6 +34,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
     - Pending removals are still flushed.
     - Requests without the header (the cron) and auto rotations always sync.
   - **A full read is double-checked.** Pages are read by offset from the live playlist, a few at a time. Afterwards the snapshot is fetched again. If it changed during the read, only new songs and metadata are applied: nothing is marked removed or reactivated, and the old snapshot is kept so the next sync reads it again.
+  - **A short or empty read is not trusted (2026-11-27).** If the number of items read doesn't match the first page's `total` (or there's no `total`), the read is applied as additions only, the same way, so a page that came back empty can't mark songs removed and later wipe their kept state. A read that comes back empty while the rotation still has active songs is read a second time, and the removals are applied only if that read is empty too (the playlist really was emptied in Spotify). Counted as `sync.partial_count` and `sync.partial_empty` on the dashboard.
   - **One sync at a time per rotation.** A sync claim (`rotation.sync_claimed_until`, a 60-second lease taken with a conditional UPDATE) is held around every sync (including auto maintenance), every flush, and every restock add.
     - A request waits up to 10 s for another request's claim. If it's still held, the request carries on without syncing:
       - Pages read what's stored, with `sync_ok` true, since the other request is syncing.
@@ -61,7 +63,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
   - **Remove:** takes the song out of the Spotify playlist and marks it `removed` (`removed_by = user`).
 - **Daily review limit** (owner decision, 2026-11-22): this keeps a big backlog from arriving all at once.
   - **Setting:** `users.review_limit`, default **50**, range 1–1000, or **NULL for no limit**. Changed in Settings.
-  - **Scope:** per rotation, per day. The day resets at the user's local midnight, using the browser's offset sent as `tz_offset`.
+  - **Scope:** per rotation, per day, with no account-wide total, so several big rotations can add up to several × N in one day (accepted by the owner, 2026-11-27). The day resets at the user's local midnight, using the browser's offset sent as `tz_offset`.
   - **Today's batch:** the most overdue due songs, excluding songs skipped today, up to `limit − reviewed_today`.
   - **What counts:** keep, skip and remove each count toward `reviewed_today`. Undoing an action deletes its event, so it stops counting.
   - **When the allowance runs out:** the user sees "Done for today" with an opt-in **"Review N more"** button (`?more=true`), which serves another full batch right away. Otherwise the next batch comes the next day.
@@ -77,7 +79,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
     - **Changing a decision:** picking a different action on a decided song undoes the old one server-side (the API's `undo`), then applies the new one.
     - **Removal toast:** after a removal, an "Undo" toast reverts it and returns to that song.
     - **Limit:** a removal can only be changed until the flush reaches Spotify. After that, History or Restock offers "Add back".
-- **Duplicates:** removing by URI deletes **every copy** of a track from the playlist. The database keeps one row per `(rotation, track)`. *This decision should be revisited.*
+- **Duplicates:** removing by URI deletes **every copy** of a track from the playlist. The database keeps one row per `(rotation, track)`. Accepted by the owner (2026-11-27); not something to change.
 - **One rotation per playlist** per user.
 - **Super keep** (review action `super_keep`, star button, ↑ key): a keep that doesn't ask again for three intervals. It counts toward the daily limit like any review. Undo restores the previous `last_kept_at` and `keep_multiplier`, which are stored on the event.
 - **Stop suggesting** (the Bring back deck's "Stop suggesting this song"): adds a `restock_block` row for the user and track.
@@ -94,7 +96,7 @@ Owner decisions as of Nov 2026. [PROJECT_STATUS.md](PROJECT_STATUS.md) has the b
 - **Removed songs** are recorded only in PlayLS history (`review_event` and the `removed` rows); there's no "rotated out" archive playlist in Spotify. In Phase 2, the user can bring them back through PlayLS.
 
 ## Restock (owner decisions, 2026-11-22)
-Restocking is open-ended, per rotation: there's a Restock page for each rotation, reached from its Home card or from the end of a review session that removed songs. It has four tabs. The first three are swipe decks of up to 30 songs (Add / Not now, with a player); Search is a list.
+Restocking is open-ended, per rotation: there's a Restock page for each rotation, reached from its Home card or from the end of a review session that removed songs. It has five tabs: Bring back, PlayLS picks, For you, Rediscover (added 2026-11-25; see "Listening history") and Search. The first four are swipe decks of up to 30 songs (Add / Not now, with a player); Search is a list.
 - **Adding a song** writes it to the Spotify playlist right away (`POST /playlists/{id}/items`). It also upserts the `rotation_track` row as `active`, with `added_at = now`, so the song comes due one interval later. Spotify stays the source of truth, and the next sync reconciles anything else.
 - **Moving through a deck works like Review (2026-11-24).** Back and Skip/Next move between cards without answering, and Skip records nothing. Picking a different answer for a card undoes the old one first.
   - Undoing **Not now** deletes that feedback row, so the song can show up again today at full weight.
@@ -256,7 +258,7 @@ PlayLS approximates what the user listens to, so reviews can lean on "you listen
     - when the app opens or comes back (`POST /user/me/listening/capture`), at most every 15 minutes per user, using a conditional-UPDATE claim on `users.listening_captured_at`;
     - after login;
     - from the daily cron, before auto rotations are maintained.
-  - **Gaps:** a capture whose 50 plays are all newer than the newest stored play records a `listening_gap` (plays were probably missed).
+  - **Gaps:** a capture whose 50 plays are all newer than the newest stored play records a `listening_gap` (plays were probably missed). Heavy listeners (50+ plays between captures) will lose some plays. That's accepted (owner, 2026-11-27): capturing more often would need a more frequent cron, which means Vercel Pro. Gaps are recorded, "few plays lately" won't fire over gappy history, and an Extended Streaming History import fills them.
   - **Top tracks:** all three time ranges are refreshed daily into `top_track` (the latest snapshot only).
   - `users.listening_since` is where the history starts: the oldest play of the first capture, or the start of an import.
   - Missing scopes skip capture. Spotify errors never fail the request that triggered it. Demo accounts never capture; they get a seeded history (`demo/demo_listening.py`).
@@ -368,8 +370,4 @@ A public demo at `/demo` lets anyone try PlayLS without a Spotify account. Spoti
 - Sync only imports tracks; local files and podcast episodes in a playlist are ignored. A missing `added_at` (very old playlists) is stored as NULL; see the due-date rules for how it's handled.
 
 ## Decisions to revisit
-- Listening history is captured on app open and daily, so very heavy listeners (50+ plays a day between visits) leave gaps. A more frequent cron would need Vercel Pro.
-- Daily limit is per rotation, so several big rotations can still add up to several × N in one day.
-- Removing every duplicate copy of a track (above).
-- Whether to add any provider abstraction if Apple comes back into scope.
 - Notifications, if a channel that makes sense ever turns up.
